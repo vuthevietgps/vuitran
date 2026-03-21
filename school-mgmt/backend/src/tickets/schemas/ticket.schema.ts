@@ -18,12 +18,13 @@ export enum TicketType {
 }
 
 export enum TicketStatus {
-  OPEN = 'OPEN',                 // Vừa tạo
-  IN_PROGRESS = 'IN_PROGRESS',   // OPS đang xử lý
-  WAITING_INFO = 'WAITING_INFO', // Chờ thêm thông tin
-  RESOLVED = 'RESOLVED',         // Đã giải quyết
-  CLOSED = 'CLOSED',             // Đã đóng
-  CANCELLED = 'CANCELLED',       // Đã hủy bởi người tạo
+  OPEN = 'OPEN',                   // Vừa tạo
+  IN_PROGRESS = 'IN_PROGRESS',     // OPS đang xử lý
+  WAITING_INFO = 'WAITING_INFO',   // Chờ thêm thông tin
+  WAITING_REFUND = 'WAITING_REFUND', // Chờ kế toán hoàn tiền (State Machine)
+  RESOLVED = 'RESOLVED',           // Đã giải quyết
+  CLOSED = 'CLOSED',               // Đã đóng (kế toán đã chi tiền)
+  CANCELLED = 'CANCELLED',         // Đã hủy bởi người tạo
 }
 
 export enum TicketPriority {
@@ -73,6 +74,18 @@ export class TicketResolution {
 
   @Prop({ type: Number, min: 0, default: 0 })
   refundAmount?: number; // Số tiền hoàn (nếu có)
+
+  /** Ledger entry ID khi kế toán đã chi tiền hoàn (link accounting → ticket) */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'LedgerEntry' })
+  refundLedgerEntryId?: Types.ObjectId;
+
+  /** Ngày kế toán xác nhận đã chi tiền hoàn */
+  @Prop({ type: Date })
+  refundPaidAt?: Date;
+
+  /** Người chi tiền hoàn (kế toán) */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  refundPaidBy?: Types.ObjectId;
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   resolvedBy?: Types.ObjectId;
@@ -136,6 +149,10 @@ export class Ticket {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   parentId?: Types.ObjectId;
 
+  /** Hoi thoai noi bo da tao ra ticket nay (neu phat sinh tu chat ho tro) */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'DirectConversation' })
+  sourceConversationId?: Types.ObjectId;
+
   /** Payroll liên quan (nếu dispute lương) */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Payroll' })
   payrollId?: Types.ObjectId;
@@ -144,27 +161,34 @@ export class Ticket {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'LedgerEntry' })
   ledgerEntryId?: Types.ObjectId;
 
-  // ── GV dạy thay (SUBSTITUTE_TEACHER) ──
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠️ DEPRECATED FIELDS - DO NOT USE FOR NEW LOGIC
+  // Substitute teacher management has been moved to a separate LeaveRequests module.
+  // These fields are kept for backward compatibility with existing data.
+  // Use LeaveRequests for all new substitute teacher (dạy thay) operations.
+  // ══════════════════════════════════════════════════════════════════════════
 
-  /** GV được đề xuất dạy thay */
+  /** @deprecated Use LeaveRequests module instead */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   substituteTeacherId?: Types.ObjectId;
 
-  /** Ngày bắt đầu dạy thay */
+  /** @deprecated Use LeaveRequests module instead */
   @Prop({ type: Date })
   substituteFromDate?: Date;
 
-  /** Ngày kết thúc dạy thay */
+  /** @deprecated Use LeaveRequests module instead */
   @Prop({ type: Date })
   substituteToDate?: Date;
 
-  /** Lương cho GV dạy thay (VNĐ/buổi) — OPS chỉ định khi duyệt */
+  /** @deprecated Use LeaveRequests module instead */
   @Prop({ type: Number, min: 0 })
   substitutePayRate?: number;
 
-  /** GV dạy thay có được tạo link điểm danh không */
+  /** @deprecated Use LeaveRequests module instead */
   @Prop({ type: Boolean, default: true })
   substituteCanCreateLink?: boolean;
+
+  // ══════════════════════════════════════════════════════════════════════════
 
   // ── Attachments ──
 
@@ -210,5 +234,6 @@ TicketSchema.index({ createdBy: 1 });
 TicketSchema.index({ assignedTo: 1, status: 1 });
 TicketSchema.index({ sessionId: 1 });
 TicketSchema.index({ type: 1, status: 1 });
+TicketSchema.index({ sourceConversationId: 1, type: 1, status: 1 });
 TicketSchema.index({ createdAt: -1 });
 

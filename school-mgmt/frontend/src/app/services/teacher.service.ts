@@ -23,9 +23,42 @@ export interface BankInfo {
   branch?: string;
 }
 
+export interface TeacherLinkedUser {
+  _id: string;
+  userCode?: string;
+  fullName: string;
+  email: string;
+  phone?: string;
+}
+
+export interface TeacherProfileUpdatePayload {
+  user?: {
+    fullName?: string;
+    email?: string;
+    phone?: string;
+    password?: string;
+  };
+  managedSales?: string[];
+  subjects?: string[];
+  grades?: string[];
+  teachingMode?: 'ONLINE' | 'OFFLINE' | 'BOTH';
+  locations?: string[];
+  bio?: string;
+  qualifications?: Qualification[];
+  yearsOfExperience?: number;
+  videoIntroUrl?: string;
+  availability?: AvailabilitySlot[];
+  pricePerSession?: number;
+  pricePerHour?: number;
+  bankInfo?: BankInfo;
+  status?: string;
+  adminNotes?: string;
+}
+
 export interface TeacherProfile {
   _id: string;
-  userId: { _id: string; fullName: string; email: string; phone?: string } | string;
+  userId: TeacherLinkedUser | string;
+  managedSales?: TeacherLinkedUser[] | string[];
   subjects: string[];
   grades: string[];
   teachingMode: 'ONLINE' | 'OFFLINE' | 'BOTH';
@@ -75,11 +108,19 @@ export interface TeachingMaterial {
   teacherId: string;
   title: string;
   description?: string;
+  manualSummary?: string;
+  aiSummary?: string;
+  extractedTextPreview?: string;
+  extractionStatus?: 'PENDING' | 'READY' | 'UNSUPPORTED' | 'FAILED';
+  chunkCount?: number;
+  lastProcessedAt?: string;
+  processingError?: string;
   subject?: string;
   grade?: string;
   classId?: { _id: string; name: string } | string;
   fileUrl: string;
   fileType: string;
+  fileCategory?: 'pdf' | 'doc' | 'ppt' | 'excel' | 'image' | 'video' | 'other';
   fileSize: number;
   originalName: string;
   tags: string[];
@@ -87,6 +128,39 @@ export interface TeachingMaterial {
   downloadCount: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TeachingMaterialListQuery {
+  subject?: string;
+  grade?: string;
+  classId?: string;
+  search?: string;
+  fileCategory?: 'pdf' | 'doc' | 'ppt' | 'excel' | 'image' | 'video' | 'other';
+  extractionStatus?: 'PENDING' | 'READY' | 'UNSUPPORTED' | 'FAILED';
+  page?: number;
+  limit?: number;
+}
+
+export interface TeachingMaterialListResponse {
+  data: TeachingMaterial[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPrevPage: boolean;
+  };
+}
+
+export interface TeachingMaterialStats {
+  total: number;
+  readyForAI: number;
+  totalChunks: number;
+  bySubject: Record<string, number>;
+  byGrade: Record<string, number>;
+  totalSizeBytes: number;
+  totalSizeMB: number;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -123,7 +197,7 @@ export class TeacherService {
   }
 
   /** Cập nhật hồ sơ giáo viên */
-  async updateProfile(id: string, payload: Partial<TeacherProfile>): Promise<TeacherProfile> {
+  async updateProfile(id: string, payload: TeacherProfileUpdatePayload): Promise<TeacherProfile> {
     return firstValueFrom(
       this.http.patch<TeacherProfile>(`${this.base}/${id}`, payload, { withCredentials: true }),
     );
@@ -132,15 +206,28 @@ export class TeacherService {
   // ── Teaching Materials ──────────────────────────────────────
 
   /** Lấy danh sách tài liệu */
-  async getMaterials(params?: { subject?: string; grade?: string; classId?: string }): Promise<TeachingMaterial[]> {
+  async getMaterials(params?: TeachingMaterialListQuery): Promise<TeachingMaterialListResponse> {
     let httpParams = new HttpParams();
     if (params?.subject) httpParams = httpParams.set('subject', params.subject);
     if (params?.grade) httpParams = httpParams.set('grade', params.grade);
     if (params?.classId) httpParams = httpParams.set('classId', params.classId);
+    if (params?.search) httpParams = httpParams.set('search', params.search);
+    if (params?.fileCategory) httpParams = httpParams.set('fileCategory', params.fileCategory);
+    if (params?.extractionStatus) httpParams = httpParams.set('extractionStatus', params.extractionStatus);
+    if (params?.page) httpParams = httpParams.set('page', String(params.page));
+    if (params?.limit) httpParams = httpParams.set('limit', String(params.limit));
     return firstValueFrom(
-      this.http.get<TeachingMaterial[]>(`${environment.apiBase}/teaching-materials`, {
+      this.http.get<TeachingMaterialListResponse>(`${environment.apiBase}/teaching-materials`, {
         withCredentials: true,
         params: httpParams,
+      }),
+    );
+  }
+
+  async getMaterialStats(): Promise<TeachingMaterialStats> {
+    return firstValueFrom(
+      this.http.get<TeachingMaterialStats>(`${environment.apiBase}/teaching-materials/stats`, {
+        withCredentials: true,
       }),
     );
   }
@@ -149,6 +236,7 @@ export class TeacherService {
   async uploadMaterial(file: File, metadata: {
     title: string;
     description?: string;
+    manualSummary?: string;
     subject?: string;
     grade?: string;
     classId?: string;
@@ -159,6 +247,7 @@ export class TeacherService {
     formData.append('file', file);
     formData.append('title', metadata.title);
     if (metadata.description) formData.append('description', metadata.description);
+    if (metadata.manualSummary) formData.append('manualSummary', metadata.manualSummary);
     if (metadata.subject) formData.append('subject', metadata.subject);
     if (metadata.grade) formData.append('grade', metadata.grade);
     if (metadata.classId) formData.append('classId', metadata.classId);
@@ -176,6 +265,7 @@ export class TeacherService {
   async updateMaterial(id: string, payload: Partial<{
     title: string;
     description: string;
+    manualSummary: string;
     subject: string;
     grade: string;
     classId: string;
@@ -189,7 +279,23 @@ export class TeacherService {
     );
   }
 
+  async reprocessMaterial(id: string): Promise<TeachingMaterial> {
+    return firstValueFrom(
+      this.http.post<TeachingMaterial>(`${environment.apiBase}/teaching-materials/${id}/reprocess`, {}, {
+        withCredentials: true,
+      }),
+    );
+  }
+
   /** Xóa tài liệu */
+  async recordMaterialDownload(id: string): Promise<{ downloadCount: number }> {
+    return firstValueFrom(
+      this.http.post<{ downloadCount: number }>(`${environment.apiBase}/teaching-materials/${id}/download`, {}, {
+        withCredentials: true,
+      }),
+    );
+  }
+
   async deleteMaterial(id: string): Promise<void> {
     await firstValueFrom(
       this.http.delete(`${environment.apiBase}/teaching-materials/${id}`, { withCredentials: true }),

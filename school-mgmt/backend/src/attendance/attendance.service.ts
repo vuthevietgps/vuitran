@@ -8,7 +8,12 @@ import {
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Types, Connection, ClientSession } from 'mongoose';
-import { Attendance, AttendanceDocument, AttendanceStatus } from './schemas/attendance.schema';
+import {
+  Attendance,
+  AttendanceDocument,
+  AttendanceStatus,
+  COUNTED_ATTENDANCE_STATUSES,
+} from './schemas/attendance.schema';
 import { CreateAttendanceDto, BulkAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
 import { GenerateAttendanceLinkDto, StudentAttendanceDto } from './dto/generate-link.dto';
@@ -53,7 +58,7 @@ export class AttendanceService {
   }
 
   private isCountedAttendanceStatus(status?: AttendanceStatus | null): boolean {
-    return status === AttendanceStatus.PRESENT;
+    return !!status && COUNTED_ATTENDANCE_STATUSES.includes(status);
   }
 
   private normalizeInteractiveAttendanceStatus(
@@ -62,13 +67,13 @@ export class AttendanceService {
     if (status === undefined) {
       return AttendanceStatus.PRESENT;
     }
-    return this.isCountedAttendanceStatus(status) ? AttendanceStatus.PRESENT : null;
+    return status ?? null;
   }
 
   private normalizeBulkAttendanceStatus(
     status?: AttendanceStatus | null,
   ): AttendanceStatus | null {
-    return this.isCountedAttendanceStatus(status) ? AttendanceStatus.PRESENT : null;
+    return status ?? null;
   }
 
   /**
@@ -269,7 +274,7 @@ export class AttendanceService {
       .find({
         classId: classObjectId,
         date,
-        status: AttendanceStatus.PRESENT,
+        status: { $in: [...COUNTED_ATTENDANCE_STATUSES] },
         sessionId: { $exists: true, $ne: null },
       })
       .select('sessionId')
@@ -891,27 +896,26 @@ export class AttendanceService {
     const attendanceTeacherId = this.resolveAttendanceTeacherId(classroom, user, date);
     const opsCheckerId = this.getOpsCheckerId(user);
 
-    const result =
-      normalizedStatus === AttendanceStatus.PRESENT
-        ? await this.processOneStudent({
+    const result = normalizedStatus
+      ? await this.processOneStudent({
+          classId: dto.classId,
+          studentId: dto.studentId,
+          date,
+          status: normalizedStatus,
+          notes: dto.notes || '',
+          teacherId: attendanceTeacherId,
+          classroom,
+          substitutePayRate: subInfo?.payRate,
+          checkedBy: opsCheckerId,
+        })
+      : {
+          attendance: null,
+          sessionCreated: await this.clearAttendanceRecord({
             classId: dto.classId,
             studentId: dto.studentId,
             date,
-            status: AttendanceStatus.PRESENT,
-            notes: dto.notes || '',
-            teacherId: attendanceTeacherId,
-            classroom,
-            substitutePayRate: subInfo?.payRate,
-            checkedBy: opsCheckerId,
-          })
-        : {
-            attendance: null,
-            sessionCreated: await this.clearAttendanceRecord({
-              classId: dto.classId,
-              studentId: dto.studentId,
-              date,
-            }),
-          };
+          }),
+        };
 
     let offlineSummary:
       | { attendedCount: number; perStudentTeacherPay: number; totalTeacherPayout: number; minimumApplied: boolean }
@@ -972,7 +976,8 @@ export class AttendanceService {
     const results: any[] = [];
     const errors: Array<{ studentId: string; message: string }> = [];
     let sessionsCreated = 0;
-    const submittedIds = allowedIds;
+    let totalProcessed = 0;
+    const submittedIds = new Set<string>();
 
     // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Collect submitted student IDs ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
     for (const item of dto.attendances) {
@@ -985,13 +990,14 @@ export class AttendanceService {
       }
 
       try {
+        submittedIds.add(item.studentId);
         const normalizedStatus = this.normalizeBulkAttendanceStatus(item.status);
-        if (normalizedStatus === AttendanceStatus.PRESENT) {
+        if (normalizedStatus) {
           const result = await this.processOneStudent({
             classId: dto.classId,
             studentId: item.studentId,
             date,
-            status: AttendanceStatus.PRESENT,
+            status: normalizedStatus,
             notes: item.notes || '',
             teacherId: attendanceTeacherId,
             classroom,
@@ -1007,6 +1013,7 @@ export class AttendanceService {
             date,
           });
         }
+        totalProcessed++;
       } catch (err: any) {
         errors.push({
           studentId: item.studentId,
@@ -1069,7 +1076,7 @@ export class AttendanceService {
       success: results,
       errors,
       sessionsCreated,
-      totalProcessed: results.length,
+      totalProcessed,
       totalErrors: errors.length,
       ...(isOffline
         ? {
@@ -1228,13 +1235,7 @@ export class AttendanceService {
       if (dto.status) attendance.status = dto.status;
       if (dto.notes !== undefined) attendance.notes = dto.notes;
       attendance.teacherId = attendanceTeacherId;
-      if (isCounted && opsCheckerId) {
-        attendance.checkedBy = opsCheckerId;
-        attendance.checkedAt = new Date();
-      } else if (!isCounted) {
-        attendance.checkedBy = undefined;
-        attendance.checkedAt = undefined;
-      }
+      // checkedBy / checkedAt đã chuyển sang PayrollTransaction (SSOT) — không còn trong Attendance schema
       await attendance.save({ session: mongoSession });
 
       await mongoSession.commitTransaction();
@@ -1520,6 +1521,8 @@ export class AttendanceService {
     endDate: string,
     classId?: string,
     actor?: JwtPayload,
+    page: number = 1,
+    limit: number = 20,
   ) {
     const start = normalizeDate(startDate);
     const end = normalizeDate(endDate);
@@ -1527,7 +1530,7 @@ export class AttendanceService {
 
     const filter: any = {
       date: { $gte: start, $lte: end },
-      status: AttendanceStatus.PRESENT,
+      status: { $in: [...COUNTED_ATTENDANCE_STATUSES] },
     };
     if (classId) {
       if (!Types.ObjectId.isValid(classId)) {
@@ -1539,13 +1542,30 @@ export class AttendanceService {
       filter.teacherId = new Types.ObjectId(this.getUserId(actor));
     }
 
-    return this.attendanceModel
-      .find(filter)
-      .populate('studentId', 'fullName age parentName faceImage studentCode')
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName email')
-      .sort({ date: -1, attendedAt: -1, updatedAt: -1 })
-      .lean();
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.attendanceModel
+        .find(filter)
+        .populate('studentId', 'fullName age parentName faceImage studentCode')
+        .populate('classId', 'name code')
+        .populate('teacherId', 'fullName email')
+        .sort({ date: -1, attendedAt: -1, updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      this.attendanceModel.countDocuments(filter),
+    ]);
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
   }
 
   // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â

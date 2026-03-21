@@ -45,6 +45,20 @@ export interface OpenAITokenItem {
   createdAt: string;
 }
 
+export interface AiAssistantProfileItem {
+  _id: string;
+  assistantType: string;
+  label: string;
+  description?: string;
+  rulesPrompt?: string;
+  defaultOpenAITokenId?: string;
+  defaultOpenAITokenLabel?: string;
+  defaultOpenAIModel?: string;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConversationItem {
   _id: string;
   conversationCode: string;
@@ -186,6 +200,39 @@ export class ChatbotService {
   }
 
   // ─── Conversations ──────────────────────────────────────────
+
+  async listAiAssistantProfiles(): Promise<AiAssistantProfileItem[]> {
+    return this.http.get<AiAssistantProfileItem[]>(
+      `${this.apiUrl}/ai-assistant-profiles`,
+    ).toPromise() as Promise<AiAssistantProfileItem[]>;
+  }
+
+  async createAiAssistantProfile(data: any): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await this.http.post(`${this.apiUrl}/ai-assistant-profiles`, data).toPromise();
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Tao AI profile that bai' };
+    }
+  }
+
+  async updateAiAssistantProfile(id: string, data: any): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await this.http.patch(`${this.apiUrl}/ai-assistant-profiles/${id}`, data).toPromise();
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Cap nhat AI profile that bai' };
+    }
+  }
+
+  async deleteAiAssistantProfile(id: string): Promise<{ ok: boolean; message?: string }> {
+    try {
+      await this.http.delete(`${this.apiUrl}/ai-assistant-profiles/${id}`).toPromise();
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Xoa AI profile that bai' };
+    }
+  }
 
   async listConversations(params?: Record<string, string>): Promise<PaginatedResponse<ConversationItem>> {
     return this.http.get<PaginatedResponse<ConversationItem>>(

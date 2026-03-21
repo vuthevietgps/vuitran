@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
+import {
+  TrackingAttribution,
+  TrackingAttributionSchema,
+} from '../../marketing-attribution/schemas/tracking-attribution.schema';
 
 export type OrderDocument = HydratedDocument<Order>;
 
@@ -185,6 +189,9 @@ export class Order {
 
   @Prop({ type: String, trim: true })
   consultationNotes?: string;
+
+  @Prop({ type: TrackingAttributionSchema })
+  tracking?: TrackingAttribution;
 
   // Processing
   @Prop({ type: ProcessedResultsSchema })

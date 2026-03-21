@@ -5,7 +5,7 @@ import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType } from './schemas/
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { ApproveInvoiceDto } from './dto/approve-invoice.dto';
-import { UserDocument } from '../users/schemas/user.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
@@ -20,6 +20,7 @@ export class InvoicesService {
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly walletsService: WalletsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -41,6 +42,63 @@ export class InvoicesService {
       null;
     if (saleId === actorId || createdById === actorId) return;
     throw new NotFoundException('Hoa don khong ton tai');
+  }
+
+  private async findSaleUser(saleId: string | Types.ObjectId): Promise<any> {
+    const sale = await this.userModel
+      .findOne({ _id: saleId, role: Role.SALE })
+      .select('_id fullName email')
+      .lean();
+    if (!sale) {
+      throw new BadRequestException('Sale phu trach khong hop le');
+    }
+    return sale;
+  }
+
+  private async resolveInvoiceSaleOwner(
+    dto: Pick<CreateInvoiceDto, 'studentId' | 'saleId'>,
+    actor: JwtPayload,
+  ): Promise<{ student: any; saleId?: Types.ObjectId }> {
+    const student = await this.studentModel
+      .findById(dto.studentId)
+      .select('saleId saleName')
+      .lean();
+    if (!student) {
+      throw new NotFoundException('Hoc sinh khong ton tai');
+    }
+
+    const studentSaleId = student.saleId?.toString?.() || null;
+    if (actor.role === Role.SALE) {
+      if (!studentSaleId || studentSaleId !== this.getActorId(actor)) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
+      }
+      return {
+        student,
+        saleId: new Types.ObjectId(this.getActorId(actor)),
+      };
+    }
+
+    if (studentSaleId) {
+      if (dto.saleId && dto.saleId !== studentSaleId) {
+        throw new BadRequestException(
+          'Hoc sinh da co sale phu trach. Hay cap nhat owner hoc vien truoc khi lap hoa don',
+        );
+      }
+      return {
+        student,
+        saleId: new Types.ObjectId(studentSaleId),
+      };
+    }
+
+    if (!dto.saleId) {
+      return { student, saleId: undefined };
+    }
+
+    const requestedSale = await this.findSaleUser(dto.saleId);
+    return {
+      student,
+      saleId: requestedSale._id as Types.ObjectId,
+    };
   }
 
   async create(dto: CreateInvoiceDto, actor: JwtPayload) {
@@ -95,17 +153,7 @@ export class InvoicesService {
     }
 
     // â”€â”€ Resolve saleId: dÃ¹ ai táº¡o váº«n ghi nháº­n sale phá»¥ trÃ¡ch â”€â”€
-    let saleId = dto.saleId ? new Types.ObjectId(dto.saleId) : undefined;
-    if (!saleId) {
-      if (actor.role === Role.SALE) {
-        saleId = new Types.ObjectId(actorId);
-      } else {
-        const student = await this.studentModel.findById(dto.studentId).select('saleId').lean();
-        if (student?.saleId) {
-          saleId = student.saleId;
-        }
-      }
-    }
+    const { saleId } = await this.resolveInvoiceSaleOwner(dto, actor);
 
     // Má»i hÃ³a Ä‘Æ¡n Ä‘á»u pháº£i chá» duyá»‡t
     const status = InvoiceStatus.PENDING_APPROVAL;
@@ -192,6 +240,9 @@ export class InvoicesService {
       }
       // SALE khÃ´ng Ä‘Æ°á»£c tá»± Ä‘á»•i status
       delete (dto as any).status;
+      delete (dto as any).saleId;
+      delete (dto as any).studentId;
+      delete (dto as any).classId;
     }
 
     if (dto.invoiceNumber) {
@@ -206,6 +257,21 @@ export class InvoicesService {
 
     // Recalculate derived financial fields when relevant fields change
     const updateData: any = { ...dto };
+    if (updateData.studentId !== undefined || updateData.saleId !== undefined) {
+      const resolved = await this.resolveInvoiceSaleOwner(
+        {
+          studentId: updateData.studentId ?? invoice.studentId.toString(),
+          saleId: updateData.saleId,
+        },
+        actor as JwtPayload,
+      );
+      updateData.studentId = new Types.ObjectId(updateData.studentId ?? invoice.studentId.toString());
+      if (resolved.saleId) {
+        updateData.saleId = resolved.saleId;
+      } else {
+        delete updateData.saleId;
+      }
+    }
     const sessions = dto.sessions ?? invoice.sessions;
     const amount = dto.amount ?? invoice.amount;
     const referenceDuration = dto.referenceDuration ?? invoice.referenceDuration;
@@ -234,7 +300,21 @@ export class InvoicesService {
     const approvalImage = dto.approvalImage?.trim();
 
     if (dto.action === 'APPROVE' && !approvalImage) {
-      throw new BadRequestException('Phai tai anh xac nhan truoc khi duyet hoa don');
+      throw new BadRequestException('Phai tai hoa don doi ung truoc khi duyet hoa don');
+    }
+
+    const existingInvoice = await this.invoiceModel
+      .findById(id)
+      .select('_id invoiceNumber status receiptImage')
+      .lean();
+    if (!existingInvoice) {
+      throw new NotFoundException('HÃƒÂ³a Ã„â€˜Ã†Â¡n khÃƒÂ´ng tÃ¡Â»â€œn tÃ¡ÂºÂ¡i');
+    }
+
+    if (dto.action === 'APPROVE' && !existingInvoice.receiptImage) {
+      throw new BadRequestException(
+        'Khong the duyet hoa don khi chua co hoa don sale upload. Vui long bo sung hoa don goc truoc.',
+      );
     }
 
     if (dto.action === 'APPROVE') {

@@ -4,11 +4,14 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { NotificationsService } from '../services/notifications.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-notifications',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="notifications"></app-flow-guide>
   <div class="container">
     <div class="header-row">
       <h2>&#128276; Thông báo</h2>

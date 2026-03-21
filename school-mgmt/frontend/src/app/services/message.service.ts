@@ -14,6 +14,14 @@ export class MessageService {
     );
   }
 
+  getConversation(conversationId: string): Promise<any> {
+    return firstValueFrom(
+      this.http.get<any>(`${this.base}/conversations/${conversationId}`, {
+        withCredentials: true,
+      }),
+    );
+  }
+
   listMessages(conversationId: string, page = 1, limit = 50): Promise<any> {
     return firstValueFrom(
       this.http.get<any>(
@@ -25,7 +33,21 @@ export class MessageService {
 
   sendMessage(receiverId: string, content: string): Promise<any> {
     return firstValueFrom(
-      this.http.post<any>(`${this.base}/send`, { receiverId, content }, { withCredentials: true }),
+      this.http.post<any>(
+        `${this.base}/send`,
+        { receiverId, content },
+        { withCredentials: true },
+      ),
+    );
+  }
+
+  sendSupportMessage(receiverId: string, content: string, contextStudentId?: string): Promise<any> {
+    return firstValueFrom(
+      this.http.post<any>(
+        `${this.base}/send`,
+        { receiverId, content, contextStudentId },
+        { withCredentials: true },
+      ),
     );
   }
 

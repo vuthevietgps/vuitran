@@ -7,10 +7,12 @@ import { StudentItem, StudentService } from '../services/student.service';
 import { ProductItem, ProductService } from '../services/product.service';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-classes',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -20,6 +22,8 @@ import { AuthService } from '../services/auth.service';
     <button class="primary" (click)="openModal()" *ngIf="canManage()">+ Them lop hoc</button>
   </header>
 
+  <app-flow-guide featureKey="classes"></app-flow-guide>
+
   <table class="data" *ngIf="classes().length; else empty">
     <thead>
       <tr>
@@ -28,11 +32,11 @@ import { AuthService } from '../services/auth.service';
         <th>Loai</th>
         <th>Giao vien</th>
         <th>Hoc vien</th>
-        <th>Gia co so (HS)</th>
+        <th *ngIf="!isTeacher()">Gia co so (HS)</th>
         <th>Luong co so (GV)</th>
         <th>TL co so</th>
         <th>TL buoi hoc</th>
-        <th>Gia thuc/buoi</th>
+        <th *ngIf="!isTeacher()">Gia thuc/buoi</th>
         <th>Luong thuc/buoi</th>
         <th *ngIf="!isTeacher()">Loi nhuan/buoi</th>
         <th>Hanh dong</th>
@@ -52,11 +56,11 @@ import { AuthService } from '../services/auth.service';
           <span class="chip" *ngFor="let s of c.students">{{s.fullName}}</span>
           <span *ngIf="!c.students?.length">Chua co</span>
         </td>
-        <td>{{formatCurrency(c.pricePerSession)}}</td>
+        <td *ngIf="!isTeacher()">{{formatCurrency(c.pricePerSession)}}</td>
         <td>{{formatTeacherBase(c)}}</td>
         <td>{{c.baseDuration || 60}}p</td>
         <td>{{c.sessionDuration || 60}}p</td>
-        <td><strong>{{formatCurrency(c.actualPricePerSession ?? c.pricePerSession)}}</strong></td>
+        <td *ngIf="!isTeacher()"><strong>{{formatCurrency(c.actualPricePerSession ?? c.pricePerSession)}}</strong></td>
         <td>{{formatTeacherActual(c)}}</td>
         <td *ngIf="!isTeacher()" [class]="getProfitClass(getProfit(c))">{{formatCurrency(getProfit(c))}}</td>
         <td class="actions-cell">
@@ -349,7 +353,7 @@ export class ClassesComponent {
 
   async loadLookups() {
     const [users, studs, prods] = await Promise.all([
-      this.userService.list(),
+      this.userService.listDirectory(),
       this.studentService.list(),
       this.productService.list(),
     ]);

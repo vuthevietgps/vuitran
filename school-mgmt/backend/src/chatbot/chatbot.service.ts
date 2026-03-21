@@ -1,22 +1,29 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types, FilterQuery } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, FilterQuery, Connection } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 
 import { Fanpage, FanpageDocument, FanpagePlatform, FanpageSyncSource } from './schemas/fanpage.schema';
 import { OpenAIToken, OpenAITokenDocument, OpenAITokenStatus } from './schemas/openai-token.schema';
+import {
+  AiAssistantProfile,
+  AiAssistantProfileDocument,
+} from './schemas/ai-assistant-profile.schema';
 import { Conversation, ConversationDocument, ConversationStatus } from './schemas/conversation.schema';
 import { Message, MessageDocument, SenderType, MessageStatus } from './schemas/message.schema';
 import { AdGroup, AdGroupDocument } from '../ads/schemas/ad-group.schema';
 import { Lead, LeadDocument, LeadStatus } from '../leads/schemas/lead.schema';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 
 import { CreateFanpageDto } from './dto/create-fanpage.dto';
 import { UpdateFanpageDto } from './dto/update-fanpage.dto';
 import { QueryFanpageDto } from './dto/query-fanpage.dto';
 import { CreateOpenAITokenDto } from './dto/create-openai-token.dto';
 import { UpdateOpenAITokenDto } from './dto/update-openai-token.dto';
+import { CreateAiAssistantProfileDto } from './dto/create-ai-assistant-profile.dto';
+import { UpdateAiAssistantProfileDto } from './dto/update-ai-assistant-profile.dto';
 import { QueryConversationDto } from './dto/query-conversation.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -27,6 +34,13 @@ import { CreateOrderFromConvDto } from './dto/create-order-from-conv.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction } from '../audit-log/schemas/audit-log.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import { Role } from '../common/interfaces/role.enum';
+import { MarketingAttributionService } from '../marketing-attribution/marketing-attribution.service';
+import {
+  ParentAttributionModel,
+  ParentAttributionSourceType,
+} from '../marketing-attribution/schemas/parent-attribution.schema';
+import { ChatbotGateway } from './chatbot.gateway';
 
 @Injectable()
 export class ChatbotService {
@@ -36,13 +50,19 @@ export class ChatbotService {
   constructor(
     @InjectModel(Fanpage.name) private fanpageModel: Model<FanpageDocument>,
     @InjectModel(OpenAIToken.name) private openaiTokenModel: Model<OpenAITokenDocument>,
+    @InjectModel(AiAssistantProfile.name)
+    private aiAssistantProfileModel: Model<AiAssistantProfileDocument>,
     @InjectModel(Conversation.name) private conversationModel: Model<ConversationDocument>,
     @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
     @InjectModel(AdGroup.name) private adGroupModel: Model<AdGroupDocument>,
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectConnection() private readonly connection: Connection,
     private configService: ConfigService,
     private auditLogService: AuditLogService,
+    private marketingAttributionService: MarketingAttributionService,
+    private chatbotGateway: ChatbotGateway,
   ) {
     const key = this.configService.get<string>('TOKEN_ENCRYPTION_KEY');
     if (key) {
@@ -51,6 +71,96 @@ export class ChatbotService {
   }
 
   // ─── Encryption helpers ─────────────────────────────────────
+
+  private getActorId(user: JwtPayload): string {
+    return user?.sub ?? user?._id ?? (user as any)?.userId;
+  }
+
+  private async findSaleUser(saleId: string | Types.ObjectId): Promise<any> {
+    const sale = await this.userModel
+      .findOne({ _id: saleId, role: Role.SALE })
+      .select('_id fullName email')
+      .lean();
+    if (!sale) {
+      throw new BadRequestException('Sale phu trach khong hop le');
+    }
+    return sale;
+  }
+
+  private async resolveConversationSaleOwner(
+    conv: ConversationDocument,
+    dto: { saleId?: string },
+    user: JwtPayload,
+    targetLabel: 'lead' | 'don hang',
+  ): Promise<{ saleId: Types.ObjectId; saleName: string }> {
+    const actorId = this.getActorId(user);
+    if (user.role === Role.SALE) {
+      return {
+        saleId: new Types.ObjectId(actorId),
+        saleName: user.fullName || user.email,
+      };
+    }
+
+    let lockedOwnerId: string | null = null;
+    let lockedOwnerName: string | null = null;
+
+    if (conv.leadId) {
+      const lead = await this.leadModel.findById(conv.leadId).select('saleId saleName').lean();
+      if (!lead) {
+        throw new BadRequestException('Lead lien ket khong ton tai');
+      }
+      if (lead.saleId) {
+        lockedOwnerId = lead.saleId.toString();
+        lockedOwnerName = (lead as any).saleName || null;
+      }
+    }
+
+    if (!lockedOwnerId && conv.assignedAgentId) {
+      const assignedSale = await this.userModel
+        .findOne({ _id: conv.assignedAgentId, role: Role.SALE })
+        .select('_id fullName email')
+        .lean();
+      if (assignedSale) {
+        lockedOwnerId = assignedSale._id.toString();
+        lockedOwnerName = assignedSale.fullName || assignedSale.email;
+      }
+    }
+
+    if (dto.saleId) {
+      const requestedSale = await this.findSaleUser(dto.saleId);
+      if (lockedOwnerId && requestedSale._id.toString() !== lockedOwnerId) {
+        throw new BadRequestException(
+          targetLabel === 'lead'
+            ? 'Hoi thoai da gan cho sale khac. Hay chuyen owner truoc khi tao lead'
+            : 'Hoi thoai/lead da gan cho sale khac. Hay chuyen owner truoc khi tao don',
+        );
+      }
+      return {
+        saleId: requestedSale._id as Types.ObjectId,
+        saleName: requestedSale.fullName || requestedSale.email,
+      };
+    }
+
+    if (lockedOwnerId) {
+      if (lockedOwnerName) {
+        return {
+          saleId: new Types.ObjectId(lockedOwnerId),
+          saleName: lockedOwnerName,
+        };
+      }
+      const inferredSale = await this.findSaleUser(lockedOwnerId);
+      return {
+        saleId: inferredSale._id as Types.ObjectId,
+        saleName: inferredSale.fullName || inferredSale.email,
+      };
+    }
+
+    throw new BadRequestException(
+      targetLabel === 'lead'
+        ? 'Phai chon sale phu trach cho lead'
+        : 'Phai chon sale phu trach cho don hang',
+    );
+  }
 
   private encrypt(plainText: string): string {
     if (!this.encryptionKey) return plainText;
@@ -93,6 +203,22 @@ export class ChatbotService {
       openaiModel: openAIToken?.model,
       pageAccessToken: fp.pageAccessToken ? this.maskToken(fp.pageAccessToken) : undefined,
       appSecret: fp.appSecret ? this.maskToken(fp.appSecret) : undefined,
+    };
+  }
+
+  private mapAiAssistantProfileForResponse(profile: any) {
+    const defaultToken = profile?.defaultOpenAITokenId
+      && typeof profile.defaultOpenAITokenId === 'object'
+      ? profile.defaultOpenAITokenId
+      : null;
+
+    return {
+      ...profile,
+      defaultOpenAITokenId: defaultToken?._id
+        ? defaultToken._id.toString()
+        : profile.defaultOpenAITokenId,
+      defaultOpenAITokenLabel: defaultToken?.label,
+      defaultOpenAIModel: defaultToken?.model,
     };
   }
 
@@ -317,6 +443,118 @@ export class ChatbotService {
     if (!doc) throw new NotFoundException('OpenAI token không tồn tại');
   }
 
+  async createAiAssistantProfile(dto: CreateAiAssistantProfileDto, user: JwtPayload) {
+    const existing = await this.aiAssistantProfileModel.findOne({
+      assistantType: dto.assistantType,
+    });
+    if (existing) {
+      throw new BadRequestException('Loai AI nay da co profile cau hinh');
+    }
+
+    let defaultOpenAITokenId: Types.ObjectId | undefined;
+    if (dto.defaultOpenAITokenId?.trim()) {
+      if (!Types.ObjectId.isValid(dto.defaultOpenAITokenId)) {
+        throw new BadRequestException('defaultOpenAITokenId khong hop le');
+      }
+      defaultOpenAITokenId = new Types.ObjectId(dto.defaultOpenAITokenId);
+    }
+
+    const doc = new this.aiAssistantProfileModel({
+      assistantType: dto.assistantType,
+      label: dto.label.trim(),
+      description: dto.description?.trim() || undefined,
+      rulesPrompt: dto.rulesPrompt?.trim() || undefined,
+      defaultOpenAITokenId,
+      status: dto.status,
+      createdById: user.sub,
+    });
+
+    const saved = await doc.save();
+
+    await this.auditLogService.log({
+      userId: user.sub,
+      userEmail: user.email,
+      userFullName: user.fullName,
+      userRole: user.role,
+      action: AuditAction.CREATE,
+      module: 'CHATBOT' as any,
+      targetId: saved._id?.toString(),
+      targetName: saved.label,
+      description: `Tao AI assistant profile: ${saved.assistantType}`,
+    });
+
+    return this.mapAiAssistantProfileForResponse(saved.toObject());
+  }
+
+  async findAllAiAssistantProfiles() {
+    const profiles = await this.aiAssistantProfileModel
+      .find()
+      .populate({ path: 'defaultOpenAITokenId', select: 'label model' })
+      .sort({ assistantType: 1 })
+      .lean();
+
+    return profiles.map((profile) => this.mapAiAssistantProfileForResponse(profile));
+  }
+
+  async updateAiAssistantProfile(id: string, dto: UpdateAiAssistantProfileDto) {
+    const current = await this.aiAssistantProfileModel.findById(id).lean();
+    if (!current) throw new NotFoundException('AI assistant profile khong ton tai');
+
+    if (dto.assistantType && dto.assistantType !== current.assistantType) {
+      const existing = await this.aiAssistantProfileModel.findOne({
+        assistantType: dto.assistantType,
+        _id: { $ne: current._id },
+      });
+      if (existing) {
+        throw new BadRequestException('Loai AI nay da co profile cau hinh');
+      }
+    }
+
+    const update: any = {};
+    const unset: Record<string, 1> = {};
+
+    if (dto.assistantType !== undefined) update.assistantType = dto.assistantType;
+    if (dto.label !== undefined) update.label = dto.label.trim();
+    if (dto.description !== undefined) {
+      const description = dto.description.trim();
+      if (description) update.description = description;
+      else unset.description = 1;
+    }
+    if (dto.rulesPrompt !== undefined) {
+      const rulesPrompt = dto.rulesPrompt.trim();
+      if (rulesPrompt) update.rulesPrompt = rulesPrompt;
+      else unset.rulesPrompt = 1;
+    }
+    if (dto.defaultOpenAITokenId !== undefined) {
+      const tokenId = dto.defaultOpenAITokenId.trim();
+      if (!tokenId) {
+        unset.defaultOpenAITokenId = 1;
+      } else {
+        if (!Types.ObjectId.isValid(tokenId)) {
+          throw new BadRequestException('defaultOpenAITokenId khong hop le');
+        }
+        update.defaultOpenAITokenId = new Types.ObjectId(tokenId);
+      }
+    }
+    if (dto.status !== undefined) update.status = dto.status;
+
+    const updateDoc: any = {};
+    if (Object.keys(update).length) updateDoc.$set = update;
+    if (Object.keys(unset).length) updateDoc.$unset = unset;
+
+    const doc = await this.aiAssistantProfileModel
+      .findByIdAndUpdate(id, updateDoc, { new: true })
+      .populate({ path: 'defaultOpenAITokenId', select: 'label model' });
+    if (!doc) throw new NotFoundException('AI assistant profile khong ton tai');
+
+    return this.mapAiAssistantProfileForResponse(doc.toObject());
+  }
+
+  async deleteAiAssistantProfile(id: string) {
+    const doc = await this.aiAssistantProfileModel.findByIdAndDelete(id);
+    if (!doc) throw new NotFoundException('AI assistant profile khong ton tai');
+  }
+
   async getDecryptedOpenAIKey(tokenId: string | Types.ObjectId): Promise<{
     key: string; model: string; temperature: number; maxTokens: number; systemPromptPrefix?: string;
   } | null> {
@@ -361,9 +599,40 @@ export class ChatbotService {
 
     if (conv) {
       // Reopen if closed
+      let changed = false;
       if (conv.status === ConversationStatus.CLOSED) {
         conv.status = ConversationStatus.AI_HANDLING;
+        changed = true;
+      }
+      if (customerName && !conv.customerName) {
+        conv.customerName = customerName;
+        changed = true;
+      }
+      if (adRefParam && (!conv.adRefParam || !conv.adGroupId)) {
+        const fanpage = await this.fanpageModel.findById(fanpageId).lean();
+        if (!fanpage) throw new NotFoundException('Fanpage khÃ´ng tá»“n táº¡i');
+
+        conv.adRefParam = adRefParam;
+        const resolved = await this.resolveAdGroup(adRefParam, fanpage);
+        if (resolved) {
+          conv.adGroupId = resolved.adGroupId;
+          conv.adGroupName = resolved.adGroupName;
+        }
+        changed = true;
+      }
+      if (changed) {
         await conv.save();
+        if (conv.customerPhone && conv.adGroupId) {
+          await this.marketingAttributionService.upsertParentAttribution({
+            parentPhone: conv.customerPhone,
+            adGroupId: conv.adGroupId,
+            adGroupName: conv.adGroupName,
+            platform: conv.platform,
+            adRefParam: conv.adRefParam,
+            sourceConversationId: conv._id,
+            sourceType: ParentAttributionSourceType.CONVERSATION,
+          });
+        }
       }
       return conv;
     }
@@ -434,12 +703,62 @@ export class ChatbotService {
   }
 
   async updateConversation(id: string, dto: UpdateConversationDto) {
+    const conv = await this.conversationModel.findById(id);
+    if (!conv) throw new NotFoundException('Hội thoại không tồn tại');
+
     const update: any = { ...dto };
     if (dto.assignedAgentId) {
       update.assignedAgentId = new Types.ObjectId(dto.assignedAgentId);
     }
-    const doc = await this.conversationModel.findByIdAndUpdate(id, update, { new: true });
-    if (!doc) throw new NotFoundException('Hội thoại không tồn tại');
+    delete update.adRefParam;
+    delete update.adGroupId;
+    delete update.adGroupName;
+
+    conv.set(update);
+
+    const fanpage = await this.fanpageModel.findById(conv.fanpageId).lean();
+    if (!fanpage) throw new NotFoundException('Fanpage không tồn tại');
+
+    if (dto.adRefParam !== undefined) {
+      const adRefParam = dto.adRefParam.trim();
+      conv.adRefParam = adRefParam || undefined;
+      if (adRefParam && !dto.adGroupId) {
+        const resolved = await this.resolveAdGroup(adRefParam, fanpage);
+        if (resolved) {
+          conv.adGroupId = resolved.adGroupId;
+          conv.adGroupName = dto.adGroupName?.trim() || resolved.adGroupName;
+        }
+      }
+    }
+
+    if (dto.adGroupId !== undefined) {
+      const group = await this.adGroupModel.findById(dto.adGroupId).lean();
+      if (!group) throw new NotFoundException('Nhóm quảng cáo không tồn tại');
+      conv.adGroupId = group._id as Types.ObjectId;
+      conv.adGroupName = dto.adGroupName?.trim() || group.name;
+    } else if (dto.adGroupName !== undefined) {
+      conv.adGroupName = dto.adGroupName.trim() || undefined;
+    }
+
+    const doc = await conv.save();
+
+    if (
+      doc.customerPhone
+      && doc.adGroupId
+      && (dto.adGroupId !== undefined || dto.adRefParam !== undefined || dto.customerPhone !== undefined)
+    ) {
+      await this.marketingAttributionService.upsertParentAttribution({
+        parentPhone: doc.customerPhone,
+        adGroupId: doc.adGroupId,
+        adGroupName: doc.adGroupName,
+        platform: doc.platform,
+        adRefParam: doc.adRefParam,
+        sourceConversationId: doc._id,
+        attributionModel: ParentAttributionModel.MANUAL_OVERRIDE,
+        sourceType: ParentAttributionSourceType.MANUAL,
+      });
+    }
+
     return doc;
   }
 
@@ -487,6 +806,9 @@ export class ChatbotService {
       { _id: new Types.ObjectId(conversationId.toString()) },
       { lastMessageAt: new Date(), $inc: { messageCount: 1 } },
     );
+
+    // Push the new message to all staff clients watching this conversation via WebSocket
+    this.chatbotGateway.emitNewMessage(conversationId.toString(), saved.toObject());
 
     return saved;
   }
@@ -559,15 +881,17 @@ export class ChatbotService {
       adRefParam,
     );
 
-    // Save incoming customer message
-    await this.saveMessage(
-      conv._id,
-      content,
-      SenderType.CUSTOMER,
-      customerName || conv.customerName,
-      undefined,
-      platformMessageId,
-    );
+    const normalizedContent = String(content || '').trim();
+    if (normalizedContent) {
+      await this.saveMessage(
+        conv._id,
+        normalizedContent,
+        SenderType.CUSTOMER,
+        customerName || conv.customerName,
+        undefined,
+        platformMessageId,
+      );
+    }
 
     // Update customer name if provided and not set yet
     if (customerName && !conv.customerName) {
@@ -576,7 +900,7 @@ export class ChatbotService {
     }
 
     // AI auto-reply if enabled
-    if (conv.status === ConversationStatus.AI_HANDLING && fanpage.aiAutoReplyEnabled) {
+    if (normalizedContent && conv.status === ConversationStatus.AI_HANDLING && fanpage.aiAutoReplyEnabled) {
       try {
         const aiReply = await this.generateAIReply(conv, fanpage);
         if (aiReply) {
@@ -592,6 +916,12 @@ export class ChatbotService {
         this.logger.error(`AI reply failed for conv ${conv.conversationCode}: ${err.message}`);
       }
     }
+
+    // Notify connected staff clients about the updated conversation in real-time
+    const updatedConv = await this.conversationModel.findById(conv._id).lean();
+    if (updatedConv) {
+      this.chatbotGateway.emitConversationUpdated(updatedConv);
+    }
   }
 
   async generateAIReply(conv: ConversationDocument, fanpage: FanpageDocument): Promise<string | null> {
@@ -606,13 +936,6 @@ export class ChatbotService {
       return null;
     }
 
-    // Build conversation context (last 20 messages)
-    const recentMessages = await this.messageModel
-      .find({ conversationId: conv._id })
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .lean();
-
     // Build system prompt
     const systemPromptParts: string[] = [];
     if (tokenData.systemPromptPrefix?.trim()) {
@@ -626,13 +949,31 @@ export class ChatbotService {
     }
     const systemPrompt = systemPromptParts.join('\n\n');
 
-    // Build messages array for OpenAI
+    // Build conversation context with token budget management.
+    // Rough estimate: ~4 chars per token (conservative; works for mixed VN/EN text).
+    const MAX_CONTEXT_TOKENS = 7000; // leave ~1000 for the response
+    const systemTokenEstimate = Math.ceil(systemPrompt.length / 4);
+    let remainingTokenBudget = MAX_CONTEXT_TOKENS - systemTokenEstimate;
+
+    const recentMessages = await this.messageModel
+      .find({ conversationId: conv._id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+
+    // Walk from newest to oldest, include messages that fit within the budget
+    const includedMessages: typeof recentMessages = [];
+    for (const msg of recentMessages) {
+      const tokenEstimate = Math.ceil(msg.content.length / 4) + 4; // +4 for role overhead
+      if (remainingTokenBudget - tokenEstimate < 0) break;
+      remainingTokenBudget -= tokenEstimate;
+      includedMessages.unshift(msg); // keep chronological order
+    }
+
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
     ];
-
-    // Add messages in chronological order (reverse since we sorted desc)
-    for (const msg of recentMessages.reverse()) {
+    for (const msg of includedMessages) {
       if (msg.senderType === SenderType.CUSTOMER) {
         messages.push({ role: 'user', content: msg.content });
       } else if (msg.senderType === SenderType.AI || msg.senderType === SenderType.HUMAN_AGENT) {
@@ -640,40 +981,73 @@ export class ChatbotService {
       }
     }
 
-    // Call OpenAI API
-    try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokenData.key}`,
-        },
-        body: JSON.stringify({
-          model: tokenData.model,
-          messages,
-          temperature: tokenData.temperature,
-          max_tokens: tokenData.maxTokens,
-        }),
-      });
+    // Call OpenAI with exponential-backoff retry (max 3 attempts)
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${tokenData.key}`,
+          },
+          body: JSON.stringify({
+            model: tokenData.model,
+            messages,
+            temperature: tokenData.temperature,
+            max_tokens: tokenData.maxTokens,
+          }),
+        });
 
-      if (!response.ok) {
-        const errBody = await response.text();
-        throw new Error(`OpenAI API error ${response.status}: ${errBody}`);
-      }
+        if (!response.ok) {
+          const errBody = await response.text();
+          const err = new Error(`OpenAI API error ${response.status}: ${errBody}`);
 
-      const result = await response.json() as any;
-      return result.choices?.[0]?.message?.content || null;
-    } catch (err: any) {
-      this.logger.error(`OpenAI API call failed: ${err.message}`);
-      // Mark token as expired if auth error
-      if (err.message?.includes('401')) {
-        await this.openaiTokenModel.updateOne(
-          { _id: fanpage.openaiTokenId },
-          { status: OpenAITokenStatus.EXPIRED },
-        );
+          // 401 Unauthorized → mark token expired immediately, do not retry
+          if (response.status === 401) {
+            await this.openaiTokenModel.updateOne(
+              { _id: fanpage.openaiTokenId },
+              { status: OpenAITokenStatus.EXPIRED },
+            );
+            throw err;
+          }
+
+          // 400 Bad Request → likely token-length issue, do not retry
+          if (response.status === 400) {
+            throw err;
+          }
+
+          // 429 / 5xx → retryable
+          lastError = err;
+          if (attempt < MAX_RETRIES) {
+            const delay = Math.pow(2, attempt) * 500; // 1s, 2s
+            this.logger.warn(`OpenAI attempt ${attempt} failed (${response.status}), retrying in ${delay}ms`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          throw err;
+        }
+
+        const result = await response.json() as any;
+        return result.choices?.[0]?.message?.content || null;
+      } catch (err: any) {
+        lastError = err;
+        // Non-network errors (e.g. 401, 400 thrown above): propagate immediately
+        if (err.message?.includes('401') || err.message?.includes('400')) {
+          this.logger.error(`OpenAI permanent error: ${err.message}`);
+          throw err;
+        }
+        if (attempt < MAX_RETRIES) {
+          const delay = Math.pow(2, attempt) * 500;
+          this.logger.warn(`OpenAI attempt ${attempt} error: ${err.message}, retrying in ${delay}ms`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       }
-      throw err;
     }
+
+    this.logger.error(`OpenAI API failed after ${MAX_RETRIES} attempts: ${lastError?.message}`);
+    throw lastError!;
   }
 
   // ─── Platform Messaging ─────────────────────────────────────
@@ -689,7 +1063,7 @@ export class ChatbotService {
   }
 
   private async sendFacebookMessage(pageAccessToken: string, recipientId: string, text: string) {
-    const url = 'https://graph.facebook.com/v21.0/me/messages';
+    const url = 'https://graph.facebook.com/v25.0/me/messages';
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -733,17 +1107,24 @@ export class ChatbotService {
   async resolveAdGroup(adRefParam: string, fanpage: any): Promise<{ adGroupId: Types.ObjectId; adGroupName: string } | null> {
     if (!adRefParam) return null;
 
-    // Try direct match by platformCampaignId
-    let adGroup = await this.adGroupModel.findOne({
-      platformCampaignId: adRefParam,
-      status: 'ACTIVE',
-    }).lean();
+    const normalizedRef = adRefParam.trim();
+    const baseFilter: FilterQuery<AdGroupDocument> = {
+      $or: [
+        { platformCampaignId: normalizedRef },
+        { trackingKeys: normalizedRef },
+        { groupCode: normalizedRef },
+      ],
+    };
+    if (fanpage.adAccountId) {
+      baseFilter.adAccountId = fanpage.adAccountId;
+    }
 
-    // If not found, try matching via fanpage's linked ad account
+    let adGroup = await this.adGroupModel.findOne(baseFilter).lean();
+
     if (!adGroup && fanpage.adAccountId) {
       adGroup = await this.adGroupModel.findOne({
         adAccountId: fanpage.adAccountId,
-        platformCampaignId: adRefParam,
+        name: normalizedRef,
       }).lean();
     }
 
@@ -761,7 +1142,9 @@ export class ChatbotService {
       throw new BadRequestException('Hội thoại này đã có lead');
     }
 
-    // Generate lead code
+    const saleOwner = await this.resolveConversationSaleOwner(conv, dto, user, 'lead');
+
+    // Generate lead code outside transaction (read-only, race-safe via the unique index)
     const year = new Date().getFullYear();
     const prefix = `LEAD-${year}-`;
     const last = await this.leadModel
@@ -775,42 +1158,59 @@ export class ChatbotService {
     }
     const leadCode = `${prefix}${String(nextNum).padStart(4, '0')}`;
 
-    // Map platform to lead source
-    const sourceMap: Record<string, string> = {
-      FACEBOOK: 'FACEBOOK',
-      TIKTOK: 'TIKTOK',
-    };
+    const sourceMap: Record<string, string> = { FACEBOOK: 'FACEBOOK', TIKTOK: 'TIKTOK' };
 
-    const lead = new this.leadModel({
-      leadCode,
-      parentName: dto.parentName,
-      parentPhone: dto.parentPhone,
-      parentEmail: dto.parentEmail,
-      studentName: dto.studentName,
-      interestedSubjects: dto.interestedSubjects,
-      source: sourceMap[conv.platform] || 'OTHER',
-      adGroupId: conv.adGroupId,
-      adGroupName: conv.adGroupName,
-      saleId: user.sub,
-      saleName: user.fullName,
-      assignedAt: new Date(),
-      status: LeadStatus.NEW,
-      notes: dto.notes,
-      assignmentHistory: [{
-        saleId: new Types.ObjectId(user.sub),
-        saleName: user.fullName,
-        assignedAt: new Date(),
-      }],
-    });
+    const mongoSession = await this.connection.startSession();
+    let saved: LeadDocument;
+    try {
+      await mongoSession.withTransaction(async () => {
+        const lead = new this.leadModel({
+          leadCode,
+          parentName: dto.parentName,
+          parentPhone: dto.parentPhone,
+          parentEmail: dto.parentEmail,
+          studentName: dto.studentName,
+          interestedSubjects: dto.interestedSubjects,
+          source: sourceMap[conv.platform] || 'OTHER',
+          adGroupId: conv.adGroupId,
+          adGroupName: conv.adGroupName,
+          saleId: saleOwner.saleId,
+          saleName: saleOwner.saleName,
+          assignedAt: new Date(),
+          status: LeadStatus.NEW,
+          notes: dto.notes,
+          assignmentHistory: [{
+            saleId: saleOwner.saleId,
+            saleName: saleOwner.saleName,
+            assignedAt: new Date(),
+          }],
+        });
 
-    const saved = await lead.save();
+        saved = await lead.save({ session: mongoSession });
 
-    // Link lead to conversation
-    conv.leadId = saved._id as Types.ObjectId;
-    conv.customerName = dto.parentName;
-    conv.customerPhone = dto.parentPhone;
-    await conv.save();
+        // Link lead to conversation atomically
+        conv.leadId = saved._id as Types.ObjectId;
+        conv.customerName = dto.parentName;
+        conv.customerPhone = dto.parentPhone;
+        await conv.save({ session: mongoSession });
 
+        await this.marketingAttributionService.upsertParentAttribution({
+          parentPhone: dto.parentPhone,
+          adGroupId: conv.adGroupId,
+          adGroupName: conv.adGroupName,
+          platform: conv.platform,
+          adRefParam: conv.adRefParam,
+          sourceConversationId: conv._id,
+          sourceLeadId: saved._id,
+          sourceType: ParentAttributionSourceType.LEAD,
+        }, mongoSession);
+      });
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    // Audit log is intentionally outside the transaction — it must never
+    // roll back a successful Lead creation.
     await this.auditLogService.log({
       userId: user.sub,
       userEmail: user.email,
@@ -818,12 +1218,12 @@ export class ChatbotService {
       userRole: user.role,
       action: AuditAction.CREATE,
       module: 'LEADS' as any,
-      targetId: saved._id?.toString(),
-      targetName: saved.leadCode,
-      description: `Tạo lead từ hội thoại ${conv.conversationCode}: ${saved.parentName} - ${saved.parentPhone}`,
+      targetId: saved!._id?.toString(),
+      targetName: saved!.leadCode,
+      description: `Tạo lead từ hội thoại ${conv.conversationCode}: ${saved!.parentName} - ${saved!.parentPhone}`,
     });
 
-    return saved;
+    return saved!;
   }
 
   async createOrderFromConversation(conversationId: string, dto: CreateOrderFromConvDto, user: JwtPayload) {
@@ -834,7 +1234,9 @@ export class ChatbotService {
       throw new BadRequestException('Hội thoại này đã có đơn hàng');
     }
 
-    // Generate order code
+    const saleOwner = await this.resolveConversationSaleOwner(conv, dto, user, 'don hang');
+
+    // Generate order code outside transaction (read-only)
     const year = new Date().getFullYear();
     const prefix = `ORD-${year}-`;
     const last = await this.orderModel
@@ -848,12 +1250,8 @@ export class ChatbotService {
     }
     const orderCode = `${prefix}${String(nextNum).padStart(4, '0')}`;
 
-    const sourceMap: Record<string, string> = {
-      FACEBOOK: 'FACEBOOK',
-      TIKTOK: 'TIKTOK',
-    };
+    const sourceMap: Record<string, string> = { FACEBOOK: 'FACEBOOK', TIKTOK: 'TIKTOK' };
 
-    // Calculate totals
     const items = dto.items.map(item => ({
       productId: new Types.ObjectId(item.productId),
       productName: item.productName,
@@ -863,38 +1261,60 @@ export class ChatbotService {
       amount: item.quantity * item.unitPrice,
     }));
     const totalAmount = items.reduce((sum, item) => sum + item.amount, 0);
-
     const discountAmount = dto.discountAmount || 0;
     const finalAmount = totalAmount - discountAmount;
 
-    const order = new this.orderModel({
-      orderCode,
-      orderType: dto.orderType || 'NEW_ENROLLMENT',
-      parentName: dto.parentName,
-      parentPhone: dto.parentPhone,
-      studentName: dto.studentName,
-      leadSource: sourceMap[conv.platform] || 'OTHER',
-      leadId: conv.leadId,
-      adGroupId: conv.adGroupId,
-      adGroupName: conv.adGroupName,
-      items,
-      totalAmount,
-      discountAmount,
-      discountReason: dto.discountReason,
-      finalAmount,
-      paymentPlan: dto.paymentPlan || 'FULL',
-      status: 'DRAFT',
-      saleId: new Types.ObjectId(user.sub),
-      saleName: user.fullName,
-      notes: dto.notes,
-    });
+    const mongoSession = await this.connection.startSession();
+    let saved: any;
+    try {
+      await mongoSession.withTransaction(async () => {
+        const order = new this.orderModel({
+          orderCode,
+          orderType: dto.orderType || 'NEW_ENROLLMENT',
+          parentName: dto.parentName,
+          parentPhone: dto.parentPhone,
+          studentName: dto.studentName,
+          leadSource: sourceMap[conv.platform] || 'OTHER',
+          leadId: conv.leadId,
+          adGroupId: conv.adGroupId,
+          adGroupName: conv.adGroupName,
+          items,
+          totalAmount,
+          discountAmount,
+          discountReason: dto.discountReason,
+          finalAmount,
+          paymentPlan: dto.paymentPlan || 'FULL',
+          status: 'DRAFT',
+          saleId: saleOwner.saleId,
+          saleName: saleOwner.saleName,
+          notes: dto.notes,
+        });
 
-    const saved = await order.save();
+        saved = await order.save({ session: mongoSession });
 
-    // Link order to conversation
-    conv.orderId = saved._id as Types.ObjectId;
-    await conv.save();
+        // Link order to conversation atomically
+        conv.orderId = saved._id as Types.ObjectId;
+        conv.customerName = dto.parentName;
+        conv.customerPhone = dto.parentPhone;
+        await conv.save({ session: mongoSession });
 
+        await this.marketingAttributionService.upsertParentAttribution({
+          parentPhone: dto.parentPhone,
+          adGroupId: saved.adGroupId,
+          adGroupName: saved.adGroupName,
+          platform: conv.platform,
+          adRefParam: conv.adRefParam,
+          sourceConversationId: conv._id,
+          sourceLeadId: conv.leadId,
+          sourceOrderId: saved._id,
+          sourceType: ParentAttributionSourceType.ORDER,
+        }, mongoSession);
+      });
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    // Audit log outside transaction — must not roll back a successful Order creation.
     await this.auditLogService.log({
       userId: user.sub,
       userEmail: user.email,
@@ -903,7 +1323,7 @@ export class ChatbotService {
       action: AuditAction.CREATE,
       module: 'ORDERS' as any,
       targetId: saved._id?.toString(),
-      targetName: (saved as any).orderCode,
+      targetName: saved.orderCode,
       description: `Tạo đơn hàng từ hội thoại ${conv.conversationCode}: ${dto.parentName} - ${dto.parentPhone}`,
     });
 

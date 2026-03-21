@@ -23,6 +23,14 @@ export class MessagesController {
     return this.service.listConversations(req.user.sub);
   }
 
+  @Get('conversations/:id')
+  getConversation(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') conversationId: string,
+  ) {
+    return this.service.getConversation(req.user.sub, conversationId);
+  }
+
   @Get('conversations/:id/messages')
   listMessages(
     @Req() req: AuthenticatedRequest,
@@ -40,7 +48,12 @@ export class MessagesController {
 
   @Post('send')
   sendMessage(@Body() dto: SendMessageDto, @Req() req: AuthenticatedRequest) {
-    return this.service.sendMessage(req.user.sub, dto.receiverId, dto.content);
+    return this.service.sendMessage(
+      req.user.sub,
+      dto.receiverId,
+      dto.content,
+      dto.contextStudentId,
+    );
   }
 
   @Post('conversations/:id/send')

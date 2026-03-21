@@ -7,7 +7,9 @@ import { ProductService, ProductItem } from '../services/product.service';
 import { LeadService, LeadItem } from '../services/lead.service';
 import { AdsService, AdGroupItem } from '../services/ads.service';
 import { AuthService } from '../services/auth.service';
+import { UserService, UserItem } from '../services/user.service';
 import { Role } from '../models/role.enum';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Nháp', SUBMITTED: 'Chờ duyệt', APPROVED: 'Đã duyệt', REJECTED: 'Từ chối',
@@ -28,7 +30,7 @@ const SOURCE_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -37,6 +39,8 @@ const SOURCE_LABELS: Record<string, string> = {
     </div>
     <button class="primary" (click)="openCreate()">+ Tạo đơn</button>
   </header>
+
+  <app-flow-guide featureKey="orders"></app-flow-guide>
 
   <!-- Pipeline -->
   <section class="pipeline" *ngIf="pipeline()">
@@ -115,6 +119,16 @@ const SOURCE_LABELS: Record<string, string> = {
               <option *ngFor="let g of orderAdGroups()" [value]="g._id">{{g.name}}</option>
             </select>
             <small *ngIf="form.adGroupFromLead" style="color:#64748b;">Từ Lead</small>
+          </label>
+          <label *ngIf="!isSaleRole">Sale phá»¥ trÃ¡ch
+            <select name="saleId" [(ngModel)]="form.saleId">
+              <option value="">-- Tá»± suy tá»« lead/há»c viÃªn --</option>
+              <option *ngFor="let sale of sales()" [value]="sale._id">{{sale.fullName}}</option>
+            </select>
+            <small style="color:#64748b;">Náº¿u lead/há»c viÃªn Ä‘Ã£ cÃ³ owner, há»‡ thá»‘ng sáº½ tá»± khÃ³a theo owner Ä‘Ã³.</small>
+          </label>
+          <label *ngIf="isSaleRole">Sale phá»¥ trÃ¡ch
+            <input [value]="currentUserName" disabled />
           </label>
         </div>
 
@@ -322,6 +336,7 @@ export class OrdersComponent implements OnInit {
   items = signal<OrderData[]>([]);
   pipeline = signal<OrderPipeline | null>(null);
   products = signal<ProductItem[]>([]);
+  sales = signal<UserItem[]>([]);
   showModal = signal(false);
   detailOrder = signal<OrderData | null>(null);
   error = signal('');
@@ -332,6 +347,9 @@ export class OrdersComponent implements OnInit {
   filterType = '';
 
   canApprove = false;
+  isSaleRole = false;
+  currentUserId = '';
+  currentUserName = '';
 
   form: any = this.emptyForm();
 
@@ -348,12 +366,20 @@ export class OrdersComponent implements OnInit {
     private leadService: LeadService,
     private adsService: AdsService,
     private auth: AuthService,
+    private userService: UserService,
     private route: ActivatedRoute,
   ) {}
 
   ngOnInit() {
-    const role = this.auth.userSignal()?.role;
+    const currentUser = this.auth.userSignal();
+    const role = currentUser?.role;
     this.canApprove = role === Role.DIRECTOR || role === Role.OPS;
+    this.isSaleRole = role === Role.SALE;
+    this.currentUserId = currentUser?.sub || '';
+    this.currentUserName = currentUser?.fullName || '';
+    if (!this.isSaleRole) {
+      void this.loadSales();
+    }
     this.reload();
 
     // Check if navigated from lead conversion
@@ -369,6 +395,7 @@ export class OrdersComponent implements OnInit {
           this.form.studentGrade = lead.studentGrade || '';
           this.form.leadId = lead._id;
           this.form.leadSource = lead.source;
+          this.form.saleId = lead.saleId || this.form.saleId;
           if ((lead as any).adGroupId) {
             this.form.adGroupId = (lead as any).adGroupId;
             this.form.adGroupName = (lead as any).adGroupName || '';
@@ -396,11 +423,15 @@ export class OrdersComponent implements OnInit {
   emptyForm(): any {
     return {
       orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '',
-      studentName: '', studentGrade: '', leadSource: '', leadId: '',
+      studentName: '', studentGrade: '', leadSource: '', leadId: '', saleId: this.isSaleRole ? this.currentUserId : '',
       adGroupId: '', adGroupName: '', adGroupFromLead: false,
       items: [this.emptyItem()],
       discountAmount: 0, discountReason: '', consultationNotes: '',
     };
+  }
+
+  async loadSales() {
+    this.sales.set(await this.userService.listSales());
   }
 
   async onLeadSourceChange() {

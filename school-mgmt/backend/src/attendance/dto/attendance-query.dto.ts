@@ -1,4 +1,5 @@
-import { IsDateString, IsMongoId, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsDateString, IsInt, IsMongoId, IsNotEmpty, IsOptional, Max, Min } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class AttendanceByClassQueryDto {
   @IsDateString()
@@ -28,6 +29,19 @@ export class AttendanceReportQueryDto {
   @IsMongoId()
   @IsOptional()
   classId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(500)
+  limit?: number = 20;
 }
 
 export class ParentAttendanceQueryDto {

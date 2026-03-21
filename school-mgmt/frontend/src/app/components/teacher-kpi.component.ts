@@ -3,12 +3,14 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule, Router } from '@angular/router';
 import { DashboardService } from '../services/dashboard.service';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 @Component({
   selector: 'app-teacher-kpi',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule],
+  imports: [CommonModule, FormsModule, RouterModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="teacher-kpi"></app-flow-guide>
   <div class="kpi-page">
     <div class="header">
       <h2>KPI & Đánh giá hiệu suất giáo viên</h2>

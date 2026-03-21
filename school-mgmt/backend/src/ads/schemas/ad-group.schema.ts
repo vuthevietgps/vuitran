@@ -13,6 +13,8 @@ export enum AdGroupStatus {
 export enum AdGroupSyncSource {
   MANUAL = 'MANUAL',
   FACEBOOK_BM = 'FACEBOOK_BM',
+  GOOGLE_MCC = 'GOOGLE_MCC',
+  TIKTOK_BC = 'TIKTOK_BC',
 }
 
 @Schema({ timestamps: true })
@@ -34,6 +36,9 @@ export class AdGroup {
 
   @Prop({ required: true, trim: true })
   platformCampaignId!: string;
+
+  @Prop({ type: [String], default: [] })
+  trackingKeys?: string[];
 
   @Prop({ type: String, enum: Object.values(AdGroupStatus), default: AdGroupStatus.ACTIVE })
   status!: string;
@@ -64,11 +69,30 @@ export class AdGroup {
 
   @Prop({ type: String, trim: true })
   createdByName?: string;
+
+  // ─── Cached revenue snapshot (populated by syncTrueRevenue) ───────────────
+
+  /** Tổng số Leads thu được từ nhóm quảng cáo này */
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalLeads?: number;
+
+  /** Tổng chi phí quảng cáo (VNĐ) — lấy từ AdCost.spend */
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalSpend?: number;
+
+  /** Tổng doanh thu thực tế (VNĐ) — lấy từ Invoice APPROVED/PAID */
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalRevenue?: number;
+
+  /** Thời điểm đồng bộ doanh thu gần nhất */
+  @Prop({ type: Date })
+  revenueLastSyncedAt?: Date;
 }
 
 export const AdGroupSchema = SchemaFactory.createForClass(AdGroup);
 AdGroupSchema.index({ adAccountId: 1 });
 AdGroupSchema.index({ adAccountId: 1, platformCampaignId: 1 }, { unique: true });
 AdGroupSchema.index({ platform: 1, status: 1 });
+AdGroupSchema.index({ trackingKeys: 1 });
 AdGroupSchema.index({ createdAt: -1 });
 

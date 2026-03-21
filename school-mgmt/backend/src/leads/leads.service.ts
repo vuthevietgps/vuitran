@@ -13,6 +13,11 @@ import { AuditAction } from '../audit-log/schemas/audit-log.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { MarketingAttributionService } from '../marketing-attribution/marketing-attribution.service';
+import {
+  ParentAttributionModel,
+  ParentAttributionSourceType,
+} from '../marketing-attribution/schemas/parent-attribution.schema';
 
 @Injectable()
 export class LeadsService {
@@ -22,6 +27,7 @@ export class LeadsService {
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
     private auditLogService: AuditLogService,
     private notificationsService: NotificationsService,
+    private marketingAttributionService: MarketingAttributionService,
   ) {}
 
   private getActorId(user: any): string {
@@ -75,6 +81,17 @@ export class LeadsService {
     }
 
     const saved = await lead.save();
+
+    await this.marketingAttributionService.upsertParentAttribution({
+      parentPhone: saved.parentPhone,
+      parentEmail: saved.parentEmail,
+      adGroupId: saved.adGroupId,
+      adGroupName: saved.adGroupName,
+      platform: saved.source,
+      tracking: saved.tracking,
+      sourceLeadId: saved._id,
+      sourceType: ParentAttributionSourceType.LEAD,
+    });
 
     await this.auditLogService.log({
       userId: actorId,
@@ -154,6 +171,20 @@ export class LeadsService {
     this.assertSaleLeadAccess(lead, user);
     lead.set(dto as any);
     await lead.save();
+
+    await this.marketingAttributionService.upsertParentAttribution({
+      parentPhone: lead.parentPhone,
+      parentEmail: lead.parentEmail,
+      adGroupId: lead.adGroupId,
+      adGroupName: lead.adGroupName,
+      platform: lead.source,
+      tracking: lead.tracking,
+      sourceLeadId: lead._id,
+      attributionModel: dto.adGroupId !== undefined ? ParentAttributionModel.MANUAL_OVERRIDE : undefined,
+      sourceType: dto.adGroupId !== undefined
+        ? ParentAttributionSourceType.MANUAL
+        : ParentAttributionSourceType.LEAD,
+    });
 
     await this.auditLogService.log({
       userId: this.getActorId(user),

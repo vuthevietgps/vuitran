@@ -29,10 +29,15 @@ import { Wallet, WalletDocument } from '../wallets/schemas/wallet.schema';
 import { AdCost, AdCostDocument } from '../ads/schemas/ad-cost.schema';
 import { AdGroup, AdGroupDocument } from '../ads/schemas/ad-group.schema';
 import { AdsService } from '../ads/ads.service';
+import { AdsAnalyticsService } from '../ads/ads-analytics.service';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Attendance, AttendanceDocument, AttendanceStatus } from '../attendance/schemas/attendance.schema';
+import {
+  Attendance,
+  AttendanceDocument,
+  COUNTED_ATTENDANCE_STATUSES,
+} from '../attendance/schemas/attendance.schema';
 
 type FinancialReportBasis = 'cash' | 'accrual';
 
@@ -60,6 +65,7 @@ export class FinancialControlService {
     private readonly loanAggregate: LoanFinancialAggregateService,
     private readonly bankFundService: FinancialControlBankFundService,
     @Optional() private readonly adsService?: AdsService,
+    @Optional() private readonly adsAnalyticsService?: AdsAnalyticsService,
   ) {}
 
   // Delegate bank/fund operations to dedicated service to keep this class focused on reporting.
@@ -710,7 +716,7 @@ export class FinancialControlService {
         {
           $match: {
             date: { $gte: monthStart, $lt: monthEndExclusive },
-            status: AttendanceStatus.PRESENT,
+            status: { $in: [...COUNTED_ATTENDANCE_STATUSES] },
             sessionId: { $exists: true, $ne: null },
           },
         },
@@ -1449,7 +1455,7 @@ export class FinancialControlService {
     totalOptimalDailyBudget: number;
     groupBreakdown: any[];
   }> {
-    if (!this.adsService) {
+    if (!this.adsAnalyticsService) {
       return this.calculateOptimalMarketingBudgetLegacy();
     }
 
@@ -1476,7 +1482,7 @@ export class FinancialControlService {
       const recentAverageBudget = Math.round(Number(recentSpend[0]?.totalSpend || 0) / 30);
       const baselineBudget = Math.max(0, configuredBudget, recentAverageBudget);
 
-      const suggestionResult = await this.adsService.getSuggestions(
+      const suggestionResult = await this.adsAnalyticsService.getSuggestions(
         this.formatDateOnlyUtc(start),
         this.formatDateOnlyUtc(end),
         baselineBudget,

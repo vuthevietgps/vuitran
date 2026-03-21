@@ -3,8 +3,6 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
-// ─── Interfaces ──────────────────────────────────────────────────
-
 export enum TicketType {
   DISPUTE = 'DISPUTE',
   REFUND_REQUEST = 'REFUND_REQUEST',
@@ -20,6 +18,7 @@ export enum TicketStatus {
   OPEN = 'OPEN',
   IN_PROGRESS = 'IN_PROGRESS',
   WAITING_INFO = 'WAITING_INFO',
+  WAITING_REFUND = 'WAITING_REFUND',
   RESOLVED = 'RESOLVED',
   CLOSED = 'CLOSED',
   CANCELLED = 'CANCELLED',
@@ -33,30 +32,31 @@ export enum TicketPriority {
 }
 
 export const TICKET_TYPE_LABELS: Record<string, string> = {
-  [TicketType.DISPUTE]: 'Tranh chấp buổi học',
-  [TicketType.REFUND_REQUEST]: 'Yêu cầu hoàn tiền',
-  [TicketType.TEACHER_COMPLAINT]: 'Khiếu nại giáo viên',
-  [TicketType.PARENT_COMPLAINT]: 'Khiếu nại phụ huynh',
-  [TicketType.SCHEDULE_ISSUE]: 'Vấn đề lịch học',
-  [TicketType.PAYMENT_ISSUE]: 'Vấn đề thanh toán',
-  [TicketType.SUBSTITUTE_TEACHER]: 'GV dạy thay',
-  [TicketType.OTHER]: 'Khác',
+  [TicketType.DISPUTE]: 'Tranh ch\u1EA5p bu\u1ED5i h\u1ECDc',
+  [TicketType.REFUND_REQUEST]: 'Y\u00EAu c\u1EA7u ho\u00E0n ti\u1EC1n',
+  [TicketType.TEACHER_COMPLAINT]: 'Khi\u1EBFu n\u1EA1i gi\u00E1o vi\u00EAn',
+  [TicketType.PARENT_COMPLAINT]: 'Khi\u1EBFu n\u1EA1i ph\u1EE5 huynh',
+  [TicketType.SCHEDULE_ISSUE]: 'V\u1EA5n \u0111\u1EC1 l\u1ECBch h\u1ECDc',
+  [TicketType.PAYMENT_ISSUE]: 'V\u1EA5n \u0111\u1EC1 thanh to\u00E1n',
+  [TicketType.SUBSTITUTE_TEACHER]: 'GV d\u1EA1y thay',
+  [TicketType.OTHER]: 'Kh\u00E1c',
 };
 
 export const TICKET_STATUS_LABELS: Record<string, string> = {
-  [TicketStatus.OPEN]: 'Mới tạo',
-  [TicketStatus.IN_PROGRESS]: 'Đang xử lý',
-  [TicketStatus.WAITING_INFO]: 'Chờ thông tin',
-  [TicketStatus.RESOLVED]: 'Đã giải quyết',
-  [TicketStatus.CLOSED]: 'Đã đóng',
-  [TicketStatus.CANCELLED]: 'Đã hủy',
+  [TicketStatus.OPEN]: 'M\u1EDBi t\u1EA1o',
+  [TicketStatus.IN_PROGRESS]: '\u0110ang x\u1EED l\u00FD',
+  [TicketStatus.WAITING_INFO]: 'Ch\u1EDD th\u00F4ng tin',
+  [TicketStatus.WAITING_REFUND]: 'Ch\u1EDD ho\u00E0n ti\u1EC1n',
+  [TicketStatus.RESOLVED]: '\u0110\u00E3 gi\u1EA3i quy\u1EBFt',
+  [TicketStatus.CLOSED]: '\u0110\u00E3 \u0111\u00F3ng',
+  [TicketStatus.CANCELLED]: '\u0110\u00E3 h\u1EE7y',
 };
 
 export const TICKET_PRIORITY_LABELS: Record<string, string> = {
-  [TicketPriority.LOW]: 'Thấp',
-  [TicketPriority.MEDIUM]: 'Trung bình',
+  [TicketPriority.LOW]: 'Th\u1EA5p',
+  [TicketPriority.MEDIUM]: 'Trung b\u00ECnh',
   [TicketPriority.HIGH]: 'Cao',
-  [TicketPriority.URGENT]: 'Khẩn cấp',
+  [TicketPriority.URGENT]: 'Kh\u1EA9n c\u1EA5p',
 };
 
 export interface TicketItem {
@@ -75,6 +75,7 @@ export interface TicketItem {
   studentId?: any;
   teacherId?: any;
   parentId?: any;
+  sourceConversationId?: string | { _id: string };
   resolution?: {
     summary: string;
     outcome: string;
@@ -111,12 +112,10 @@ export interface TicketListResult {
   meta: { total: number; page: number; limit: number; totalPages: number };
 }
 
-// ─── Service ─────────────────────────────────────────────────────
-
 @Injectable({ providedIn: 'root' })
 export class TicketService {
-  private base = `${environment.apiBase}/tickets`;
-  private http = inject(HttpClient);
+  private readonly base = `${environment.apiBase}/tickets`;
+  private readonly http = inject(HttpClient);
 
   private buildParams(params: Record<string, any>): HttpParams {
     let httpParams = new HttpParams();
@@ -128,7 +127,6 @@ export class TicketService {
     return httpParams;
   }
 
-  // ── List (OPS/DIRECTOR) ──
   async findAll(params: Record<string, string> = {}): Promise<TicketListResult> {
     return firstValueFrom(
       this.http.get<TicketListResult>(this.base, {
@@ -138,7 +136,6 @@ export class TicketService {
     );
   }
 
-  // ── My tickets (PARENT/TEACHER) ──
   async getMyTickets(params: Record<string, string> = {}): Promise<TicketListResult> {
     return firstValueFrom(
       this.http.get<TicketListResult>(`${this.base}/my-tickets`, {
@@ -148,7 +145,6 @@ export class TicketService {
     );
   }
 
-  // ── Assigned to me (OPS) ──
   async getAssignedToMe(params: Record<string, string> = {}): Promise<TicketListResult> {
     return firstValueFrom(
       this.http.get<TicketListResult>(`${this.base}/assigned-to-me`, {
@@ -158,40 +154,40 @@ export class TicketService {
     );
   }
 
-  // ── Detail ──
   async findById(id: string): Promise<TicketItem> {
     return firstValueFrom(
       this.http.get<TicketItem>(`${this.base}/${id}`, { withCredentials: true }),
     );
   }
 
-  // ── Create ──
   async create(data: any): Promise<TicketItem> {
     return firstValueFrom(
       this.http.post<TicketItem>(this.base, data, { withCredentials: true }),
     );
   }
 
-  // ── Update (priority/assign) ──
   async update(id: string, data: any): Promise<TicketItem> {
     return firstValueFrom(
       this.http.patch<TicketItem>(`${this.base}/${id}`, data, { withCredentials: true }),
     );
   }
 
-  // ── Comments ──
   async getComments(ticketId: string): Promise<TicketComment[]> {
     try {
-      const res = await firstValueFrom(
-        this.http.get<TicketComment[]>(`${this.base}/${ticketId}/comments`, { withCredentials: true }),
+      return await firstValueFrom(
+        this.http.get<TicketComment[]>(`${this.base}/${ticketId}/comments`, {
+          withCredentials: true,
+        }),
       );
-      return res;
     } catch {
       return [];
     }
   }
 
-  async addComment(ticketId: string, data: { content: string; isInternal?: boolean }): Promise<TicketComment> {
+  async addComment(
+    ticketId: string,
+    data: { content: string; isInternal?: boolean },
+  ): Promise<TicketComment> {
     return firstValueFrom(
       this.http.post<TicketComment>(`${this.base}/${ticketId}/comments`, data, {
         withCredentials: true,
@@ -199,7 +195,6 @@ export class TicketService {
     );
   }
 
-  // ── Workflow actions ──
   async startProcessing(id: string): Promise<TicketItem> {
     return firstValueFrom(
       this.http.post<TicketItem>(`${this.base}/${id}/start`, {}, { withCredentials: true }),
@@ -212,9 +207,14 @@ export class TicketService {
     );
   }
 
-  async resolve(id: string, data: { summary: string; outcome: string; refundAmount?: number }): Promise<TicketItem> {
+  async resolve(
+    id: string,
+    data: { summary: string; outcome: string; refundAmount?: number },
+  ): Promise<TicketItem> {
     return firstValueFrom(
-      this.http.post<TicketItem>(`${this.base}/${id}/resolve`, data, { withCredentials: true }),
+      this.http.post<TicketItem>(`${this.base}/${id}/resolve`, data, {
+        withCredentials: true,
+      }),
     );
   }
 
@@ -236,7 +236,6 @@ export class TicketService {
     );
   }
 
-  // ── Stats ──
   async getStats(): Promise<TicketStats> {
     return firstValueFrom(
       this.http.get<TicketStats>(`${this.base}/stats`, { withCredentials: true }),

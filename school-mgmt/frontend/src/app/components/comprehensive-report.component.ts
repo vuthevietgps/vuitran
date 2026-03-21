@@ -1,4 +1,5 @@
 import { Component, OnInit, computed, inject, signal } from '@angular/core';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -12,8 +13,9 @@ import { ClassItem, ClassService } from '../services/class.service';
 @Component({
   selector: 'app-comprehensive-report',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="comprehensive-report"></app-flow-guide>
     <div class="report-container">
       <h1>Bang diem danh tong hop</h1>
 

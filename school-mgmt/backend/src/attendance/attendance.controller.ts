@@ -34,14 +34,14 @@ export class AttendanceController {
 
   // Điểm danh một học sinh
   @Post('mark')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   markAttendance(@Body() dto: CreateAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.markAttendance(dto, req.user);
   }
 
   // Điểm danh nhiều học sinh cùng lúc
   @Post('bulk-mark')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   bulkMarkAttendance(@Body() dto: BulkAttendanceDto, @Req() req: AuthenticatedRequest) {
     return this.attendanceService.bulkMarkAttendance(dto, req.user);
   }
@@ -70,7 +70,7 @@ export class AttendanceController {
 
   // Cập nhật trạng thái điểm danh
   @Patch(':id')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   updateAttendance(
     @Param('id', ParseMongoIdPipe) id: string,
     @Body() dto: UpdateAttendanceDto,
@@ -156,6 +156,8 @@ export class AttendanceController {
       query.endDate,
       query.classId,
       req?.user,
+      query.page,
+      query.limit,
     );
   }
 }

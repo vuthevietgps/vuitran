@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsNumber, Min, IsEnum, IsOptional, IsDateString, IsBoolean } from 'class-validator';
-import { ExpenseCategory, RecurringFrequency } from '../schemas/expense.schema';
+import { IsString, IsNotEmpty, IsNumber, Min, IsEnum, IsOptional, IsDateString, IsBoolean, IsMongoId } from 'class-validator';
+import { ExpenseAllocationScope, ExpenseCategory, RecurringFrequency } from '../schemas/expense.schema';
 
 export class CreateExpenseDto {
   @IsString()
@@ -19,6 +19,26 @@ export class CreateExpenseDto {
 
   @IsEnum(ExpenseCategory)
   category!: string;
+
+  @IsEnum(ExpenseAllocationScope)
+  @IsOptional()
+  allocationScope?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  adGroupId?: string;
+
+  @IsString()
+  @IsOptional()
+  adGroupName?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  parentUserId?: string;
+
+  @IsString()
+  @IsOptional()
+  parentPhone?: string;
 
   @IsString()
   @IsOptional()

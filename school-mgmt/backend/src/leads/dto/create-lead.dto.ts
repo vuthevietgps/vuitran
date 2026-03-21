@@ -1,6 +1,7 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, IsDate, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { LeadSource } from '../schemas/lead.schema';
+import { TrackingAttributionDto } from '../../marketing-attribution/dto/tracking-attribution.dto';
 
 export class CreateLeadDto {
   @IsString()
@@ -57,4 +58,9 @@ export class CreateLeadDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ValidateNested()
+  @Type(() => TrackingAttributionDto)
+  @IsOptional()
+  tracking?: TrackingAttributionDto;
 }

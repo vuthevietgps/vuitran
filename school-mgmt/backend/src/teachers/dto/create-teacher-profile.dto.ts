@@ -1,11 +1,13 @@
 import {
   IsArray,
+  IsEmail,
   IsEnum,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  MinLength,
   Min,
   Max,
   ValidateNested,
@@ -63,10 +65,34 @@ export class BankInfoDto {
   branch?: string;
 }
 
+export class TeacherUserInfoDto {
+  @IsString()
+  @IsOptional()
+  fullName?: string;
+
+  @IsEmail()
+  @IsOptional()
+  email?: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @IsString()
+  @MinLength(6)
+  @IsOptional()
+  password?: string;
+}
+
 export class CreateTeacherProfileDto {
   @IsMongoId()
   @IsNotEmpty()
   userId!: string;
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  managedSales?: string[];
 
   @IsArray()
   @IsString({ each: true })
@@ -124,4 +150,9 @@ export class CreateTeacherProfileDto {
   @Type(() => BankInfoDto)
   @IsOptional()
   bankInfo?: BankInfoDto;
+
+  @ValidateNested()
+  @Type(() => TeacherUserInfoDto)
+  @IsOptional()
+  user?: TeacherUserInfoDto;
 }

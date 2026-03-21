@@ -12,6 +12,8 @@ import { LedgerEntry, LedgerEntrySchema } from './schemas/ledger-entry.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { BankAccount, BankAccountSchema } from '../financial-control/schemas/bank-account.schema';
+import { Student, StudentSchema } from '../students/schemas/student.schema';
+import { ParentAttribution, ParentAttributionSchema } from '../marketing-attribution/schemas/parent-attribution.schema';
 
 const walletReceiptPath = join(process.cwd(), 'uploads', 'wallets');
 if (!existsSync(walletReceiptPath)) mkdirSync(walletReceiptPath, { recursive: true });
@@ -40,6 +42,8 @@ const walletImageFilter = (req: any, file: Express.Multer.File, cb: any) => {
       { name: User.name, schema: UserSchema },
       { name: Invoice.name, schema: InvoiceSchema },
       { name: BankAccount.name, schema: BankAccountSchema },
+      { name: Student.name, schema: StudentSchema },
+      { name: ParentAttribution.name, schema: ParentAttributionSchema },
     ]),
     MulterModule.register({
       storage: walletReceiptStorage,

@@ -18,7 +18,7 @@ export class StudentsController {
   constructor(private readonly studentsService: StudentsService) {}
 
   @Get()
-  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.PARENT)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING, Role.PARENT)
   findAll(@Req() req: AuthenticatedRequest) {
     return this.studentsService.findAll(req.user);
   }
@@ -30,7 +30,7 @@ export class StudentsController {
   }
 
   @Get('report')
-  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
   getStudentReport(@Query() query: StudentReportQueryDto, @Req() req: AuthenticatedRequest) {
     return this.studentsService.getStudentReport(query.classId, query.searchTerm, req.user);
   }
@@ -48,7 +48,7 @@ export class StudentsController {
   }
 
   @Get(':id')
-  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.PARENT)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING, Role.PARENT)
   findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.studentsService.findOne(id, req.user);
   }

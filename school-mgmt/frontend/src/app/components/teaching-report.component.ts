@@ -1,16 +1,33 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Subject } from 'rxjs';
+import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
 import { AuthService } from '../services/auth.service';
 import { PayrollItem, PayrollPreview, PayrollService } from '../services/payroll.service';
 import { SessionService, SessionItem } from '../services/session.service';
 import { UserItem, UserService } from '../services/user.service';
+import { ReportTemplateService, ReportTemplate } from '../services/report-template.service';
+import { FlowGuideComponent } from './shared/flow-guide.component';
+import {
+  TeachingReportPendingComponent,
+  PendingMeta,
+} from './shared/teaching-report-pending.component';
+import { TeachingReportCompletedComponent } from './shared/teaching-report-completed.component';
+import { ReportFormValues } from './shared/teaching-report-form.component';
 
 @Component({
   selector: 'app-teaching-report',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [
+    CommonModule,
+    FormsModule,
+    FlowGuideComponent,
+    TeachingReportPendingComponent,
+    TeachingReportCompletedComponent,
+  ],
   template: `
+  <app-flow-guide featureKey="teaching-report"></app-flow-guide>
   <div class="page">
     <div class="header">
       <h2>Báo cáo giảng dạy</h2>
@@ -47,6 +64,7 @@ import { UserItem, UserService } from '../services/user.service';
           <input
             type="text"
             [(ngModel)]="teacherCodeSearch"
+            (ngModelChange)="onTeacherCodeInput($event)"
             list="teacher-code-options"
             placeholder="VD: GV001"
           />
@@ -109,212 +127,30 @@ import { UserItem, UserService } from '../services/user.service';
 
     <!-- ═══ PENDING REPORT ═══ -->
     <div *ngIf="activeTab === 'pending' && !loading()">
-      <div *ngIf="pendingSessions().length === 0 && !loading()" class="empty">
-        🎉 Tất cả buổi học đã có báo cáo!
-      </div>
-
-      <div *ngFor="let s of pendingSessions(); trackBy: trackById" class="session-card" [class.editing]="editingId === s._id">
-        <div class="session-header" (click)="handlePendingClick(s)">
-          <div class="session-info" *ngIf="isTeacher(); else pendingDefaultInfo">
-            <span>Ngày: {{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
-            <span class="divider">|</span>
-            <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
-            <span class="divider">|</span>
-            <span>Lớp: {{ s.classId.name || 'N/A' }}</span>
-            <span class="divider">|</span>
-            <span>Lương GV: {{ formatCurrency(s.teacherPayout) }}</span>
-            <span class="divider">|</span>
-            <span class="deadline-badge" [class.overdue]="isOverDeadline(s)" [class.near-deadline]="isNearDeadline(s)">
-              {{ isOverDeadline(s) ? 'Trễ ' + getOverdueHours(s) + 'h' : 'Còn ' + getRemainingHours(s) + 'h' }}
-            </span>
-            <span class="divider">|</span>
-            <span>{{ s.durationMinutes || 60 }} phút</span>
-            <span class="divider">|</span>
-            <span class="badge warning">Chưa có báo cáo</span>
-            <span class="divider">|</span>
-            <span class="badge" [attr.data-status]="s.status">{{ statusLabel(s.status) }}</span>
-          </div>
-          <ng-template #pendingDefaultInfo>
-            <div class="session-info">
-              <span class="badge warning">Chưa có báo cáo</span>
-              <span>GV: {{ s.teacherId.fullName || 'N/A' }}</span>
-              <span class="divider">|</span>
-              <strong>{{ s.classId.name || 'N/A' }}</strong>
-              <span class="divider">|</span>
-              <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
-              <span class="divider">|</span>
-              <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
-              <span class="divider">|</span>
-              <span class="deadline-badge" [class.overdue]="isOverDeadline(s)" [class.near-deadline]="isNearDeadline(s)">
-                {{ isOverDeadline(s) ? 'Trễ ' + getOverdueHours(s) + 'h' : 'Còn ' + getRemainingHours(s) + 'h' }}
-              </span>
-              <span class="divider">|</span>
-              <span>{{ s.durationMinutes || 60 }} phút</span>
-              <span class="divider">|</span>
-              <span class="badge" [attr.data-status]="s.status">{{ statusLabel(s.status) }}</span>
-            </div>
-          </ng-template>
-          <button *ngIf="canEditReports()" class="btn-expand">{{ editingId === s._id ? '▲ Thu gọn' : '▼ Điền báo cáo' }}</button>
-        </div>
-
-        <!-- Inline edit form -->
-        <div *ngIf="canEditReports() && editingId === s._id" class="report-form">
-          <div class="form-grid">
-            <div class="form-group full" [class.has-error]="validationErrors()['lessonContent']">
-              <label>Nội dung học <span class="required">*</span> <span class="char-count">{{ reportForm.lessonContent.length || 0 }}/2000</span></label>
-              <textarea [(ngModel)]="reportForm.lessonContent" rows="3"
-                placeholder="Mô tả nội dung đã học trong buổi... (tối thiểu 20 ký tự)"></textarea>
-              <span class="error-message" *ngIf="validationErrors()['lessonContent']">{{ validationErrors()['lessonContent'] }}</span>
-            </div>
-            <div class="form-group" [class.has-error]="validationErrors()['studentAttitude']">
-              <label>Thái độ của học sinh <span class="char-count">{{ reportForm.studentAttitude.length || 0 }}/1000</span></label>
-              <textarea [(ngModel)]="reportForm.studentAttitude" rows="2"
-                placeholder="Nhận xét về thái độ, hành vi..."></textarea>
-              <span class="error-message" *ngIf="validationErrors()['studentAttitude']">{{ validationErrors()['studentAttitude'] }}</span>
-            </div>
-            <div class="form-group" [class.has-error]="validationErrors()['recordingUrl']">
-              <label>Link ghi hình bài giảng</label>
-              <input type="text" [(ngModel)]="reportForm.recordingUrl"
-                placeholder="https://drive.google.com/...">
-              <span class="error-message" *ngIf="validationErrors()['recordingUrl']">{{ validationErrors()['recordingUrl'] }}</span>
-            </div>
-            <div class="form-group full" [class.has-error]="validationErrors()['teacherComment']">
-              <label>Nhận xét chung <span class="char-count">{{ reportForm.teacherComment.length || 0 }}/1000</span></label>
-              <textarea [(ngModel)]="reportForm.teacherComment" rows="2"
-                placeholder="Nhận xét tổng quan về buổi học..."></textarea>
-              <span class="error-message" *ngIf="validationErrors()['teacherComment']">{{ validationErrors()['teacherComment'] }}</span>
-            </div>
-            <div class="form-group" [class.has-error]="validationErrors()['homework']">
-              <label>Bài tập về nhà <span class="char-count">{{ reportForm.homework.length || 0 }}/1000</span></label>
-              <textarea [(ngModel)]="reportForm.homework" rows="2"
-                placeholder="Bài tập giao cho HS..."></textarea>
-              <span class="error-message" *ngIf="validationErrors()['homework']">{{ validationErrors()['homework'] }}</span>
-            </div>
-            <div class="form-group" [class.has-error]="validationErrors()['additionalNotes']">
-              <label>Ghi chú thêm <span class="char-count">{{ reportForm.additionalNotes.length || 0 }}/500</span></label>
-              <textarea [(ngModel)]="reportForm.additionalNotes" rows="2"
-                placeholder="Ghi chú khác nếu có..."></textarea>
-              <span class="error-message" *ngIf="validationErrors()['additionalNotes']">{{ validationErrors()['additionalNotes'] }}</span>
-            </div>
-          </div>
-          <div class="form-actions">
-            <button class="btn secondary" (click)="editingId = ''; validationErrors.set({})">Hủy</button>
-            <button class="btn primary" (click)="submitReport(s._id)"
-              [disabled]="submitting()">
-              {{ submitting() ? '⏳ Đang gửi...' : '📤 Nộp báo cáo' }}
-            </button>
-          </div>
-        </div>
-      </div>
+      <app-teaching-report-pending
+        [sessions]="pendingSessions()"
+        [templates]="templates()"
+        [submitting]="submitting()"
+        [canEdit]="canEditReports()"
+        [teacherView]="isTeacher()"
+        [meta]="pendingMeta()"
+        (submitReport)="handleSubmit($event)"
+        (pageChange)="onPendingPageChange($event)">
+      </app-teaching-report-pending>
     </div>
 
     <!-- ═══ COMPLETED REPORT ═══ -->
     <div *ngIf="activeTab === 'completed' && !loading()">
-      <div *ngIf="completedSessions().length === 0 && !loading()" class="empty">
-        Chưa có buổi học nào đã nộp báo cáo.
-      </div>
-
-      <div *ngFor="let s of completedSessions(); trackBy: trackById" class="session-card completed">
-        <div class="session-header" (click)="toggleView(s)">
-          <div class="session-info" *ngIf="isTeacher(); else completedDefaultInfo">
-            <span>Ngày: {{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
-            <span class="divider">|</span>
-            <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
-            <span class="divider">|</span>
-            <span>Lớp: {{ s.classId.name || 'N/A' }}</span>
-            <span class="divider">|</span>
-            <span>Lương GV: {{ formatCurrency(s.teacherPayout) }}</span>
-            <span class="divider">|</span>
-            <span>{{ s.durationMinutes || 60 }} phút</span>
-            <span class="divider">|</span>
-            <span class="badge success">Đã có báo cáo</span>
-          </div>
-          <ng-template #completedDefaultInfo>
-            <div class="session-info">
-              <span class="badge success">Đã có báo cáo</span>
-              <span>GV: {{ s.teacherId.fullName || 'N/A' }}</span>
-              <span class="divider">|</span>
-              <strong>{{ s.classId.name || 'N/A' }}</strong>
-              <span class="divider">|</span>
-              <span>HS: {{ s.studentId.fullName || 'N/A' }}</span>
-              <span class="divider">|</span>
-              <span>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</span>
-              <span class="divider">|</span>
-              <span>{{ s.durationMinutes || 60 }} phút</span>
-            </div>
-          </ng-template>
-          <button class="btn-expand">{{ viewingId === s._id ? '▲ Thu gọn' : '▼ Xem' }}</button>
-        </div>
-
-        <!-- View report (readonly or editable) -->
-        <div *ngIf="viewingId === s._id" class="report-view">
-          <div *ngIf="editingId !== s._id">
-            <table class="report-table">
-              <tr><th>Nội dung học</th><td>{{ s.teachingReport?.lessonContent || '—' }}</td></tr>
-              <tr><th>Thái độ HS</th><td>{{ s.teachingReport?.studentAttitude || '—' }}</td></tr>
-              <tr><th>Link ghi hình</th><td>
-                <a *ngIf="s.teachingReport?.recordingUrl" [href]="s.teachingReport?.recordingUrl" target="_blank">{{ s.teachingReport?.recordingUrl }}</a>
-                <span *ngIf="!s.teachingReport?.recordingUrl">—</span>
-              </td></tr>
-              <tr><th>Nhận xét</th><td>{{ s.teachingReport?.teacherComment || '—' }}</td></tr>
-              <tr><th>Bài tập</th><td>{{ s.teachingReport?.homework || '—' }}</td></tr>
-              <tr><th>Ghi chú</th><td>{{ s.teachingReport?.additionalNotes || '—' }}</td></tr>
-              <tr><th>Ngày nộp</th><td>{{ s.teachingReport?.submittedAt | date:'dd/MM/yyyy HH:mm' }}</td></tr>
-              <tr *ngIf="s.teachingReport?.isLateSubmission">
-                <th>Tình trạng</th>
-                <td><span class="badge late-badge">Nộp muộn {{ getLateHours(s) }}h</span></td>
-              </tr>
-            </table>
-            <div class="form-actions">
-              <button *ngIf="canEditReports()" class="btn secondary" (click)="startEdit(s)">Sửa báo cáo</button>
-            </div>
-          </div>
-
-          <!-- Edit mode for completed -->
-          <div *ngIf="canEditReports() && editingId === s._id" class="report-form">
-            <div class="form-grid">
-              <div class="form-group full">
-                <label>Nội dung học <span class="required">*</span></label>
-                <textarea [(ngModel)]="reportForm.lessonContent" rows="3"></textarea>
-              </div>
-              <div class="form-group">
-                <label>Thái độ của học sinh</label>
-                <textarea [(ngModel)]="reportForm.studentAttitude" rows="2"></textarea>
-              </div>
-              <div class="form-group">
-                <label>Link ghi hình bài giảng</label>
-                <input type="text" [(ngModel)]="reportForm.recordingUrl">
-              </div>
-              <div class="form-group full">
-                <label>Nhận xét chung</label>
-                <textarea [(ngModel)]="reportForm.teacherComment" rows="2"></textarea>
-              </div>
-              <div class="form-group">
-                <label>Bài tập về nhà</label>
-                <textarea [(ngModel)]="reportForm.homework" rows="2"></textarea>
-              </div>
-              <div class="form-group">
-                <label>Ghi chú thêm</label>
-                <textarea [(ngModel)]="reportForm.additionalNotes" rows="2"></textarea>
-              </div>
-            </div>
-            <div class="form-actions">
-              <button class="btn secondary" (click)="editingId = ''">Hủy</button>
-              <button class="btn primary" (click)="submitReport(s._id)"
-                [disabled]="!reportForm.lessonContent.trim() || submitting()">
-                {{ submitting() ? 'Đang gửi...' : 'Cập nhật báo cáo' }}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Pagination -->
-      <div class="pagination" *ngIf="completedMeta().totalPages > 1">
-        <button (click)="completedPage = completedPage - 1; loadCompleted()" [disabled]="completedPage <= 1">← Trước</button>
-        <span>Trang {{ completedPage }} / {{ completedMeta().totalPages }}</span>
-        <button (click)="completedPage = completedPage + 1; loadCompleted()" [disabled]="completedPage >= completedMeta().totalPages">Sau →</button>
-      </div>
+      <app-teaching-report-completed
+        [sessions]="completedSessions()"
+        [templates]="templates()"
+        [submitting]="submitting()"
+        [canEdit]="canEditReports()"
+        [teacherView]="isTeacher()"
+        [meta]="completedMeta()"
+        (submitReport)="handleSubmit($event)"
+        (pageChange)="onCompletedPageChange($event)">
+      </app-teaching-report-completed>
     </div>
   </div>
   `,
@@ -511,49 +347,71 @@ import { UserItem, UserService } from '../services/user.service';
     }
   `]
 })
-export class TeachingReportComponent implements OnInit {
+export class TeachingReportComponent implements OnInit, OnDestroy {
+  // ── Signals ────────────────────────────────────────────────────────
   teachers = signal<UserItem[]>([]);
   pendingSessions = signal<SessionItem[]>([]);
   completedSessions = signal<SessionItem[]>([]);
   pendingCount = signal(0);
+  pendingMeta = signal<PendingMeta>({ total: 0, page: 1, totalPages: 1 });
   completedMeta = signal<any>({});
   payrollPreview = signal<PayrollPreview | null>(null);
+  templates = signal<ReportTemplate[]>([]);
   loading = signal(false);
   submitting = signal(false);
   error = signal('');
   success = signal('');
+
+  // ── State ──────────────────────────────────────────────────────────
   activeTab = 'pending';
-  editingId = '';
-  viewingId = '';
+  pendingPage = 1;
   completedPage = 1;
   selectedMonth = '';
   fromDate = '';
   toDate = '';
   teacherCodeSearch = '';
   selectedTeacherId = '';
-  validationErrors = signal<Record<string, string>>({});
 
-  reportForm = {
-    lessonContent: '',
-    studentAttitude: '',
-    recordingUrl: '',
-    teacherComment: '',
-    homework: '',
-    additionalNotes: '',
-  };
+  // ── Debounce: teacher code search (800ms) ─────────────────────────
+  private teacherCode$ = new Subject<string>();
+  private destroy$ = new Subject<void>();
 
   constructor(
     private sessionService: SessionService,
     private auth: AuthService,
     private payrollService: PayrollService,
     private userService: UserService,
+    private templateService: ReportTemplateService,
   ) {}
 
   ngOnInit() {
+    // Debounce teacher-code input: auto-sync selection 800ms after typing stops
+    this.teacherCode$.pipe(
+      debounceTime(800),
+      distinctUntilChanged(),
+    ).subscribe(() => {
+      this.syncTeacherSelection();
+    });
+
     if (!this.isTeacher()) {
       this.loadTeacherOptions();
+    } else {
+      // Teachers load their own templates on init
+      this.loadTemplates();
     }
     this.resetToCurrentMonth();
+  }
+
+  ngOnDestroy() {
+    this.destroy$.next();
+    this.destroy$.complete();
+    this.teacherCode$.complete();
+  }
+
+  // Called from template on ngModelChange of teacher code input
+  onTeacherCodeInput(value: string) {
+    this.teacherCodeSearch = value;
+    this.teacherCode$.next(value);
   }
 
   async loadPending() {
@@ -607,15 +465,15 @@ export class TeachingReportComponent implements OnInit {
       return;
     }
 
-    if (!this.syncTeacherSelection()) {
-      return;
+    if (!this.syncTeacherSelection()) return;
+
+    if (resetPage) {
+      this.pendingPage = 1;
+      this.completedPage = 1;
     }
 
-    if (resetPage) this.completedPage = 1;
     this.loading.set(true);
     this.error.set('');
-    this.editingId = '';
-    this.viewingId = '';
 
     try {
       await Promise.all([
@@ -630,16 +488,58 @@ export class TeachingReportComponent implements OnInit {
     }
   }
 
+  onPendingPageChange(page: number) {
+    this.pendingPage = page;
+    this.loadPending();
+  }
+
+  onCompletedPageChange(page: number) {
+    this.completedPage = page;
+    this.loadCompleted();
+  }
+
+  // ── Handle submit from sub-components ────────────────────────────
+  async handleSubmit(event: { sessionId: string; data: ReportFormValues }) {
+    if (!this.canEditReports()) return;
+    this.submitting.set(true);
+    this.error.set('');
+    this.success.set('');
+    try {
+      await this.sessionService.submitTeachingReport(event.sessionId, event.data);
+      this.success.set('Nộp báo cáo thành công! ✓');
+      setTimeout(() => this.success.set(''), 3000);
+      await this.applyFilters(false);
+    } catch (e: any) {
+      const msg = e?.error?.message;
+      this.error.set(
+        Array.isArray(msg) ? msg.join('; ') : msg || e?.message || 'Lỗi gửi báo cáo.',
+      );
+      setTimeout(() => this.error.set(''), 5000);
+    } finally {
+      this.submitting.set(false);
+    }
+  }
+
+  // ── Private data fetchers ─────────────────────────────────────────
+
   private async fetchPending() {
     const result = await this.sessionService.list({
-      limit: 100,
+      page: this.pendingPage,
+      limit: 20,
       hasReport: 'false',
       teacherId: this.getSelectedTeacherId() || undefined,
       fromDate: this.fromDate || undefined,
       toDate: this.toDate || undefined,
     });
     this.pendingSessions.set(result.data);
-    this.pendingCount.set(result.meta?.total || result.data.length);
+    const total = result.meta?.total ?? result.data.length;
+    const limit = result.meta?.limit ?? 20;
+    this.pendingCount.set(total);
+    this.pendingMeta.set({
+      total,
+      page: this.pendingPage,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+    });
   }
 
   private async fetchCompleted() {
@@ -661,7 +561,6 @@ export class TeachingReportComponent implements OnInit {
       this.payrollPreview.set(null);
       return;
     }
-
     const preview = await this.payrollService.getTeacherPreview(teacherId, this.fromDate, this.toDate);
     this.payrollPreview.set(preview);
   }
@@ -671,9 +570,20 @@ export class TeachingReportComponent implements OnInit {
     this.teachers.set(teachers);
   }
 
+  private async loadTemplates() {
+    try {
+      const tpls = await this.templateService.list();
+      this.templates.set(tpls);
+    } catch {
+      // Non-critical: silently ignore template load errors
+    }
+  }
+
   private syncTeacherSelection(): boolean {
     if (this.isTeacher()) {
       this.selectedTeacherId = this.auth.userSignal()?.sub || '';
+      // Reload templates for this teacher
+      this.loadTemplates();
       return true;
     }
 
@@ -704,7 +614,8 @@ export class TeachingReportComponent implements OnInit {
     if (!this.teacherCodeSearch.trim()) return null;
     return this.teachers().find(
       (teacher) =>
-        (teacher.userCode || '').trim().toLowerCase() === this.teacherCodeSearch.trim().toLowerCase(),
+        (teacher.userCode || '').trim().toLowerCase() ===
+        this.teacherCodeSearch.trim().toLowerCase(),
     ) || null;
   }
 
@@ -712,208 +623,32 @@ export class TeachingReportComponent implements OnInit {
     return this.isTeacher();
   }
 
-  handlePendingClick(session: SessionItem) {
-    if (!this.canEditReports()) return;
-    this.toggleEdit(session);
-  }
-
-  toggleEdit(session: SessionItem) {
-    if (this.editingId === session._id) {
-      this.editingId = '';
-    } else {
-      this.editingId = session._id;
-      this.resetForm();
-    }
-  }
-
-  toggleView(session: SessionItem) {
-    if (this.viewingId === session._id) {
-      this.viewingId = '';
-      this.editingId = '';
-    } else {
-      this.viewingId = session._id;
-      this.editingId = '';
-    }
-  }
-
-  startEdit(session: SessionItem) {
-    if (!this.canEditReports()) return;
-    this.editingId = session._id;
-    this.reportForm = {
-      lessonContent: session.teachingReport?.lessonContent || '',
-      studentAttitude: session.teachingReport?.studentAttitude || '',
-      recordingUrl: session.teachingReport?.recordingUrl || '',
-      teacherComment: session.teachingReport?.teacherComment || '',
-      homework: session.teachingReport?.homework || '',
-      additionalNotes: session.teachingReport?.additionalNotes || '',
-    };
-  }
-
-  resetForm() {
-    this.reportForm = {
-      lessonContent: '',
-      studentAttitude: '',
-      recordingUrl: '',
-      teacherComment: '',
-      homework: '',
-      additionalNotes: '',
-    };
-  }
-
-  validateForm(): boolean {
-    const errors: Record<string, string> = {};
-    
-    // Validate lessonContent (required, min 20, max 2000)
-    if (!this.reportForm.lessonContent?.trim()) {
-      errors['lessonContent'] = 'Nội dung học không được để trống';
-    } else if (this.reportForm.lessonContent.length < 20) {
-      errors['lessonContent'] = 'Nội dung học phải có ít nhất 20 ký tự';
-    } else if (this.reportForm.lessonContent.length > 2000) {
-      errors['lessonContent'] = 'Nội dung học không được vượt quá 2000 ký tự';
-    }
-    
-    // Validate recordingUrl (optional but must be valid URL if provided)
-    if (this.reportForm.recordingUrl?.trim()) {
-      try {
-        new URL(this.reportForm.recordingUrl);
-      } catch (e) {
-        errors['recordingUrl'] = 'Link ghi hình phải là URL hợp lệ (https://...)';
-      }
-    }
-    
-    // Validate text lengths
-    if (this.reportForm.studentAttitude && this.reportForm.studentAttitude.length > 1000) {
-      errors['studentAttitude'] = 'Thái độ học sinh không được vượt quá 1000 ký tự';
-    }
-    if (this.reportForm.teacherComment && this.reportForm.teacherComment.length > 1000) {
-      errors['teacherComment'] = 'Nhận xét không được vượt quá 1000 ký tự';
-    }
-    if (this.reportForm.homework && this.reportForm.homework.length > 1000) {
-      errors['homework'] = 'Bài tập về nhà không được vượt quá 1000 ký tự';
-    }
-    if (this.reportForm.additionalNotes && this.reportForm.additionalNotes.length > 500) {
-      errors['additionalNotes'] = 'Ghi chú thêm không được vượt quá 500 ký tự';
-    }
-    
-    this.validationErrors.set(errors);
-    return Object.keys(errors).length === 0;
-  }
-
-  async submitReport(sessionId: string) {
-    if (!this.canEditReports()) return;
-
-    // Validate form
-    if (!this.validateForm()) {
-      this.error.set('Vui lòng kiểm tra lại thông tin đã nhập');
-      return;
-    }
-    
-    this.submitting.set(true);
-    this.error.set('');
-    this.success.set('');
-    
-    try {
-      await this.sessionService.submitTeachingReport(sessionId, this.reportForm);
-      this.success.set('Nộp báo cáo thành công! ✓');
-      this.editingId = '';
-      this.viewingId = '';
-      this.validationErrors.set({});
-      
-      // Clear success message after 3s
-      setTimeout(() => this.success.set(''), 3000);
-      
-      await this.applyFilters(false);
-    } catch (e: any) {
-      // Parse detailed error from backend
-      if (e?.error?.message) {
-        this.error.set(Array.isArray(e.error.message) ? e.error.message.join('; ') : e.error.message);
-      } else if (e?.message) {
-        this.error.set(e.message);
-      } else {
-        this.error.set('Lỗi gửi báo cáo. Vui lòng kiểm tra kết nối mạng và thử lại.');
-      }
-      
-      // Auto-hide error after 5s
-      setTimeout(() => this.error.set(''), 5000);
-    } finally {
-      this.submitting.set(false);
-    }
-  }
-
-  trackById(index: number, item: SessionItem) {
-    return item._id;
-  }
-
-  statusLabel(s: string): string {
-    const map: Record<string, string> = {
-      SCHEDULED: 'Đã lên lịch', TEACHER_COMPLETED: 'GV hoàn thành',
-      PARENT_CONFIRMED: 'PH xác nhận', FINALIZED: 'Hoàn tất',
-      CANCELLED: 'Đã hủy', NO_SHOW: 'Vắng',
-    };
-    return map[s] || s;
-  }
-
   isTeacher() {
     return this.auth.userSignal()?.role === 'TEACHER';
   }
 
   formatCurrency(amount?: number): string {
-    if (!amount && amount !== 0) return '-';
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND',
-    }).format(amount);
+    if (amount == null) return '-';
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
   }
 
   getPaidPayrollTotal(): number {
     return (this.payrollPreview()?.existingPayrolls || [])
-      .filter((payroll) => payroll.status === 'PAID')
-      .reduce((total, payroll) => total + (payroll.netAmount || 0), 0);
+      .filter((p) => p.status === 'PAID')
+      .reduce((total, p) => total + (p.netAmount || 0), 0);
   }
 
   accountingNotes(): PayrollItem[] {
     return (this.payrollPreview()?.existingPayrolls || []).filter(
-      (payroll) => !!payroll.notes?.trim(),
+      (p) => !!p.notes?.trim(),
     );
   }
 
   payrollStatusLabel(status?: string): string {
     const map: Record<string, string> = {
-      DRAFT: 'Nháp',
-      PENDING_REVIEW: 'Chờ duyệt',
-      APPROVED: 'Đã duyệt',
-      PAID: 'Đã chi',
-      REJECTED: 'Từ chối',
+      DRAFT: 'Nháp', PENDING_REVIEW: 'Chờ duyệt',
+      APPROVED: 'Đã duyệt', PAID: 'Đã chi', REJECTED: 'Từ chối',
     };
     return map[status || ''] || status || 'Khác';
-  }
-
-  // ─── Deadline helpers (24h window after scheduledDate) ───────────────
-
-  getDeadlineMs(session: SessionItem): number {
-    return new Date(session.scheduledDate).getTime() + 24 * 60 * 60 * 1000;
-  }
-
-  isOverDeadline(session: SessionItem): boolean {
-    return Date.now() > this.getDeadlineMs(session);
-  }
-
-  isNearDeadline(session: SessionItem): boolean {
-    const remaining = this.getDeadlineMs(session) - Date.now();
-    return remaining > 0 && remaining < 4 * 60 * 60 * 1000;
-  }
-
-  getRemainingHours(session: SessionItem): number {
-    return Math.ceil((this.getDeadlineMs(session) - Date.now()) / (60 * 60 * 1000));
-  }
-
-  getOverdueHours(session: SessionItem): number {
-    return Math.floor((Date.now() - this.getDeadlineMs(session)) / (60 * 60 * 1000));
-  }
-
-  getLateHours(session: SessionItem): number {
-    const report = session.teachingReport as any;
-    const submitted = report?.submittedAt ? new Date(report.submittedAt).getTime() : Date.now();
-    return Math.max(0, Math.floor((submitted - this.getDeadlineMs(session)) / (60 * 60 * 1000)));
   }
 }

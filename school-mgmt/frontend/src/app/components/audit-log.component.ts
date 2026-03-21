@@ -3,11 +3,14 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { AuditLogService } from '../services/audit-log.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-audit-log',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="audit-log"></app-flow-guide>
   <div class="container">
     <h2>&#128270; Nhật ký hoạt động</h2>
     <p class="subtitle">Theo dõi tất cả thao tác trong hệ thống</p>
@@ -171,7 +174,7 @@ export class AuditLogComponent implements OnInit {
   modules = [
     'USERS', 'STUDENTS', 'TEACHERS', 'CLASSES', 'SESSIONS',
     'PAYROLL', 'WALLETS', 'INVOICES', 'TICKETS', 'PRODUCTS',
-    'ATTENDANCE', 'AUTH', 'TEACHING_MATERIALS',
+    'ATTENDANCE', 'AUTH', 'TEACHING_MATERIALS', 'LEADS', 'ORDERS', 'ADS',
   ];
 
   actions = [
@@ -184,7 +187,7 @@ export class AuditLogComponent implements OnInit {
     CLASSES: 'Lớp học', SESSIONS: 'Buổi học', PAYROLL: 'Bảng lương',
     WALLETS: 'Ví', INVOICES: 'Hóa đơn', TICKETS: 'Ticket',
     PRODUCTS: 'Khóa học', ATTENDANCE: 'Điểm danh', AUTH: 'Đăng nhập',
-    TEACHING_MATERIALS: 'Tài liệu GD',
+    TEACHING_MATERIALS: 'Tài liệu GD', LEADS: 'Lead', ORDERS: 'Don hang', ADS: 'Quang cao',
   };
 
   actionLabels: Record<string, string> = {

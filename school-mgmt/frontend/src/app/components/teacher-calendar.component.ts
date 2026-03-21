@@ -4,6 +4,8 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 /* ── Status labels & colors ────────────────────────────────────────── */
 
 const STATUS_LABELS: Record<string, string> = {
@@ -46,7 +48,7 @@ const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 @Component({
   selector: 'app-teacher-calendar',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -60,6 +62,8 @@ const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
       </div>
     </div>
   </header>
+
+  <app-flow-guide featureKey="teacher-calendar"></app-flow-guide>
 
   <!-- Legend -->
   <div class="legend" *ngIf="classColorMap().size > 0">

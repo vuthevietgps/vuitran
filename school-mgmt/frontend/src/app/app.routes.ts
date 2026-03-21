@@ -1,120 +1,352 @@
 import { Routes } from '@angular/router';
-import { LoginComponent } from './components/login.component';
-import { AppShellComponent } from './components/app-shell.component';
-import { UsersManagementComponent } from './components/users-management.component';
-import { NotAuthorizedComponent } from './components/not-authorized.component';
-import { ProductsComponent } from './components/products.component';
-import { ClassesComponent } from './components/classes.component';
-import { StudentsComponent } from './components/students.component';
-import { AttendanceComponent } from './components/attendance.component';
-import { AttendanceReportComponent } from './components/attendance-report.component';
-import { StudentReportComponent } from './components/student-report.component';
-import { ComprehensiveReportComponent } from './components/comprehensive-report.component';
-import { StudentAttendanceComponent } from './components/student-attendance.component';
-import { InvoicesComponent } from './components/invoices.component';
-import { SessionsComponent } from './components/sessions.component';
-import { WalletsComponent } from './components/wallets.component';
-import { TeachingReportComponent } from './components/teaching-report.component';
-import { DashboardComponent } from './components/dashboards/dashboard.component';
-import { PayrollComponent } from './components/payroll.component';
-import { TicketsComponent } from './components/tickets.component';
-import { TeacherProfileComponent } from './components/teacher-profile.component';
-import { TeachingMaterialsComponent } from './components/teaching-materials.component';
-import { PendingApprovalsComponent } from './components/pending-approvals.component';
-import { NotificationsComponent } from './components/notifications.component';
-import { AuditLogComponent } from './components/audit-log.component';
-import { ExportReportsComponent } from './components/export-reports.component';
-import { TeacherKpiComponent } from './components/teacher-kpi.component';
-import { CalendarOverviewComponent } from './components/calendar-overview.component';
-import { TeacherProfilesComponent } from './components/teacher-profiles.component';
-import { LeadsComponent } from './components/leads.component';
-import { OrdersComponent } from './components/orders.component';
-import { ExpensesComponent } from './components/expenses.component';
-import { FinancialControlComponent } from './components/financial-control.component';
-import { LoansComponent } from './components/loans.component';
-import { AdsManagementComponent } from './components/ads-management.component';
-import { AdsAnalyticsComponent } from './components/ads-analytics.component';
-import { ChatbotSettingsComponent } from './components/chatbot-settings.component';
-import { ConversationsComponent } from './components/conversations.component';
-import { WorkSessionsComponent } from './components/work-sessions.component';
-import { SalaryConfigComponent } from './components/salary-config.component';
-import { StaffPayrollComponent } from './components/staff-payroll.component';
-import { StudentProgressComponent } from './components/student-progress.component';
-import { ParentAttendanceComponent } from './components/parent-attendance.component';
-import { ParentInvoicesComponent } from './components/parent-invoices.component';
-import { CommissionReportComponent } from './components/commission-report.component';
-import { AgingReportComponent } from './components/aging-report.component';
-import { ParentCalendarComponent } from './components/parent-calendar.component';
-import { TeacherCalendarComponent } from './components/teacher-calendar.component';
-import { TeacherSubstituteRequestComponent } from './components/teacher-substitute-request.component';
-import { EmployeePerformanceComponent } from './components/employee-performance.component';
-import { BankReconciliationComponent } from './components/bank-reconciliation.component';
-import { MessagesComponent } from './components/messages.component';
 import { authGuard } from './guards/auth.guard';
 import { roleGuard } from './guards/role.guard';
 import { Role } from './models/role.enum';
 
 export const routes: Routes = [
-	{ path: 'login', component: LoginComponent },
-	{ path: 'not-authorized', component: NotAuthorizedComponent },
-	{ path: 'student-attendance/:token', component: StudentAttendanceComponent },
-	{
-		path: 'app',
-		component: AppShellComponent,
-		canActivate: [authGuard],
-		children: [
-			{ path: 'dashboard', component: DashboardComponent },
-			{ path: 'users', component: UsersManagementComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'products', component: ProductsComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'students', component: StudentsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])] },
-			{ path: 'classes', component: ClassesComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE])] },
-			{ path: 'sessions', component: SessionsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT, Role.ACCOUNTING])] },
-			{ path: 'attendance', component: AttendanceComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])] },
-			{ path: 'attendance-report', component: AttendanceReportComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])] },
-			{ path: 'student-report', component: StudentReportComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])] },
-			{ path: 'comprehensive-report', component: ComprehensiveReportComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])] },
-			{ path: 'teaching-report', component: TeachingReportComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.TEACHER, Role.ACCOUNTING])] },
-			{ path: 'invoices', component: InvoicesComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])] },
-
-			{ path: 'wallets', component: WalletsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.PARENT])] },
-			{ path: 'payroll', component: PayrollComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER])] },
-			{ path: 'tickets', component: TicketsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.PARENT])] },
-			{ path: 'teacher-profile', component: TeacherProfileComponent, canActivate: [roleGuard([Role.TEACHER])] },
-			{ path: 'teaching-materials', component: TeachingMaterialsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])] },
-			{ path: 'pending-approvals', component: PendingApprovalsComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'notifications', component: NotificationsComponent },
-			{ path: 'audit-log', component: AuditLogComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'export-reports', component: ExportReportsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'teacher-kpi', component: TeacherKpiComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'calendar-overview', component: CalendarOverviewComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'teacher-profiles', component: TeacherProfilesComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'teacher-profiles/:id', component: TeacherProfilesComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'leads', component: LeadsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])] },
-			{ path: 'orders', component: OrdersComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])] },
-			{ path: 'work-sessions', component: WorkSessionsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE])] },
-			{ path: 'salary-config', component: SalaryConfigComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'staff-payroll', component: StaffPayrollComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])] },
-			{ path: 'expenses', component: ExpensesComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])] },
-			{ path: 'loans', component: LoansComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'financial-control', component: FinancialControlComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'ads-management', component: AdsManagementComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])] },
-			{ path: 'ads-analytics', component: AdsAnalyticsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])] },
-			{ path: 'conversations', component: ConversationsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])] },
-			{ path: 'chatbot-settings', component: ChatbotSettingsComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])] },
-			{ path: 'student-progress', component: StudentProgressComponent, canActivate: [roleGuard([Role.PARENT])] },
-			{ path: 'parent-attendance', component: ParentAttendanceComponent, canActivate: [roleGuard([Role.PARENT])] },
-			{ path: 'parent-invoices', component: ParentInvoicesComponent, canActivate: [roleGuard([Role.PARENT])] },
-			{ path: 'commission-report', component: CommissionReportComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.SALE, Role.ACCOUNTING])] },
-			{ path: 'aging-report', component: AgingReportComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'parent-calendar', component: ParentCalendarComponent, canActivate: [roleGuard([Role.PARENT])] },
-			{ path: 'teacher-calendar', component: TeacherCalendarComponent, canActivate: [roleGuard([Role.TEACHER])] },
-			{ path: 'teacher-substitute-request', component: TeacherSubstituteRequestComponent, canActivate: [roleGuard([Role.TEACHER])] },
-			{ path: 'employee-performance', component: EmployeePerformanceComponent, canActivate: [roleGuard([Role.DIRECTOR])] },
-			{ path: 'bank-reconciliation', component: BankReconciliationComponent, canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])] },
-			{ path: 'messages', component: MessagesComponent },
-			{ path: '', pathMatch: 'full', redirectTo: 'dashboard' }
-		]
-	},
-	{ path: '', pathMatch: 'full', redirectTo: 'login' },
-	{ path: '**', redirectTo: 'login' }
+  {
+    path: 'login',
+    loadComponent: () =>
+      import('./components/login.component').then((m) => m.LoginComponent),
+  },
+  {
+    path: 'not-authorized',
+    loadComponent: () =>
+      import('./components/not-authorized.component').then((m) => m.NotAuthorizedComponent),
+  },
+  {
+    path: 'student-attendance/:token',
+    loadComponent: () =>
+      import('./components/student-attendance.component').then((m) => m.StudentAttendanceComponent),
+  },
+  {
+    path: 'lp/:slug',
+    loadComponent: () =>
+      import('./components/landing-pages/public-landing-page.component').then((m) => m.PublicLandingPageComponent),
+  },
+  {
+    path: 'app',
+    loadComponent: () =>
+      import('./components/app-shell.component').then((m) => m.AppShellComponent),
+    canActivate: [authGuard],
+    children: [
+      {
+        path: 'dashboard',
+        loadComponent: () =>
+          import('./components/dashboards/dashboard.component').then((m) => m.DashboardComponent),
+      },
+      {
+        path: 'users',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.SALE])],
+        loadComponent: () =>
+          import('./components/users-management.component').then((m) => m.UsersManagementComponent),
+      },
+      {
+        path: 'products',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/products.component').then((m) => m.ProductsComponent),
+      },
+      {
+        path: 'students',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])],
+        loadComponent: () =>
+          import('./components/students.component').then((m) => m.StudentsComponent),
+      },
+      {
+        path: 'classes',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE])],
+        loadComponent: () =>
+          import('./components/classes.component').then((m) => m.ClassesComponent),
+      },
+      {
+        path: 'sessions',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/sessions.component').then((m) => m.SessionsComponent),
+      },
+      {
+        path: 'attendance',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/attendance.component').then((m) => m.AttendanceComponent),
+      },
+      {
+        path: 'attendance-report',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/attendance-report.component').then((m) => m.AttendanceReportComponent),
+      },
+      {
+        path: 'student-report',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/student-report.component').then((m) => m.StudentReportComponent),
+      },
+      {
+        path: 'comprehensive-report',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/comprehensive-report.component').then((m) => m.ComprehensiveReportComponent),
+      },
+      {
+        path: 'teaching-report',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.TEACHER, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/teaching-report.component').then((m) => m.TeachingReportComponent),
+      },
+      {
+        path: 'invoices',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/invoices.component').then((m) => m.InvoicesComponent),
+      },
+      {
+        path: 'wallets',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.PARENT])],
+        loadComponent: () =>
+          import('./components/wallets.component').then((m) => m.WalletsComponent),
+      },
+      {
+        path: 'payroll',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/payroll.component').then((m) => m.PayrollComponent),
+      },
+      {
+        path: 'tickets',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.PARENT])],
+        loadComponent: () =>
+          import('./components/tickets.component').then((m) => m.TicketsComponent),
+      },
+      {
+        path: 'teacher-profile',
+        canActivate: [roleGuard([Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/teacher-profile.component').then((m) => m.TeacherProfileComponent),
+      },
+      {
+        path: 'teaching-materials',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/teaching-materials.component').then((m) => m.TeachingMaterialsComponent),
+      },
+      {
+        path: 'teacher-hub',
+        canActivate: [roleGuard([Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/teacher-guide-landing.component').then((m) => m.TeacherGuideLandingComponent),
+      },
+      {
+        path: 'sale-hub',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.SALE])],
+        loadComponent: () =>
+          import('./components/sale-guide-landing.component').then((m) => m.SaleGuideLandingComponent),
+      },
+      {
+        path: 'pending-approvals',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/pending-approvals.component').then((m) => m.PendingApprovalsComponent),
+      },
+      {
+        path: 'notifications',
+        loadComponent: () =>
+          import('./components/notifications.component').then((m) => m.NotificationsComponent),
+      },
+      {
+        path: 'audit-log',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/audit-log.component').then((m) => m.AuditLogComponent),
+      },
+      {
+        path: 'export-reports',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/export-reports.component').then((m) => m.ExportReportsComponent),
+      },
+      {
+        path: 'teacher-kpi',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/teacher-kpi.component').then((m) => m.TeacherKpiComponent),
+      },
+      {
+        path: 'calendar-overview',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/calendar-overview.component').then((m) => m.CalendarOverviewComponent),
+      },
+      {
+        path: 'teacher-profiles',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SALE])],
+        loadComponent: () =>
+          import('./components/teacher-profiles.component').then((m) => m.TeacherProfilesComponent),
+      },
+      {
+        path: 'teacher-profiles/:id',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SALE])],
+        loadComponent: () =>
+          import('./components/teacher-profiles.component').then((m) => m.TeacherProfilesComponent),
+      },
+      {
+        path: 'leads',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/leads.component').then((m) => m.LeadsComponent),
+      },
+      {
+        path: 'orders',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/orders.component').then((m) => m.OrdersComponent),
+      },
+      {
+        path: 'work-sessions',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE])],
+        loadComponent: () =>
+          import('./components/work-sessions.component').then((m) => m.WorkSessionsComponent),
+      },
+      {
+        path: 'salary-config',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/salary-config.component').then((m) => m.SalaryConfigComponent),
+      },
+      {
+        path: 'staff-payroll',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])],
+        loadComponent: () =>
+          import('./components/staff-payroll.component').then((m) => m.StaffPayrollComponent),
+      },
+      {
+        path: 'expenses',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])],
+        loadComponent: () =>
+          import('./components/expenses.component').then((m) => m.ExpensesComponent),
+      },
+      {
+        path: 'loans',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/loans.component').then((m) => m.LoansComponent),
+      },
+      {
+        path: 'financial-control',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/financial-control.component').then((m) => m.FinancialControlComponent),
+      },
+      {
+        path: 'ads-management',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])],
+        loadComponent: () =>
+          import('./components/ads-management.component').then((m) => m.AdsManagementComponent),
+      },
+      {
+        path: 'ads-analytics',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])],
+        loadComponent: () =>
+          import('./components/ads-analytics.component').then((m) => m.AdsAnalyticsComponent),
+      },
+      {
+        path: 'landing-pages',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/landing-pages/landing-pages-management.component').then((m) => m.LandingPagesManagementComponent),
+      },
+      {
+        path: 'conversations',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/conversations.component').then((m) => m.ConversationsComponent),
+      },
+      {
+        path: 'chatbot-settings',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])],
+        loadComponent: () =>
+          import('./components/chatbot-settings.component').then((m) => m.ChatbotSettingsComponent),
+      },
+      {
+        path: 'student-progress',
+        canActivate: [roleGuard([Role.PARENT])],
+        loadComponent: () =>
+          import('./components/student-progress.component').then((m) => m.StudentProgressComponent),
+      },
+      {
+        path: 'parent-attendance',
+        canActivate: [roleGuard([Role.PARENT])],
+        loadComponent: () =>
+          import('./components/parent-attendance.component').then((m) => m.ParentAttendanceComponent),
+      },
+      {
+        path: 'parent-invoices',
+        canActivate: [roleGuard([Role.PARENT])],
+        loadComponent: () =>
+          import('./components/parent-invoices.component').then((m) => m.ParentInvoicesComponent),
+      },
+      {
+        path: 'commission-report',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.SALE, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/commission-report.component').then((m) => m.CommissionReportComponent),
+      },
+      {
+        path: 'aging-report',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/aging-report.component').then((m) => m.AgingReportComponent),
+      },
+      {
+        path: 'parent-calendar',
+        canActivate: [roleGuard([Role.PARENT])],
+        loadComponent: () =>
+          import('./components/parent-calendar.component').then((m) => m.ParentCalendarComponent),
+      },
+      {
+        path: 'teacher-calendar',
+        canActivate: [roleGuard([Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/teacher-calendar.component').then((m) => m.TeacherCalendarComponent),
+      },
+      {
+        path: 'teacher-substitute-request',
+        canActivate: [roleGuard([Role.TEACHER])],
+        loadComponent: () =>
+          import('./components/teacher-substitute-request.component').then((m) => m.TeacherSubstituteRequestComponent),
+      },
+      {
+        path: 'employee-performance',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/employee-performance.component').then((m) => m.EmployeePerformanceComponent),
+      },
+      {
+        path: 'bank-reconciliation',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/bank-reconciliation.component').then((m) => m.BankReconciliationComponent),
+      },
+      {
+        path: 'messages',
+        loadComponent: () =>
+          import('./components/messages.component').then((m) => m.MessagesComponent),
+      },
+      {
+        path: 'parent-chat',
+        canActivate: [roleGuard([Role.PARENT])],
+        loadComponent: () =>
+          import('./components/parent-support-chat.component').then((m) => m.ParentSupportChatComponent),
+      },
+      {
+        path: 'internal-handbook',
+        loadComponent: () =>
+          import('./components/internal-handbook.component').then((m) => m.InternalHandbookComponent),
+      },
+      { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
+    ],
+  },
+  { path: '', pathMatch: 'full', redirectTo: 'login' },
+  { path: '**', redirectTo: 'login' },
 ];

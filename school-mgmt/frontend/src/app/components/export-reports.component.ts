@@ -5,11 +5,14 @@ import { ExportService } from '../services/export.service';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-export-reports',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="export-reports"></app-flow-guide>
   <div class="container">
     <h2>&#128230; Xuất báo cáo</h2>
     <p class="subtitle">Xuất dữ liệu ra file CSV để phân tích hoặc báo cáo</p>
@@ -96,6 +99,31 @@ import { Role } from '../models/role.enum';
           {{ exporting === 'attendance' ? 'Đang xuất...' : '&#11015; Xuất CSV' }}
         </button>
       </div>
+      <div class="export-card" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])">
+        <div class="card-icon">&#128202;</div>
+        <h3>Doi soat Ads</h3>
+        <p>Xuat report theo ky de finance doi soat doanh thu, chi phi va loi nhuan ads ngoai he thong.</p>
+        <div class="card-filters">
+          <input type="date" [(ngModel)]="adsStartDate" placeholder="Tu ngay" />
+          <input type="date" [(ngModel)]="adsEndDate" placeholder="Den ngay" />
+          <select [(ngModel)]="adsPlatform">
+            <option value="">Tat ca nen tang</option>
+            <option value="FACEBOOK">Facebook</option>
+            <option value="GOOGLE">Google</option>
+            <option value="TIKTOK">TikTok</option>
+          </select>
+          <input type="number" [(ngModel)]="adsMaturityDays" min="1" max="180" step="1" placeholder="So ngay chin cohort" />
+          <input type="number" [(ngModel)]="adsRefundRatePercentX" min="0" max="100" step="0.1" placeholder="Refund X (%)" />
+        </div>
+        <div class="card-actions">
+          <button class="btn-export" (click)="exportAdsParentProfit()" [disabled]="exporting === 'ads-parent-profit'">
+            {{ exporting === 'ads-parent-profit' ? 'Dang xuat...' : '&#11015; Parent profit CSV' }}
+          </button>
+          <button class="btn-export secondary" (click)="exportAdsRealizedCohort()" [disabled]="exporting === 'ads-realized-cohort'">
+            {{ exporting === 'ads-realized-cohort' ? 'Dang xuat...' : '&#11015; Cohort CSV' }}
+          </button>
+        </div>
+      </div>
     </div>
 
     <div *ngIf="message" class="message" [class.error]="isError">{{ message }}</div>
@@ -117,11 +145,14 @@ import { Role } from '../models/role.enum';
     .card-filters input, .card-filters select {
       padding:7px 10px; border:1px solid #e2e8f0; border-radius:6px; font-size:13px; background:#fff;
     }
+    .card-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
     .btn-export {
       margin-top:12px; padding:10px 18px; border:none; border-radius:8px;
       background:linear-gradient(135deg, #2563eb, #3b82f6); color:#fff;
       font-size:14px; font-weight:600; cursor:pointer; transition:opacity .15s;
     }
+    .card-actions .btn-export { margin-top:0; flex:1 1 180px; }
+    .btn-export.secondary { background:linear-gradient(135deg, #0f766e, #14b8a6); }
     .btn-export:hover { opacity:.9; }
     .btn-export:disabled { opacity:.5; cursor:default; }
     .message {
@@ -154,6 +185,12 @@ export class ExportReportsComponent {
   attendanceFrom = '';
   attendanceTo = '';
 
+  adsEndDate = new Date().toISOString().split('T')[0];
+  adsStartDate = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+  adsPlatform = '';
+  adsMaturityDays = 60;
+  adsRefundRatePercentX: number | null = null;
+
   hasRole(roles: Role[]): boolean {
     return this.auth.hasRole(roles);
   }
@@ -183,6 +220,28 @@ export class ExportReportsComponent {
   async exportAttendance() {
     await this.doExport('attendance', () =>
       this.exportSvc.exportAttendance({ fromDate: this.attendanceFrom, toDate: this.attendanceTo })
+    );
+  }
+
+  async exportAdsParentProfit() {
+    await this.doExport('ads-parent-profit', () =>
+      this.exportSvc.exportAdsParentProfit({
+        startDate: this.adsStartDate,
+        endDate: this.adsEndDate,
+        platform: this.adsPlatform || undefined,
+      })
+    );
+  }
+
+  async exportAdsRealizedCohort() {
+    await this.doExport('ads-realized-cohort', () =>
+      this.exportSvc.exportAdsRealizedCohort({
+        startDate: this.adsStartDate,
+        endDate: this.adsEndDate,
+        platform: this.adsPlatform || undefined,
+        maturityDays: this.adsMaturityDays,
+        refundRatePercentX: this.adsRefundRatePercentX === null ? undefined : this.adsRefundRatePercentX,
+      })
     );
   }
 

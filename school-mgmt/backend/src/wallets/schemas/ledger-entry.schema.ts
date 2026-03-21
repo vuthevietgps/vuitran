@@ -15,6 +15,21 @@ export enum TransactionType {
   TRANSFER_IN = 'TRANSFER_IN',        // Nhận tiền chuyển (từ ví khác)
 }
 
+/**
+ * Phân loại chi tiết loại điều chỉnh manual (dùng với type = ADJUSTMENT).
+ * Bắt buộc cho audit trail chống gian lận.
+ */
+export enum AdjustmentType {
+  MANUAL_ADJUST = 'MANUAL_ADJUST',       // Admin điều chỉnh tay (cần ghi rõ lý do)
+  TRANSFER = 'TRANSFER',                 // Chuyển nhượng giữa học sinh
+  INVOICE_CANCEL_ROLLBACK = 'INVOICE_CANCEL_ROLLBACK', // Rollback do hủy hóa đơn
+  DISPUTE_RESOLUTION = 'DISPUTE_RESOLUTION', // Giải quyết tranh chấp
+  PROMO_CREDIT = 'PROMO_CREDIT',         // Cộng credit khuyến mãi
+  WRITE_OFF = 'WRITE_OFF',               // Xóa nợ (bad debt)
+  CORRECTION = 'CORRECTION',             // Sửa lỗi hệ thống
+  OTHER = 'OTHER',                       // Khác (yêu cầu ghi rõ reason)
+}
+
 export enum TransactionStatus {
   PENDING = 'PENDING',       // Chờ duyệt (topup yêu cầu)
   APPROVED = 'APPROVED',     // Đã duyệt (topup confirmed → balance đã cộng)
@@ -66,6 +81,20 @@ export class LedgerEntry {
   /** Mô tả ngắn */
   @Prop({ type: String, trim: true })
   description?: string;
+
+  /**
+   * Loại điều chỉnh chi tiết (chỉ dùng khi type = ADJUSTMENT).
+   * Bắt buộc cho audit trail để phân loại lý do điều chỉnh.
+   */
+  @Prop({ type: String, enum: Object.values(AdjustmentType) })
+  adjustmentType?: AdjustmentType;
+
+  /**
+   * Lý do điều chỉnh chi tiết (bắt buộc khi type = ADJUSTMENT).
+   * Ghi rõ lý do để audit trail đầy đủ.
+   */
+  @Prop({ type: String, trim: true })
+  adjustmentReason?: string;
 
   // ── References ──
 

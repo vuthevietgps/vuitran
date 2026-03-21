@@ -8,6 +8,7 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
 import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
 import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.schema';
+import { AdsModule } from '../ads/ads.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.
       { name: Session.name, schema: SessionSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
     ]),
+    AdsModule,
   ],
   controllers: [ExportController],
   providers: [ExportService],

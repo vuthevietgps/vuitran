@@ -3,12 +3,14 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
   ChatbotService,
+  AiAssistantProfileItem,
   FanpageItem,
   OpenAITokenItem,
 } from '../services/chatbot.service';
 import { AdsService, AdAccountItem } from '../services/ads.service';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 const PLATFORM_LABELS: Record<string, string> = {
   FACEBOOK: 'Facebook',
@@ -34,10 +36,17 @@ const SYNC_SOURCE_LABELS: Record<string, string> = {
   FACEBOOK_BM: 'Dong bo BM',
 };
 
+const AI_ASSISTANT_TYPE_LABELS: Record<string, string> = {
+  PARENT_SUPPORT: 'Cham soc phu huynh',
+  INTERNAL_SUPPORT: 'Ho tro noi bo',
+  TEACHER_SUPPORT: 'Tro ly giao vien',
+  LEAD_CARE: 'Cham soc lead',
+};
+
 @Component({
   selector: 'app-chatbot-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   templateUrl: './chatbot-settings.component.html',
   styleUrls: ['./chatbot-settings.component.css'],
 })
@@ -46,6 +55,7 @@ export class ChatbotSettingsComponent implements OnInit {
 
   fanpages = signal<FanpageItem[]>([]);
   tokens = signal<OpenAITokenItem[]>([]);
+  aiAssistantProfiles = signal<AiAssistantProfileItem[]>([]);
   adAccounts = signal<AdAccountItem[]>([]);
 
   fpKeyword = '';
@@ -63,6 +73,11 @@ export class ChatbotSettingsComponent implements OnInit {
   tokenForm: any = this.emptyTokenForm();
   tokenError = signal('');
 
+  showAiProfileModal = signal(false);
+  editingAiProfile: AiAssistantProfileItem | null = null;
+  aiProfileForm: any = this.emptyAiProfileForm();
+  aiProfileError = signal('');
+
   saving = signal(false);
 
   constructor(
@@ -74,11 +89,13 @@ export class ChatbotSettingsComponent implements OnInit {
   ngOnInit() {
     this.loadFanpages();
     this.loadTokens();
+    this.loadAiAssistantProfiles();
     this.loadAdAccounts();
   }
 
   switchTab(tab: string) {
     if (tab === 'tokens' && !this.canManageTokenLibrary()) return;
+    if (tab === 'profiles' && !this.canViewAiAssistantProfiles()) return;
     this.activeTab = tab;
   }
 
@@ -98,6 +115,10 @@ export class ChatbotSettingsComponent implements OnInit {
     return SYNC_SOURCE_LABELS[value || ''] || value || 'Nhap tay';
   }
 
+  aiAssistantTypeLabel(value?: string) {
+    return AI_ASSISTANT_TYPE_LABELS[value || ''] || value || '-';
+  }
+
   formatDate(value?: string | null) {
     if (!value) return '-';
     const date = new Date(value);
@@ -106,7 +127,7 @@ export class ChatbotSettingsComponent implements OnInit {
   }
 
   canEditFanpages() {
-    return this.authService.hasRole([Role.DIRECTOR, Role.OPS]);
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER]);
   }
 
   canCreateFanpages() {
@@ -118,7 +139,15 @@ export class ChatbotSettingsComponent implements OnInit {
   }
 
   canUseOpenAITokens() {
-    return this.authService.hasRole([Role.DIRECTOR, Role.OPS]);
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER]);
+  }
+
+  canViewAiAssistantProfiles() {
+    return this.canUseOpenAITokens();
+  }
+
+  canManageAiAssistantProfiles() {
+    return this.authService.hasRole([Role.DIRECTOR]);
   }
 
   openAITokenLabel(fanpage: FanpageItem) {
@@ -168,6 +197,17 @@ export class ChatbotSettingsComponent implements OnInit {
     };
   }
 
+  emptyAiProfileForm() {
+    return {
+      assistantType: 'PARENT_SUPPORT',
+      label: '',
+      description: '',
+      rulesPrompt: '',
+      defaultOpenAITokenId: '',
+      status: 'ACTIVE',
+    };
+  }
+
   isSyncedFacebookFanpage() {
     return this.editingFanpage?.syncSource === 'FACEBOOK_BM' && this.fpForm.platform === 'FACEBOOK';
   }
@@ -208,6 +248,20 @@ export class ChatbotSettingsComponent implements OnInit {
       this.adAccounts.set(result.data);
     } catch {
       this.adAccounts.set([]);
+    }
+  }
+
+  async loadAiAssistantProfiles() {
+    if (!this.canViewAiAssistantProfiles()) {
+      this.aiAssistantProfiles.set([]);
+      return;
+    }
+
+    try {
+      const items = await this.chatbotService.listAiAssistantProfiles();
+      this.aiAssistantProfiles.set(items);
+    } catch {
+      this.aiAssistantProfiles.set([]);
     }
   }
 
@@ -354,5 +408,85 @@ export class ChatbotSettingsComponent implements OnInit {
     if (!confirm(`Xoa token "${token.label}"?`)) return;
     await this.chatbotService.deleteOpenAIToken(token._id);
     await this.loadTokens();
+  }
+
+  openAiProfileModal() {
+    if (!this.canManageAiAssistantProfiles()) return;
+    this.editingAiProfile = null;
+    this.aiProfileForm = this.emptyAiProfileForm();
+    this.aiProfileError.set('');
+    this.showAiProfileModal.set(true);
+  }
+
+  editAiProfile(profile: AiAssistantProfileItem) {
+    if (!this.canManageAiAssistantProfiles()) return;
+    this.editingAiProfile = profile;
+    this.aiProfileForm = {
+      assistantType: profile.assistantType,
+      label: profile.label,
+      description: profile.description || '',
+      rulesPrompt: profile.rulesPrompt || '',
+      defaultOpenAITokenId: profile.defaultOpenAITokenId || '',
+      status: profile.status,
+    };
+    this.aiProfileError.set('');
+    this.showAiProfileModal.set(true);
+  }
+
+  closeAiProfileModal() {
+    this.showAiProfileModal.set(false);
+  }
+
+  aiProfileTokenLabel(profile: AiAssistantProfileItem) {
+    if (profile.defaultOpenAITokenLabel) {
+      return profile.defaultOpenAIModel
+        ? `${profile.defaultOpenAITokenLabel} (${profile.defaultOpenAIModel})`
+        : profile.defaultOpenAITokenLabel;
+    }
+
+    const token = this.tokens().find((item) => item._id === profile.defaultOpenAITokenId);
+    if (!token) return '-';
+    return `${token.label} (${token.model})`;
+  }
+
+  rulesPreview(value?: string) {
+    const rules = (value || '').trim();
+    if (!rules) return '-';
+    if (rules.length <= 120) return rules;
+    return `${rules.slice(0, 117)}...`;
+  }
+
+  async saveAiProfile() {
+    if (!this.canManageAiAssistantProfiles()) return;
+    if (!this.aiProfileForm.assistantType || !this.aiProfileForm.label) {
+      this.aiProfileError.set('Vui long dien du cac truong bat buoc.');
+      return;
+    }
+
+    this.saving.set(true);
+    this.aiProfileError.set('');
+
+    const data: any = { ...this.aiProfileForm };
+    if (!data.defaultOpenAITokenId) data.defaultOpenAITokenId = '';
+
+    const result = this.editingAiProfile
+      ? await this.chatbotService.updateAiAssistantProfile(this.editingAiProfile._id, data)
+      : await this.chatbotService.createAiAssistantProfile(data);
+
+    this.saving.set(false);
+    if (!result.ok) {
+      this.aiProfileError.set(result.message || 'Khong luu duoc AI profile.');
+      return;
+    }
+
+    this.closeAiProfileModal();
+    await this.loadAiAssistantProfiles();
+  }
+
+  async removeAiProfile(profile: AiAssistantProfileItem) {
+    if (!this.canManageAiAssistantProfiles()) return;
+    if (!confirm(`Xoa AI profile "${profile.label}"?`)) return;
+    await this.chatbotService.deleteAiAssistantProfile(profile._id);
+    await this.loadAiAssistantProfiles();
   }
 }

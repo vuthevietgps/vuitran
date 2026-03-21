@@ -2,6 +2,7 @@ import { Component, computed, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ExpenseService, ExpenseItem, ExpenseStats } from '../services/expense.service';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
@@ -44,7 +45,7 @@ const PAYMENT_METHODS: Record<string, string> = {
 @Component({
   selector: 'app-expenses',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -53,6 +54,8 @@ const PAYMENT_METHODS: Record<string, string> = {
     </div>
     <button class="primary" (click)="openCreate()">+ Tạo phiếu chi</button>
   </header>
+
+  <app-flow-guide featureKey="expenses"></app-flow-guide>
 
   <!-- Stats summary -->
   <section class="stats" *ngIf="stats()">

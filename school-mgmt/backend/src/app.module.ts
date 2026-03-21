@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
+import { BullModule } from '@nestjs/bullmq';
 import { CsrfMiddleware } from './common/middleware/csrf.middleware';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
@@ -35,11 +36,51 @@ import { WorkSessionsModule } from './work-sessions/work-sessions.module';
 import { SalaryConfigModule } from './salary-config/salary-config.module';
 import { StaffPayrollModule } from './staff-payroll/staff-payroll.module';
 import { MessagesModule } from './messages/messages.module';
+import { LandingPagesModule } from './landing-pages/landing-pages.module';
+import { ReportTemplatesModule } from './report-templates/report-templates.module';
+import { ReportsModule } from './reports/reports.module';
+import { TasksModule } from './tasks/tasks.module';
+
+const redisEnabled = (process.env.REDIS_ENABLED ?? 'true').toLowerCase() !== 'false';
+
+function parsePositiveNumber(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value == null) return fallback;
+  return value.toLowerCase() === 'true';
+}
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    ...(redisEnabled
+      ? [
+          BullModule.forRootAsync({
+            imports: [ConfigModule],
+            inject: [ConfigService],
+            useFactory: (config: ConfigService) => ({
+              connection: {
+                host: config.get<string>('REDIS_HOST', 'localhost'),
+                port: config.get<number>('REDIS_PORT', 6379),
+                ...(config.get<string>('REDIS_PASSWORD')
+                  ? { password: config.get<string>('REDIS_PASSWORD') }
+                  : {}),
+                // Do NOT buffer commands when Redis is offline — fail-fast so the
+                // webhook controller's catch block can trigger the sync fallback.
+                enableOfflineQueue: false,
+                lazyConnect: true,
+                connectTimeout: 3000,
+                maxRetriesPerRequest: 0,
+                retryStrategy: () => null,
+              },
+            }),
+          }),
+        ]
+      : []),
     ThrottlerModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -57,9 +98,27 @@ import { MessagesModule } from './messages/messages.module';
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: async (config: ConfigService) => ({
-        uri: config.get<string>('MONGODB_URI', 'mongodb://127.0.0.1:27017/school-mgmt'),
-      }),
+      useFactory: async (config: ConfigService) => {
+        const nodeEnv = config.get<string>('NODE_ENV', 'development');
+        return {
+          uri: config.get<string>('MONGODB_URI', 'mongodb://127.0.0.1:27017/school-mgmt'),
+          maxPoolSize: parsePositiveNumber(config.get<string>('MONGODB_MAX_POOL_SIZE'), 30),
+          minPoolSize: parsePositiveNumber(config.get<string>('MONGODB_MIN_POOL_SIZE'), 5),
+          maxIdleTimeMS: parsePositiveNumber(config.get<string>('MONGODB_MAX_IDLE_MS'), 30000),
+          serverSelectionTimeoutMS: parsePositiveNumber(
+            config.get<string>('MONGODB_SERVER_SELECTION_TIMEOUT_MS'),
+            5000,
+          ),
+          socketTimeoutMS: parsePositiveNumber(
+            config.get<string>('MONGODB_SOCKET_TIMEOUT_MS'),
+            45000,
+          ),
+          autoIndex: parseBoolean(
+            config.get<string>('MONGODB_AUTO_INDEX'),
+            nodeEnv !== 'production',
+          ),
+        };
+      },
     }),
     AuditLogModule,
     NotificationsModule,
@@ -90,6 +149,10 @@ import { MessagesModule } from './messages/messages.module';
     SalaryConfigModule,
     StaffPayrollModule,
     MessagesModule,
+    LandingPagesModule,
+    ReportTemplatesModule,
+    ReportsModule,
+    TasksModule,
   ],
   providers: [
     AdminSeeder,
@@ -100,7 +163,13 @@ export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply(CsrfMiddleware)
-      .exclude('auth/login', 'auth/register', 'webhooks/(.*)', 'public/attendance/(.*)')
+      .exclude(
+        'auth/login',
+        'auth/register',
+        'webhooks/(.*)',
+        'public/attendance/(.*)',
+        'public/landing-pages/(.*)',
+      )
       .forRoutes('*');
   }
 }

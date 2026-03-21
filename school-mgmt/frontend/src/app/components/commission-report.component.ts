@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 interface CommissionDetail {
   orderCode: string;
@@ -55,7 +56,7 @@ const STATUS_COLORS: Record<string, string> = {
 @Component({
   selector: 'app-commission-report',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -63,6 +64,8 @@ const STATUS_COLORS: Record<string, string> = {
       <p>Thống kê hoa hồng bán hàng theo đơn đăng ký.</p>
     </div>
   </header>
+
+  <app-flow-guide featureKey="commission-report"></app-flow-guide>
 
   <!-- Filters -->
   <section class="filters">

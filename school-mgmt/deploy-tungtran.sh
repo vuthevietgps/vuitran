@@ -19,7 +19,9 @@ set -euo pipefail
 #   SSH_HOST=192.168.100.237
 #   SSH_PORT=22
 #   SSH_USER=admin-001
+#   SSH_KEY_PATH=~/.ssh/school-mgmt-deploy
 #   SSH_PASSWORD=123456789
+#   SUDO_PASSWORD=123456789
 #   PYTHON_BIN=python
 #   MONGODB_URI=...
 #   ATLAS_USER=...
@@ -48,14 +50,20 @@ SITE_ROOT="${SITE_ROOT:-/opt/websites/sites}"
 SSH_HOST="${SSH_HOST:-192.168.100.237}"
 SSH_PORT="${SSH_PORT:-22}"
 SSH_USER="${SSH_USER:-admin-001}"
+DEFAULT_SSH_KEY_PATH=""
+if [ -f "${HOME}/.ssh/school-mgmt-deploy" ]; then
+  DEFAULT_SSH_KEY_PATH="${HOME}/.ssh/school-mgmt-deploy"
+fi
+SSH_KEY_PATH="${SSH_KEY_PATH:-$DEFAULT_SSH_KEY_PATH}"
 SSH_PASSWORD="${SSH_PASSWORD:-123456789}"
+SUDO_PASSWORD="${SUDO_PASSWORD:-$SSH_PASSWORD}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
 ATLAS_USER="${ATLAS_USER:-allinoneuser}"
 ATLAS_CLUSTER="${ATLAS_CLUSTER:-allinone.cniws0g.mongodb.net}"
 ATLAS_DB="${ATLAS_DB:-tungtran}"
 ATLAS_APP_NAME="${ATLAS_APP_NAME:-allinone}"
-ATLAS_DB_PASSWORD="${ATLAS_DB_PASSWORD:-QSDS0BsWlL2Ikmo4}"
+ATLAS_DB_PASSWORD="${ATLAS_DB_PASSWORD:-mbFpQoAxS0wVdnUf}"
 DEFAULT_MONGO_URI="mongodb+srv://${ATLAS_USER}:${ATLAS_DB_PASSWORD}@${ATLAS_CLUSTER}/${ATLAS_DB}?retryWrites=true&w=majority&appName=${ATLAS_APP_NAME}"
 MONGODB_URI="${MONGODB_URI:-$DEFAULT_MONGO_URI}"
 
@@ -130,7 +138,7 @@ ATLAS_USER="${ATLAS_USER:-allinoneuser}"
 ATLAS_CLUSTER="${ATLAS_CLUSTER:-allinone.cniws0g.mongodb.net}"
 ATLAS_DB="${ATLAS_DB:-tungtran}"
 ATLAS_APP_NAME="${ATLAS_APP_NAME:-allinone}"
-ATLAS_DB_PASSWORD="${ATLAS_DB_PASSWORD:-QSDS0BsWlL2Ikmo4}"
+ATLAS_DB_PASSWORD="${ATLAS_DB_PASSWORD:-mbFpQoAxS0wVdnUf}"
 DEFAULT_MONGO_URI="mongodb+srv://${ATLAS_USER}:${ATLAS_DB_PASSWORD}@${ATLAS_CLUSTER}/${ATLAS_DB}?retryWrites=true&w=majority&appName=${ATLAS_APP_NAME}"
 MONGODB_URI="${MONGODB_URI:-$DEFAULT_MONGO_URI}"
 
@@ -318,6 +326,11 @@ log "Version: ${VERSION}"
 log "Backend image: ${BACKEND_IMAGE}"
 log "Frontend image: ${FRONTEND_IMAGE}"
 log "Target server: ${SSH_USER}@${SSH_HOST}:${SSH_PORT}"
+if [ -n "${SSH_KEY_PATH}" ]; then
+  log "SSH auth mode: key (${SSH_KEY_PATH})"
+else
+  log "SSH auth mode: password"
+fi
 
 docker info >/dev/null
 
@@ -330,7 +343,7 @@ docker push "${FRONTEND_IMAGE}"
 REMOTE_SCRIPT_B64="$(printf '%s' "${REMOTE_DEPLOY_SCRIPT}" | base64 | tr -d '\n')"
 export REMOTE_SCRIPT_B64
 
-export SSH_HOST SSH_PORT SSH_USER SSH_PASSWORD
+export SSH_HOST SSH_PORT SSH_USER SSH_KEY_PATH SSH_PASSWORD SUDO_PASSWORD
 export VERSION IMAGE_NAMESPACE DOMAIN BACKEND_PORT FRONTEND_PORT TRAEFIK_NETWORK SITE_ROOT
 export MONGODB_URI ATLAS_USER ATLAS_DB_PASSWORD ATLAS_CLUSTER ATLAS_DB ATLAS_APP_NAME
 export JWT_SECRET JWT_EXPIRES TOKEN_ENCRYPTION_KEY ADMIN_EMAIL ADMIN_PASSWORD ADMIN_FULLNAME
@@ -362,7 +375,9 @@ for stream in (sys.stdout, sys.stderr):
 ssh_host = os.environ["SSH_HOST"]
 ssh_port = int(os.environ["SSH_PORT"])
 ssh_user = os.environ["SSH_USER"]
-ssh_password = os.environ["SSH_PASSWORD"]
+ssh_key_path = os.environ.get("SSH_KEY_PATH", "").strip()
+ssh_password = os.environ.get("SSH_PASSWORD", "")
+sudo_password = os.environ.get("SUDO_PASSWORD", "")
 version = os.environ["VERSION"]
 
 env_keys = [
@@ -395,16 +410,23 @@ client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
 try:
-    client.connect(
+    connect_kwargs = dict(
         hostname=ssh_host,
         port=ssh_port,
         username=ssh_user,
-        password=ssh_password,
         timeout=30,
         auth_timeout=30,
         look_for_keys=False,
         allow_agent=False,
     )
+    if ssh_key_path:
+        connect_kwargs["key_filename"] = ssh_key_path
+        if ssh_password:
+            connect_kwargs["password"] = ssh_password
+            connect_kwargs["passphrase"] = ssh_password
+    else:
+        connect_kwargs["password"] = ssh_password
+    client.connect(**connect_kwargs)
 except Exception as exc:
     print(f"[deploy] SSH connection failed: {exc}", file=sys.stderr)
     raise
@@ -444,10 +466,26 @@ try:
     env_export = " ".join(
         f"{k}={shlex.quote(os.environ.get(k, ''))}" for k in env_keys
     )
-    command = (
-        f"echo {shlex.quote(ssh_password)} | sudo -S env {env_export} "
-        f"bash {shlex.quote(remote_path)} {shlex.quote(version)}"
-    )
+    stdin, stdout, stderr = client.exec_command("sudo -n true", get_pty=True)
+    stdout.read()
+    stderr.read()
+    sudo_no_password = stdout.channel.recv_exit_status() == 0
+
+    if sudo_no_password:
+        command = (
+            f"sudo -n env {env_export} "
+            f"bash {shlex.quote(remote_path)} {shlex.quote(version)}"
+        )
+    elif sudo_password:
+        command = (
+            f"printf '%s\\n' {shlex.quote(sudo_password)} | sudo -S env {env_export} "
+            f"bash {shlex.quote(remote_path)} {shlex.quote(version)}"
+        )
+    else:
+        raise RuntimeError(
+            "sudo requires a password, but SUDO_PASSWORD is empty. "
+            "Provide SUDO_PASSWORD or configure passwordless sudo."
+        )
     run(command, check=True)
 finally:
     try:

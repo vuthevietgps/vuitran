@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { environment } from '../../environments/environment';
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 import {
   FinancialControlService,
   BankAccount,
@@ -43,7 +45,7 @@ interface ReconciliationResult {
 @Component({
   selector: 'app-bank-reconciliation',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -51,6 +53,8 @@ interface ReconciliationResult {
       <p>So khop giao dich ngan hang voi so sach he thong.</p>
     </div>
   </header>
+
+  <app-flow-guide featureKey="bank-reconciliation"></app-flow-guide>
 
   <!-- Filters -->
   <div class="filter-bar">

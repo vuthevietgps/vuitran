@@ -10,6 +10,59 @@ export enum AttendanceStatus {
   EXCUSED = 'EXCUSED',    // Xin phép
 }
 
+/**
+ * TeachingReportRow: shape trả về từ GET /reports/teaching
+ * Dữ liệu được $lookup read-time từ 3 SSOT:
+ *   • sessionContent / comment / recordLink / hasTeachingReport / ... → Sessions
+ *   • salaryAmount / paymentStatus / penaltyAmount / bonusAmount      → PayrollTransactions
+ *   • imageUrl / attendedAt / date / sessionDuration                  → Attendance
+ */
+export interface TeachingReportRow {
+  _id: string;
+  attendanceId: string;
+  date: string;
+  attendedAt?: string;
+  imageUrl?: string;
+  sessionDuration?: number;
+  sessionIndex?: number;
+  sessionId?: string;
+
+  // Từ Sessions (SSOT)
+  sessionContent?: string;
+  studentAttitude?: string;
+  comment?: string;
+  recordLink?: string;
+  homework?: string;
+  additionalNotes?: string;
+  reportSubmittedAt?: string;
+  isLateReport?: boolean;
+  lateHours?: number;
+  hasTeachingReport?: boolean;
+  sessionStatus?: string;
+  parentConfirm?: boolean;
+
+  // Từ PayrollTransactions (SSOT)
+  salaryAmount?: number;
+  paymentStatus?: string;
+  penaltyAmount?: number;
+  bonusAmount?: number;
+
+  // Thông tin liên quan
+  studentId: { _id: string; studentCode?: string; fullName: string; age?: number; faceImage?: string };
+  classId: { _id: string; code: string; name: string };
+  teacherId: { _id: string; fullName: string; email?: string };
+}
+
+export interface PaginatedReportResponse<T> {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 export interface StudentAttendanceItem {
   student: {
     _id: string;
@@ -313,13 +366,61 @@ export class AttendanceService {
     );
   }
 
-  // Lấy báo cáo điểm danh tổng hợp
-  async getAttendanceReport(startDate: string, endDate: string, classId?: string) {
+  // Lấy báo cáo điểm danh tổng hợp (physical attendance — ảnh chụp, check-in) — server-side pagination
+  async getAttendanceReport(
+    startDate: string,
+    endDate: string,
+    classId?: string,
+    page: number = 1,
+    limit: number = 20,
+  ): Promise<PaginatedReportResponse<any>> {
     return firstValueFrom(
-      this.http.get<any[]>(`${environment.apiBase}/attendance/report`, {
-        params: this.buildParams({ startDate, endDate, classId }),
+      this.http.get<PaginatedReportResponse<any>>(`${environment.apiBase}/attendance/report`, {
+        params: this.buildParams({ startDate, endDate, classId, page, limit }),
         withCredentials: true,
       }),
+    );
+  }
+
+  /**
+   * GET /reports/teaching
+   * Báo cáo giảng dạy tổng hợp (SSOT):
+   *   • Nội dung dạy / link record / nhận xét → từ Sessions (SSOT)
+   *   • Lương / trạng thái thanh toán         → từ PayrollTransactions (SSOT)
+   *   • Ảnh điểm danh / thời gian check-in    → từ Attendance
+   */
+  async getTeachingReport(params: {
+    startDate: string;
+    endDate: string;
+    classId?: string;
+    teacherId?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<PaginatedReportResponse<TeachingReportRow>> {
+    return firstValueFrom(
+      this.http.get<PaginatedReportResponse<TeachingReportRow>>(`${environment.apiBase}/reports/teaching`, {
+        params: this.buildParams(params),
+        withCredentials: true,
+      }),
+    );
+  }
+
+  /**
+   * PATCH /reports/:attendanceId/inline-update
+   * Cập nhật inline với phân luồng SSOT:
+   *   • sessionContent / comment / recordLink → Sessions.teachingReport (SSOT)
+   *   • imageUrl                              → Attendance.imageUrl     (SSOT)
+   */
+  async updateReportRow(
+    attendanceId: string,
+    dto: Partial<Pick<TeachingReportRow, 'sessionContent' | 'comment' | 'recordLink' | 'imageUrl'>>,
+  ): Promise<{ success: boolean }> {
+    return firstValueFrom(
+      this.http.patch<{ success: boolean }>(
+        `${environment.apiBase}/reports/${attendanceId}/inline-update`,
+        dto,
+        { withCredentials: true },
+      ),
     );
   }
 }

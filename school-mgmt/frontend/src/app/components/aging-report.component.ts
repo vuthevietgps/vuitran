@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface AgingSummary {
   totalAR: number;
   current: number;
@@ -31,7 +33,7 @@ interface AgingReport {
 @Component({
   selector: 'app-aging-report',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -39,6 +41,8 @@ interface AgingReport {
       <p>Phan tich cong no phu huynh theo thoi gian qua han.</p>
     </div>
   </header>
+
+  <app-flow-guide featureKey="aging-report"></app-flow-guide>
 
   <!-- Summary cards -->
   <section class="summary-grid" *ngIf="report()">

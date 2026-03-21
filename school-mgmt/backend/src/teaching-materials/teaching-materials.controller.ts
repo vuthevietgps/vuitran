@@ -24,6 +24,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { MaterialFileCategory } from './schemas/teaching-material.schema';
 
 // Setup upload directory
 const uploadPath = join(process.cwd(), 'uploads', 'materials');
@@ -50,6 +51,7 @@ const materialFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     'application/vnd.ms-powerpoint',
     'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/json',
     // Images
     'image/jpeg',
     'image/png',
@@ -113,8 +115,21 @@ export class TeachingMaterialsController {
     @Query('grade') grade?: string,
     @Query('classId') classId?: string,
     @Query('search') search?: string,
+    @Query('fileCategory') fileCategory?: MaterialFileCategory,
+    @Query('extractionStatus') extractionStatus?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.service.findAll(req.user, { subject, grade, classId, search });
+    return this.service.findAll(req.user, {
+      subject,
+      grade,
+      classId,
+      search,
+      fileCategory,
+      extractionStatus: extractionStatus as any,
+      page: page ? parseInt(page, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 
   /**
@@ -124,7 +139,7 @@ export class TeachingMaterialsController {
   @Get('stats')
   @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
   getStats(@Req() req: AuthenticatedRequest) {
-    return this.service.getStats(req.user.sub);
+    return this.service.getStats(req.user);
   }
 
   /**
@@ -151,6 +166,12 @@ export class TeachingMaterialsController {
     return this.service.update(id, dto, req.user);
   }
 
+  @Post(':id/reprocess')
+  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  reprocess(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.service.reprocess(id, req.user);
+  }
+
   /**
    * Xóa tài liệu
    * DELETE /teaching-materials/:id
@@ -167,7 +188,7 @@ export class TeachingMaterialsController {
    */
   @Post(':id/download')
   @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
-  download(@Param('id') id: string) {
-    return this.service.incrementDownload(id);
+  download(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.service.incrementDownload(id, req.user);
   }
 }

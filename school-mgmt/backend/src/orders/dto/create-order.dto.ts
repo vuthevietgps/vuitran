@@ -1,6 +1,7 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, IsDate, ValidateNested, Min, Max } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, ValidateNested, Min, IsMongoId } from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderType, PaymentPlan, LeadSource } from '../schemas/order.schema';
+import { TrackingAttributionDto } from '../../marketing-attribution/dto/tracking-attribution.dto';
 
 export class OrderItemDto {
   @IsString()
@@ -81,6 +82,10 @@ export class CreateOrderDto {
   @IsOptional()
   existingStudentId?: string;
 
+  @IsMongoId()
+  @IsOptional()
+  saleId?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
@@ -131,4 +136,9 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   consultationNotes?: string;
+
+  @ValidateNested()
+  @Type(() => TrackingAttributionDto)
+  @IsOptional()
+  tracking?: TrackingAttributionDto;
 }

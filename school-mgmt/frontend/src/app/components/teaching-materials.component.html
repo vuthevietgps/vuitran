@@ -1,0 +1,354 @@
+<div class="materials-shell">
+  <section class="hero-card">
+    <div>
+      <p class="eyebrow">Kho hoc lieu</p>
+      <h2>Tai lieu giang day va tri thuc cho AI</h2>
+      <p class="subtitle">
+        Tai nhanh, loc nhanh, va de AI doc dung tai lieu can thiet ma khong bat frontend tai qua nhieu du lieu mot luc.
+      </p>
+    </div>
+    <button class="btn primary" type="button" (click)="openUploadModal()">Tai len tai lieu</button>
+  </section>
+
+  <app-flow-guide featureKey="teaching-materials"></app-flow-guide>
+
+  <section class="stats-grid" *ngIf="stats() as overview">
+    <article class="stat-card">
+      <span class="stat-label">Tong tai lieu</span>
+      <strong>{{ overview.total }}</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-label">Dung luong</span>
+      <strong>{{ overview.totalSizeMB }} MB</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-label">AI ready</span>
+      <strong>{{ overview.readyForAI }}</strong>
+    </article>
+    <article class="stat-card">
+      <span class="stat-label">Tong chunks</span>
+      <strong>{{ overview.totalChunks }}</strong>
+    </article>
+    <article class="stat-card compact" *ngFor="let entry of objectEntries(overview.bySubject)">
+      <span class="stat-label">{{ entry[0] }}</span>
+      <strong>{{ entry[1] }}</strong>
+    </article>
+  </section>
+
+  <section class="filter-card">
+    <div class="filter-row">
+      <label class="search-field">
+        <span>Tim kiem</span>
+        <input
+          type="text"
+          [ngModel]="searchQuery"
+          (ngModelChange)="onSearchQueryChange($event)"
+          placeholder="Tim theo tieu de, tom tat, tag..."
+        />
+      </label>
+
+      <label>
+        <span>Mon hoc</span>
+        <select [ngModel]="filterSubject" (ngModelChange)="onSubjectChange($event)">
+          <option value="">Tat ca mon</option>
+          <option *ngFor="let subject of subjectOptions()" [value]="subject">{{ subject }}</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Khoi lop</span>
+        <select [ngModel]="filterGrade" (ngModelChange)="onGradeChange($event)">
+          <option value="">Tat ca khoi</option>
+          <option *ngFor="let grade of gradeOptions()" [value]="grade">{{ grade }}</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="filter-row">
+      <label>
+        <span>Lop hoc</span>
+        <select [ngModel]="filterClassId" (ngModelChange)="onClassChange($event)">
+          <option value="">Tat ca lop</option>
+          <option *ngFor="let classroom of classes()" [value]="classroom._id">
+            {{ classroom.name }} ({{ classroom.code }})
+          </option>
+        </select>
+      </label>
+
+      <label>
+        <span>Trang thai AI</span>
+        <select [ngModel]="filterExtractionStatus" (ngModelChange)="onExtractionStatusChange($event)">
+          <option value="">Tat ca trang thai</option>
+          <option value="READY">AI ready</option>
+          <option value="PENDING">Dang xu ly</option>
+          <option value="UNSUPPORTED">Can tom tat tay</option>
+          <option value="FAILED">Xu ly loi</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Loai file</span>
+        <select [ngModel]="filterType" (ngModelChange)="onTypeChange($event)">
+          <option value="">Tat ca loai</option>
+          <option value="pdf">PDF</option>
+          <option value="doc">Word</option>
+          <option value="ppt">PowerPoint</option>
+          <option value="excel">Excel</option>
+          <option value="image">Hinh anh</option>
+          <option value="video">Video</option>
+          <option value="other">Khac</option>
+        </select>
+      </label>
+
+      <div class="filter-actions">
+        <button class="btn ghost" type="button" (click)="resetFilters()" [disabled]="!hasActiveFilters()">
+          Xoa bo loc
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="status-row">
+    <div class="status-copy">
+      <strong>{{ resultLabel() }}</strong>
+      <span *ngIf="meta().hasNextPage">Con {{ meta().total - materials().length }} tai lieu o cac trang sau</span>
+    </div>
+    <div class="status-copy subtle" *ngIf="loadingMore()">Dang tai them...</div>
+  </section>
+
+  <section class="active-filters" *ngIf="activeFilterChips().length > 0">
+    <span class="active-filters-label">Dang loc theo</span>
+    <button
+      class="filter-chip"
+      type="button"
+      *ngFor="let chip of activeFilterChips()"
+      (click)="removeFilterChip(chip.key)"
+      [title]="'Bo loc ' + chip.label"
+    >
+      <strong>{{ chip.label }}:</strong> {{ chip.value }}
+      <span class="chip-remove">x</span>
+    </button>
+  </section>
+
+  <div class="alert error" *ngIf="error()">{{ error() }}</div>
+  <div class="alert success" *ngIf="successMsg()">{{ successMsg() }}</div>
+
+  <section class="loading-panel" *ngIf="loading() && materials().length === 0">
+    <div class="spinner"></div>
+    <p>Dang tai danh sach tai lieu...</p>
+  </section>
+
+  <ng-container *ngIf="visibleMaterials() as visible">
+    <section class="empty-card" *ngIf="!loading() && visible.length === 0">
+      <h3>{{ hasActiveFilters() ? 'Khong tim thay tai lieu phu hop' : 'Chua co tai lieu nao' }}</h3>
+      <p>
+        {{ hasActiveFilters()
+          ? 'Thu doi bo loc hoac bo bớt dieu kien tim kiem de thay nhieu ket qua hon.'
+          : 'Tai len bo tai lieu dau tien de giao vien va AI co du lieu su dung.' }}
+      </p>
+      <button class="btn primary" type="button" (click)="hasActiveFilters() ? resetFilters() : openUploadModal()">
+        {{ hasActiveFilters() ? 'Dat lai bo loc' : 'Tai len tai lieu' }}
+      </button>
+    </section>
+
+    <section class="materials-grid" *ngIf="visible.length > 0">
+      <article class="material-card" *ngFor="let material of visible; trackBy: trackByMaterialId">
+        <div class="card-head">
+          <div class="file-badge" [attr.data-type]="getFileCategory(material.fileType)">
+            {{ fileIcon(material.fileType) }}
+          </div>
+
+          <div class="card-title-wrap">
+            <h3>{{ material.title }}</h3>
+            <p>{{ material.originalName }}</p>
+          </div>
+
+          <div class="card-actions">
+            <button class="icon-btn" type="button" title="Reprocess AI" (click)="reprocessMaterial(material)">AI</button>
+            <button class="icon-btn" type="button" title="Tai xuong" (click)="downloadFile(material)">DL</button>
+            <button class="icon-btn" type="button" title="Chinh sua" (click)="openEditModal(material)">Sua</button>
+            <button class="icon-btn danger" type="button" title="Xoa" (click)="confirmDelete(material)">Xoa</button>
+          </div>
+        </div>
+
+        <p class="card-description" *ngIf="material.description">{{ material.description }}</p>
+        <p class="knowledge-box" *ngIf="materialKnowledge(material)">{{ materialKnowledge(material) }}</p>
+        <p class="note danger-text" *ngIf="material.processingError">{{ material.processingError }}</p>
+        <p class="note" *ngIf="!material.processingError && materialNote(material)">{{ materialNote(material) }}</p>
+
+        <div class="chip-row">
+          <span class="chip blue" *ngIf="material.subject">{{ material.subject }}</span>
+          <span class="chip green" *ngIf="material.grade">{{ material.grade }}</span>
+          <span class="chip slate" *ngIf="classLabel(material)">{{ classLabel(material) }}</span>
+          <span class="chip" [class.success]="materialStatusTone(material.extractionStatus) === 'success'"
+                [class.warning]="materialStatusTone(material.extractionStatus) === 'warning'"
+                [class.neutral]="materialStatusTone(material.extractionStatus) === 'neutral'"
+                [class.danger]="materialStatusTone(material.extractionStatus) === 'danger'"
+                *ngIf="material.extractionStatus">
+            {{ extractionStatusLabel(material.extractionStatus) }}
+          </span>
+          <span class="chip teal" *ngIf="material.chunkCount">{{ material.chunkCount }} chunks</span>
+          <span class="chip muted" *ngFor="let tag of material.tags">{{ tag }}</span>
+          <span class="chip purple" *ngIf="material.isShared">Chia se</span>
+        </div>
+
+        <div class="card-footer">
+          <span>{{ formatSize(material.fileSize) }}</span>
+          <span>{{ material.updatedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
+          <span *ngIf="material.downloadCount > 0">Tai xuong {{ material.downloadCount }}</span>
+        </div>
+      </article>
+    </section>
+  </ng-container>
+
+  <section class="load-more" *ngIf="!loading() && meta().hasNextPage">
+    <button class="btn secondary" type="button" (click)="loadMore()" [disabled]="loadingMore()">
+      {{ loadingMore() ? 'Dang tai...' : 'Tai them tai lieu' }}
+    </button>
+    <p>Phu hop khi ban muon xem them tai lieu cu hon ma khong can tai toan bo danh sach ngay tu dau.</p>
+  </section>
+
+  <div class="modal-backdrop" *ngIf="showModal()" (click)="closeModal()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">{{ editingMaterial ? 'Cap nhat' : 'Tai len' }}</p>
+          <h3>{{ editingMaterial ? 'Chinh sua tai lieu' : 'Them tai lieu moi' }}</h3>
+        </div>
+        <button class="icon-btn" type="button" (click)="closeModal()">Dong</button>
+      </div>
+
+      <form (ngSubmit)="submitMaterial()">
+        <div class="modal-body">
+          <div class="field" *ngIf="!editingMaterial">
+            <label>File tai lieu</label>
+            <div
+              class="drop-zone"
+              [class.has-file]="selectedFile"
+              (dragover)="onDragOver($event)"
+              (dragleave)="onDragLeave($event)"
+              (drop)="onDrop($event)"
+            >
+              <ng-container *ngIf="!selectedFile; else selectedFileBlock">
+                <strong>Keo tha file vao day hoac bam de chon file</strong>
+                <p>Ho tro PDF, Word, Excel, PowerPoint, anh, video, TXT, CSV, JSON. Toi da 50MB.</p>
+                <label class="btn secondary inline-file-picker">
+                  Chon file
+                  <input
+                    type="file"
+                    hidden
+                    (change)="onFileSelect($event)"
+                    accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.zip,.rar,.7z,.txt,.csv,.json"
+                  />
+                </label>
+              </ng-container>
+
+              <ng-template #selectedFileBlock>
+                <div class="selected-file">
+                  <div>
+                    <strong>{{ selectedFile?.name }}</strong>
+                    <p>{{ selectedFile ? formatSize(selectedFile.size) : '' }}</p>
+                  </div>
+                  <button class="icon-btn danger" type="button" (click)="removeFile()">Bo</button>
+                </div>
+              </ng-template>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Tieu de</label>
+            <input name="title" [(ngModel)]="materialFormData.title" required />
+          </div>
+
+          <div class="field">
+            <label>Mo ta</label>
+            <textarea name="description" [(ngModel)]="materialFormData.description" rows="3"></textarea>
+          </div>
+
+          <div class="field">
+            <label>Tom tat cho AI</label>
+            <textarea
+              name="manualSummary"
+              [(ngModel)]="materialFormData.manualSummary"
+              rows="4"
+              placeholder="Viet ngan gon muc tieu, noi dung chinh, doi tuong hoc vien va cach su dung tai lieu"
+            ></textarea>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Mon hoc</span>
+              <input name="subject" [(ngModel)]="materialFormData.subject" list="subjectSuggestions" />
+              <datalist id="subjectSuggestions">
+                <option *ngFor="let subject of subjectOptions()" [value]="subject"></option>
+              </datalist>
+            </label>
+
+            <label class="field">
+              <span>Khoi lop</span>
+              <input name="grade" [(ngModel)]="materialFormData.grade" list="gradeSuggestions" />
+              <datalist id="gradeSuggestions">
+                <option *ngFor="let grade of gradeOptions()" [value]="grade"></option>
+              </datalist>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Lop hoc lien quan</span>
+            <select name="classId" [(ngModel)]="materialFormData.classId">
+              <option value="">Khong gan vao lop cu the</option>
+              <option *ngFor="let classroom of classes()" [value]="classroom._id">
+                {{ classroom.name }} ({{ classroom.code }})
+              </option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Tags</span>
+            <input name="tags" [(ngModel)]="materialFormData.tags" placeholder="de thi, chuong 1, bai tap" />
+          </label>
+
+          <label class="checkbox-row">
+            <input type="checkbox" name="isShared" [(ngModel)]="materialFormData.isShared" />
+            <span>Chia se voi giao vien khac</span>
+          </label>
+
+          <div class="loading-inline" *ngIf="uploading()">
+            <div class="spinner small"></div>
+            <span>{{ editingMaterial ? 'Dang cap nhat...' : 'Dang tai len...' }}</span>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn primary" type="submit" [disabled]="uploading() || (!editingMaterial && !selectedFile)">
+            {{ editingMaterial ? 'Luu thay doi' : 'Tai len' }}
+          </button>
+          <button class="btn ghost" type="button" (click)="closeModal()">Huy</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" *ngIf="showDeleteConfirm()" (click)="showDeleteConfirm.set(false)">
+    <div class="modal small" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <div>
+          <p class="eyebrow">Xoa tai lieu</p>
+          <h3>Xac nhan xoa</h3>
+        </div>
+      </div>
+      <div class="modal-body">
+        <p>
+          Ban co chac muon xoa tai lieu
+          <strong>{{ deletingMaterial?.title }}</strong>
+          khong?
+        </p>
+        <p class="danger-text">Hanh dong nay se xoa file va du lieu AI lien quan.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn danger" type="button" (click)="executeDelete()" [disabled]="uploading()">Xoa</button>
+        <button class="btn ghost" type="button" (click)="showDeleteConfirm.set(false)">Huy</button>
+      </div>
+    </div>
+  </div>
+</div>

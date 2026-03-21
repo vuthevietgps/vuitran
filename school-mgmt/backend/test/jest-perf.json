@@ -7,5 +7,12 @@
   },
   "testEnvironment": "node",
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
-  "testTimeout": 300000
+  "testTimeout": 300000,
+  "reporters": [
+    "default",
+    ["jest-junit", {
+      "outputDirectory": "../test-results/perf",
+      "outputName": "junit.xml"
+    }]
+  ]
 }

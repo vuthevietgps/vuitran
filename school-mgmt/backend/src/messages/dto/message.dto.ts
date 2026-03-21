@@ -4,6 +4,10 @@ export class SendMessageDto {
   @IsMongoId()
   receiverId!: string;
 
+  @IsMongoId()
+  @IsOptional()
+  contextStudentId?: string;
+
   @IsString()
   @IsNotEmpty()
   content!: string;

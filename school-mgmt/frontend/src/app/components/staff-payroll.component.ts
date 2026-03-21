@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { StaffPayrollService } from '../services/staff-payroll.service';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const STATUS_LABELS: Record<string, string> = {
   DRAFT: 'Nháp',
   PENDING_REVIEW: 'Chờ duyệt',
@@ -24,6 +26,7 @@ const ROLE_LABELS: Record<string, string> = {
   DIRECTOR: 'Giám đốc',
   ACCOUNTING: 'Kế toán',
   OPS: 'Vận hành',
+  ADSMANAGER: 'Ads manager',
   TEACHER: 'Giáo viên',
   SALES: 'Kinh doanh',
   STAFF: 'Nhân viên',
@@ -32,7 +35,7 @@ const ROLE_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-staff-payroll',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -44,6 +47,8 @@ const ROLE_LABELS: Record<string, string> = {
       <button class="secondary" (click)="openBulkModal()">Tạo hàng loạt</button>
     </div>
   </header>
+
+  <app-flow-guide featureKey="staff-payroll"></app-flow-guide>
 
   <!-- Admin view -->
   <ng-container *ngIf="isAdmin(); else myView">

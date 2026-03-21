@@ -5,11 +5,14 @@ import { StudentService, StudentReportEntry } from '../services/student.service'
 import { ClassService, ClassItem } from '../services/class.service';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-student-report',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="student-report"></app-flow-guide>
     <div class="report-container">
       <h1>Báo cáo học sinh</h1>
 

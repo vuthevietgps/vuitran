@@ -27,6 +27,10 @@ export class CreateTeachingMaterialDto {
   @IsOptional()
   @IsBoolean()
   isShared?: boolean;
+
+  @IsOptional()
+  @IsString()
+  manualSummary?: string;
 }
 
 export class UpdateTeachingMaterialDto {
@@ -57,4 +61,8 @@ export class UpdateTeachingMaterialDto {
   @IsOptional()
   @IsBoolean()
   isShared?: boolean;
+
+  @IsOptional()
+  @IsString()
+  manualSummary?: string;
 }

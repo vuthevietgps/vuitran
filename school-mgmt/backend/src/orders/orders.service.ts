@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery } from 'mongoose';
+import { Model, FilterQuery, Types } from 'mongoose';
 import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
 import { Lead, LeadDocument, LeadStatus } from '../leads/schemas/lead.schema';
+import { Student, StudentDocument } from '../students/schemas/student.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
@@ -11,14 +13,23 @@ import { AuditAction } from '../audit-log/schemas/audit-log.schema';
 import { EnrollmentService, EnrollmentResult } from './enrollment.service';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
+import { MarketingAttributionService } from '../marketing-attribution/marketing-attribution.service';
+import {
+  ParentAttributionModel,
+  ParentAttributionSourceType,
+} from '../marketing-attribution/schemas/parent-attribution.schema';
+import { mergeTrackingAttribution } from '../marketing-attribution/parent-attribution.util';
 
 @Injectable()
 export class OrdersService {
   constructor(
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
+    @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private auditLogService: AuditLogService,
     private enrollmentService: EnrollmentService,
+    private marketingAttributionService: MarketingAttributionService,
   ) {}
 
   private getActorId(user: JwtPayload): string {
@@ -32,6 +43,96 @@ export class OrdersService {
     if (!actorId || !ownerSaleId || ownerSaleId !== actorId) {
       throw new NotFoundException('Don hang khong ton tai');
     }
+  }
+
+  private async findSaleUser(saleId: string | Types.ObjectId): Promise<any> {
+    const sale = await this.userModel
+      .findOne({ _id: saleId, role: Role.SALE })
+      .select('_id fullName email')
+      .lean();
+    if (!sale) {
+      throw new BadRequestException('Sale phu trach khong hop le');
+    }
+    return sale;
+  }
+
+  private async resolveOrderSaleOwner(
+    dto: Pick<CreateOrderDto, 'leadId' | 'existingStudentId' | 'saleId'>,
+    user: JwtPayload,
+    leadForConversion?: LeadDocument | null,
+  ): Promise<{ saleId: Types.ObjectId; saleName: string }> {
+    const actorId = this.getActorId(user);
+
+    const lead = dto.leadId
+      ? (leadForConversion
+        ?? await this.leadModel.findById(dto.leadId).select('saleId saleName').lean())
+      : null;
+    if (dto.leadId && !lead) {
+      throw new NotFoundException('Lead khong ton tai');
+    }
+
+    const student = dto.existingStudentId
+      ? await this.studentModel.findById(dto.existingStudentId).select('saleId saleName').lean()
+      : null;
+    if (dto.existingStudentId && !student) {
+      throw new NotFoundException('Hoc sinh khong ton tai');
+    }
+
+    const leadSaleId = lead?.saleId?.toString?.() || null;
+    const studentSaleId = student?.saleId?.toString?.() || null;
+    const leadSaleName = (lead as any)?.saleName || null;
+    const studentSaleName = (student as any)?.saleName || null;
+
+    if (leadSaleId && studentSaleId && leadSaleId !== studentSaleId) {
+      throw new BadRequestException('Lead va hoc sinh dang thuoc 2 sale khac nhau');
+    }
+
+    if (user.role === Role.SALE) {
+      if (dto.leadId && leadSaleId !== actorId) {
+        throw new NotFoundException('Lead khong ton tai');
+      }
+      if (dto.existingStudentId && studentSaleId !== actorId) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
+      }
+      return {
+        saleId: new Types.ObjectId(actorId),
+        saleName: user.fullName || user.email,
+      };
+    }
+
+    const lockedOwnerId = leadSaleId || studentSaleId;
+    const lockedOwnerName = leadSaleName || studentSaleName;
+
+    if (dto.saleId) {
+      const requestedSale = await this.findSaleUser(dto.saleId);
+      if (lockedOwnerId && requestedSale._id.toString() !== lockedOwnerId) {
+        throw new BadRequestException(
+          leadSaleId
+            ? 'Lead da co sale phu trach. Hay chuyen lead truoc khi tao don'
+            : 'Hoc sinh da co sale phu trach. Hay cap nhat owner truoc khi tao don',
+        );
+      }
+      return {
+        saleId: requestedSale._id as Types.ObjectId,
+        saleName: requestedSale.fullName || requestedSale.email,
+      };
+    }
+
+    if (lockedOwnerId) {
+      if (lockedOwnerName) {
+        return {
+          saleId: new Types.ObjectId(lockedOwnerId),
+          saleName: lockedOwnerName,
+        };
+      }
+      const inferredSale = await this.findSaleUser(lockedOwnerId);
+      return {
+        saleId: inferredSale._id as Types.ObjectId,
+        saleName: inferredSale.fullName || inferredSale.email,
+      };
+    }
+
+    throw new BadRequestException('Phai chon sale phu trach cho don hang');
   }
 
   private async generateOrderCode(): Promise<string> {
@@ -56,6 +157,7 @@ export class OrdersService {
     // Resolve adGroupId: Lead takes priority over direct assignment
     let adGroupId = dto.adGroupId;
     let adGroupName = dto.adGroupName;
+    let tracking = dto.tracking;
     let leadForConversion: LeadDocument | null = null;
     if (dto.leadId) {
       leadForConversion = await this.leadModel.findById(dto.leadId);
@@ -73,27 +175,25 @@ export class OrdersService {
         throw new BadRequestException('Khong the tao don tu lead da mat hoac khong phan hoi');
       }
 
-      if (user.role === Role.SALE) {
-        const leadSaleId = (leadForConversion as any).saleId?.toString?.();
-        if (!leadSaleId || leadSaleId !== actorId) {
-          throw new NotFoundException('Lead khong ton tai');
-        }
-      }
-
       if (leadForConversion.adGroupId) {
         adGroupId = leadForConversion.adGroupId.toString();
         adGroupName = (leadForConversion as any).adGroupName || adGroupName;
       }
+
+      tracking = mergeTrackingAttribution((leadForConversion as any).tracking, dto.tracking, true) as any;
     }
+
+    const saleOwner = await this.resolveOrderSaleOwner(dto, user, leadForConversion);
 
     const order = new this.orderModel({
       ...dto,
       orderCode,
       status: OrderStatus.DRAFT,
-      saleId: actorId,
-      saleName: user.fullName || user.email,
+      saleId: saleOwner.saleId,
+      saleName: saleOwner.saleName,
       adGroupId,
       adGroupName,
+      tracking,
     });
     const saved = await order.save();
 
@@ -102,6 +202,24 @@ export class OrdersService {
       (leadForConversion as any).convertedOrderId = (saved as any)._id;
       await leadForConversion.save();
     }
+
+    await this.marketingAttributionService.upsertParentAttribution({
+      parentUserId: (saved as any).parentUserId,
+      parentPhone: saved.parentPhone,
+      parentEmail: saved.parentEmail,
+      adGroupId: saved.adGroupId,
+      adGroupName: saved.adGroupName,
+      platform: saved.leadSource,
+      tracking: saved.tracking,
+      sourceLeadId: saved.leadId,
+      sourceOrderId: saved._id,
+      attributionModel: dto.adGroupId && !leadForConversion
+        ? ParentAttributionModel.MANUAL_OVERRIDE
+        : undefined,
+      sourceType: dto.adGroupId && !leadForConversion
+        ? ParentAttributionSourceType.MANUAL
+        : ParentAttributionSourceType.ORDER,
+    });
 
     await this.auditLogService.log({
       userId: actorId,
@@ -166,14 +284,54 @@ export class OrdersService {
       throw new BadRequestException('Chá»‰ cÃ³ thá»ƒ sá»­a Ä‘Æ¡n á»Ÿ tráº¡ng thÃ¡i NhÃ¡p hoáº·c Cáº§n bá»• sung');
     }
 
-    const updated = await this.orderModel.findByIdAndUpdate(id, dto, { new: true }).lean();
+    const updateData: any = { ...dto };
+    if (user.role === Role.SALE) {
+      delete updateData.saleId;
+    }
+
+    const shouldResolveOwner =
+      updateData.saleId !== undefined ||
+      updateData.leadId !== undefined ||
+      updateData.existingStudentId !== undefined;
+
+    if (shouldResolveOwner) {
+      const saleOwner = await this.resolveOrderSaleOwner(
+        {
+          leadId: updateData.leadId ?? o.leadId?.toString?.(),
+          existingStudentId: updateData.existingStudentId ?? o.existingStudentId?.toString?.(),
+          saleId: updateData.saleId,
+        },
+        user,
+      );
+      updateData.saleId = saleOwner.saleId;
+      updateData.saleName = saleOwner.saleName;
+    }
+
+    const updated = await this.orderModel.findByIdAndUpdate(id, updateData, { new: true }).lean();
+    if (updated) {
+      await this.marketingAttributionService.upsertParentAttribution({
+        parentUserId: (updated as any).parentUserId,
+        parentPhone: updated.parentPhone,
+        parentEmail: updated.parentEmail,
+        adGroupId: (updated as any).adGroupId,
+        adGroupName: (updated as any).adGroupName,
+        platform: (updated as any).leadSource,
+        tracking: (updated as any).tracking,
+        sourceLeadId: (updated as any).leadId,
+        sourceOrderId: (updated as any)._id,
+        attributionModel: updateData.adGroupId !== undefined ? ParentAttributionModel.MANUAL_OVERRIDE : undefined,
+        sourceType: updateData.adGroupId !== undefined
+          ? ParentAttributionSourceType.MANUAL
+          : ParentAttributionSourceType.ORDER,
+      });
+    }
 
     await this.auditLogService.log({
       userId: actorId, userEmail: user.email, userFullName: user.fullName, userRole: user.role,
       action: AuditAction.UPDATE, module: 'ORDERS' as any,
       targetId: id, targetName: o.orderCode,
       description: `Cáº­p nháº­t Ä‘Æ¡n ${o.orderCode}`,
-      newValue: dto as any,
+      newValue: updateData as any,
     });
 
     return updated as Order;

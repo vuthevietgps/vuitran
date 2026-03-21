@@ -63,6 +63,11 @@ export const sampleTeachingReports = [
 // 2. ATTENDANCE RECORDS (Dữ liệu điểm danh)
 // ============================================================
 
+// ============================================================
+// 2. ATTENDANCE RECORDS (Dữ liệu điểm danh - KHÔNG chứa salary)
+// Salary được theo dõi riêng trong PayrollTransactions
+// ============================================================
+
 export const sampleAttendanceRecords = [
   {
     _id: '65abc123def456789',
@@ -70,12 +75,10 @@ export const sampleAttendanceRecords = [
     attendedAt: new Date('2026-02-08T09:30:00.000Z'),
     status: 'COMPLETED',
     sessionDuration: 90,
-    salaryAmount: 150000,
     sessionContent: 'Ôn tập bảng cửu chương 7, 8, 9. Luyện tập phép chia có dư.',
     comment: 'Em đã tiến bộ rõ rệt trong tuần này',
     recordLink: 'https://meet.google.com/rec/abc123xyz',
     parentConfirm: 'OK',
-    paymentStatus: 0, // 0=UNPAID
     imageUrl: 'https://storage.school.vn/attendance/20260208_093000_HS2024001.jpg',
     notes: '',
     sessionIndex: 15,
@@ -102,14 +105,12 @@ export const sampleAttendanceRecords = [
     attendedAt: new Date('2026-02-07T14:00:00.000Z'),
     status: 'COMPLETED',
     sessionDuration: 60,
-    salaryAmount: 100000,
     sessionContent: 'Học từ vựng tiếng Anh chủ đề Animals',
     comment: 'Em có khả năng nghe tốt',
     recordLink: 'https://zoom.us/rec/share/xyz789',
     parentConfirm: 'OK',
-    paymentStatus: 1, // 1=PAID
     imageUrl: 'https://storage.school.vn/attendance/20260207_140000_HS2024002.jpg',
-    notes: 'Đã thanh toán ngày 08/02',
+    notes: '',
     sessionIndex: 12,
     studentId: {
       _id: '65student124',
@@ -134,12 +135,10 @@ export const sampleAttendanceRecords = [
     attendedAt: new Date('2026-02-06T16:30:00.000Z'),
     status: 'COMPLETED',
     sessionDuration: 90,
-    salaryAmount: 180000,
     sessionContent: 'Luyện đọc hiểu văn bản "Bài ca chú ve con"',
     comment: 'Em có khiếu văn học',
     recordLink: '',
     parentConfirm: 'PENDING',
-    paymentStatus: 0,
     imageUrl: 'https://storage.school.vn/attendance/20260206_163000_HS2024003.jpg',
     notes: '',
     sessionIndex: 8,
@@ -166,12 +165,10 @@ export const sampleAttendanceRecords = [
     attendedAt: new Date('2026-02-05T10:00:00.000Z'),
     status: 'COMPLETED',
     sessionDuration: 120,
-    salaryAmount: 200000,
     sessionContent: 'Học vẽ tranh phong cảnh bằng màu nước',
     comment: 'Bức tranh của em đẹp, cảm nhận màu sắc tốt',
     recordLink: 'https://meet.google.com/rec/art001',
     parentConfirm: 'OK',
-    paymentStatus: 0,
     imageUrl: 'https://storage.school.vn/attendance/20260205_100000_HS2024004.jpg',
     notes: '',
     sessionIndex: 6,
@@ -198,12 +195,10 @@ export const sampleAttendanceRecords = [
     attendedAt: new Date('2026-02-04T15:00:00.000Z'),
     status: 'COMPLETED',
     sessionDuration: 90,
-    salaryAmount: 150000,
     sessionContent: 'Học lập trình Scratch: Tạo game "Bắt táo rơi"',
     comment: 'Em có tư duy logic tốt',
     recordLink: 'https://zoom.us/rec/code123',
     parentConfirm: 'OK',
-    paymentStatus: 0,
     imageUrl: 'https://storage.school.vn/attendance/20260204_150000_HS2024005.jpg',
     notes: '',
     sessionIndex: 10,
@@ -223,6 +218,84 @@ export const sampleAttendanceRecords = [
       fullName: 'Đỗ Thị Giang',
       email: 'giang.teacher@school.vn'
     }
+  }
+];
+
+// ============================================================
+// 2B. PAYROLL TRANSACTIONS (Sổ phụ tính lương - SINGLE SOURCE OF TRUTH)
+// Tách riêng khỏi Attendance để đảm bảo Single Source of Truth
+// ============================================================
+
+export const samplePayrollTransactions = [
+  {
+    teacherId: '65teacher123',
+    sessionId: '65abc123def456789',
+    classId: '65class123',
+    studentId: '65student123',
+    sessionDate: new Date('2026-02-08T00:00:00.000Z'),
+    baseSalary: 150000,
+    penaltyAmount: 0,
+    bonusAmount: 0,
+    adjustmentAmount: 0,
+    finalSalary: 150000,
+    status: 'PENDING',
+    isLateReport: false
+  },
+  {
+    teacherId: '65teacher124',
+    sessionId: '65abc123def456790',
+    classId: '65class124',
+    studentId: '65student124',
+    sessionDate: new Date('2026-02-07T00:00:00.000Z'),
+    baseSalary: 100000,
+    penaltyAmount: 0,
+    bonusAmount: 0,
+    adjustmentAmount: 0,
+    finalSalary: 100000,
+    status: 'PAID',
+    isLateReport: false
+  },
+  {
+    teacherId: '65teacher125',
+    sessionId: '65abc123def456791',
+    classId: '65class125',
+    studentId: '65student125',
+    sessionDate: new Date('2026-02-06T00:00:00.000Z'),
+    baseSalary: 180000,
+    penaltyAmount: 0,
+    bonusAmount: 0,
+    adjustmentAmount: 0,
+    finalSalary: 180000,
+    status: 'PENDING',
+    isLateReport: false
+  },
+  {
+    teacherId: '65teacher126',
+    sessionId: '65abc123def456792',
+    classId: '65class126',
+    studentId: '65student126',
+    sessionDate: new Date('2026-02-05T00:00:00.000Z'),
+    baseSalary: 200000,
+    penaltyAmount: 0,
+    bonusAmount: 0,
+    adjustmentAmount: 0,
+    finalSalary: 200000,
+    status: 'PENDING',
+    isLateReport: false
+  },
+  {
+    teacherId: '65teacher127',
+    sessionId: '65abc123def456793',
+    classId: '65class127',
+    studentId: '65student127',
+    sessionDate: new Date('2026-02-04T00:00:00.000Z'),
+    baseSalary: 150000,
+    penaltyAmount: 0,
+    bonusAmount: 0,
+    adjustmentAmount: 0,
+    finalSalary: 150000,
+    status: 'PENDING',
+    isLateReport: false
   }
 ];
 
@@ -407,20 +480,20 @@ function generateMockRows(count: number, month: number, year: number): any[] {
   ];
   
   const durations = [60, 70, 90, 120];
-  const salaries = [100000, 120000, 150000, 180000, 200000];
-  
+
   for (let i = 0; i < count; i++) {
     const day = Math.floor(Math.random() * 28) + 1;
     const hour = Math.floor(Math.random() * 12) + 8;
     const minute = Math.random() < 0.5 ? 0 : 30;
-    
+
     const date = new Date(year, month - 1, day, hour, minute);
     const teacher = teachers[Math.floor(Math.random() * teachers.length)];
     const student = students[Math.floor(Math.random() * students.length)];
     const classInfo = classes[Math.floor(Math.random() * classes.length)];
     const duration = durations[Math.floor(Math.random() * durations.length)];
-    const salary = salaries[Math.floor(Math.random() * salaries.length)];
-    
+
+    // NOTE: salary và paymentStatus đã được chuyển sang PayrollTransaction
+    // Attendance chỉ chứa thông tin điểm danh, không chứa thông tin lương
     rows.push({
       rowId: `mock_${year}${month}_${i}`,
       index: i + 1,
@@ -436,11 +509,9 @@ function generateMockRows(count: number, month: number, year: number): any[] {
       sessionContent: lessonContents[Math.floor(Math.random() * lessonContents.length)],
       comment: comments[Math.floor(Math.random() * comments.length)],
       duration,
-      salary,
       recordLink: Math.random() < 0.7 ? 'https://meet.google.com/rec/xyz' : '',
       imageUrl: `https://storage.school.vn/attendance/${year}${month}${day}_${student.code}.jpg`,
       parentConfirm: Math.random() < 0.9 ? 'OK' : 'PENDING',
-      paymentStatus: Math.random() < 0.3 ? 1 : 0,
       checkedBy: Math.random() < 0.5 ? 'manager01' : '',
       notes: ''
     });
@@ -456,6 +527,7 @@ function generateMockRows(count: number, month: number, year: number): any[] {
 export default {
   teachingReports: sampleTeachingReports,
   attendanceRecords: sampleAttendanceRecords,
+  payrollTransactions: samplePayrollTransactions,
   monthlyReport: sampleMonthlyReport,
   teacherStats: sampleTeacherStats,
   systemMetrics: sampleSystemMetrics

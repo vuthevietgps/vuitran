@@ -1,13 +1,19 @@
 import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Connection } from 'mongoose';
-import { Expense, ExpenseDocument, PaymentStatus } from './schemas/expense.schema';
+import { Model, Connection, Types } from 'mongoose';
+import {
+  Expense,
+  ExpenseAllocationScope,
+  ExpenseDocument,
+  PaymentStatus,
+} from './schemas/expense.schema';
 import { CreateExpenseDto } from './dto/create-expense.dto';
 import { UpdateExpenseDto } from './dto/update-expense.dto';
 import { QueryExpenseDto } from './dto/query-expense.dto';
 import { PayExpenseDto } from './dto/pay-expense.dto';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { FinancialControlService } from '../financial-control/financial-control.service';
+import { normalizePhone } from '../marketing-attribution/parent-attribution.util';
 
 @Injectable()
 export class ExpensesService {
@@ -31,6 +37,45 @@ export class ExpensesService {
     return `EXP-${Date.now()}`;
   }
 
+  private applyAllocationFields(
+    data: Record<string, any>,
+    dto: Pick<CreateExpenseDto | UpdateExpenseDto, 'allocationScope' | 'adGroupId' | 'adGroupName' | 'parentUserId' | 'parentPhone'>,
+    fallbackScope?: string,
+  ): void {
+    const inferredScope = dto.adGroupId
+      ? ExpenseAllocationScope.AD_GROUP
+      : (dto.parentUserId || dto.parentPhone)
+        ? ExpenseAllocationScope.PARENT
+        : undefined;
+    const allocationScope = dto.allocationScope || fallbackScope || inferredScope || ExpenseAllocationScope.GLOBAL;
+    data.allocationScope = allocationScope;
+
+    delete data.adGroupId;
+    delete data.adGroupName;
+    delete data.parentUserId;
+    delete data.parentPhone;
+    delete data.normalizedParentPhone;
+
+    if (allocationScope === ExpenseAllocationScope.AD_GROUP) {
+      if (!dto.adGroupId) {
+        throw new BadRequestException('Chi phi scope AD_GROUP can adGroupId');
+      }
+      data.adGroupId = new Types.ObjectId(dto.adGroupId);
+      data.adGroupName = dto.adGroupName?.trim() || undefined;
+      return;
+    }
+
+    if (allocationScope === ExpenseAllocationScope.PARENT) {
+      const normalizedParentPhone = normalizePhone(dto.parentPhone);
+      if (!dto.parentUserId && !normalizedParentPhone) {
+        throw new BadRequestException('Chi phi scope PARENT can parentUserId hoac parentPhone');
+      }
+      if (dto.parentUserId) data.parentUserId = new Types.ObjectId(dto.parentUserId);
+      if (dto.parentPhone) data.parentPhone = dto.parentPhone.trim();
+      if (normalizedParentPhone) data.normalizedParentPhone = normalizedParentPhone;
+    }
+  }
+
   async create(dto: CreateExpenseDto, user: JwtPayload): Promise<Expense> {
     const expenseCode = await this.generateExpenseCode();
 
@@ -41,6 +86,7 @@ export class ExpensesService {
       createdByName: user.fullName,
       paymentStatus: PaymentStatus.PENDING_APPROVAL,
     };
+    this.applyAllocationFields(data, dto);
 
     // Handle recurring expense
     if (dto.isRecurring && dto.recurringFrequency) {
@@ -96,6 +142,12 @@ export class ExpensesService {
           amount: parent.amount,
           expenseDate: parent.nextOccurrence,
           category: parent.category,
+          allocationScope: parent.allocationScope,
+          adGroupId: parent.adGroupId,
+          adGroupName: parent.adGroupName,
+          parentUserId: parent.parentUserId,
+          parentPhone: parent.parentPhone,
+          normalizedParentPhone: parent.normalizedParentPhone,
           paymentStatus: PaymentStatus.PENDING_APPROVAL,
           createdById: parent.createdById,
           createdByName: parent.createdByName,
@@ -191,6 +243,16 @@ export class ExpensesService {
     const updatePayload: any = { ...dto };
     if (dto.expenseDate) {
       updatePayload.expenseDate = new Date(dto.expenseDate);
+    }
+    if (
+      dto.allocationScope !== undefined
+      || dto.adGroupId !== undefined
+      || dto.adGroupName !== undefined
+      || dto.parentUserId !== undefined
+      || dto.parentPhone !== undefined
+    ) {
+      const existingExpense = await this.findOne(id);
+      this.applyAllocationFields(updatePayload, dto, existingExpense.allocationScope);
     }
 
     const updated = await this.expenseModel.findOneAndUpdate(

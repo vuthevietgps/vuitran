@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsArray, IsEnum } from 'class-validator';
+import { IsString, IsOptional, IsArray, IsEnum, IsMongoId } from 'class-validator';
 import { ConversationStatus } from '../schemas/conversation.schema';
 
 export class UpdateConversationDto {
@@ -30,4 +30,16 @@ export class UpdateConversationDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @IsString()
+  @IsOptional()
+  adRefParam?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  adGroupId?: string;
+
+  @IsString()
+  @IsOptional()
+  adGroupName?: string;
 }

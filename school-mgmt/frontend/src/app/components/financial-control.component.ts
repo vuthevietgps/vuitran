@@ -11,6 +11,8 @@ import {
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const FUND_TYPE_LABELS: Record<string, string> = {
   RESERVE: 'Quỹ dự phòng',
   PETTY_CASH: 'Quỹ tiền mặt',
@@ -61,7 +63,7 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-financial-control',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -74,6 +76,8 @@ const EXPENSE_CAT_LABELS: Record<string, string> = {
       <button class="primary" (click)="reload()">Cập nhật</button>
     </div>
   </header>
+
+  <app-flow-guide featureKey="financial-control"></app-flow-guide>
 
   <!-- Tab bar -->
   <div class="tab-bar">

@@ -32,6 +32,12 @@ export enum PaymentMethod {
   OTHER = 'OTHER',
 }
 
+export enum ExpenseAllocationScope {
+  GLOBAL = 'GLOBAL',
+  AD_GROUP = 'AD_GROUP',
+  PARENT = 'PARENT',
+}
+
 export enum RecurringFrequency {
   DAILY = 'DAILY',
   WEEKLY = 'WEEKLY',
@@ -62,6 +68,24 @@ export class Expense {
 
   @Prop({ type: String, enum: Object.values(PaymentStatus), default: PaymentStatus.PENDING_APPROVAL })
   paymentStatus!: string;
+
+  @Prop({ type: String, enum: Object.values(ExpenseAllocationScope), default: ExpenseAllocationScope.GLOBAL })
+  allocationScope!: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
+  adGroupId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  adGroupName?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  parentUserId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  parentPhone?: string;
+
+  @Prop({ type: String, trim: true })
+  normalizedParentPhone?: string;
 
   // Người tạo phiếu chi
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: true })
@@ -134,6 +158,10 @@ ExpenseSchema.index({ paymentStatus: 1 });
 ExpenseSchema.index({ category: 1 });
 ExpenseSchema.index({ createdById: 1 });
 ExpenseSchema.index({ createdAt: -1 });
+ExpenseSchema.index({ allocationScope: 1, expenseDate: -1 });
+ExpenseSchema.index({ adGroupId: 1, expenseDate: -1 });
+ExpenseSchema.index({ parentUserId: 1, expenseDate: -1 });
+ExpenseSchema.index({ normalizedParentPhone: 1, expenseDate: -1 });
 ExpenseSchema.index({ isRecurring: 1, recurringActive: 1, nextOccurrence: 1 });
 ExpenseSchema.index({ parentExpenseId: 1 });
 

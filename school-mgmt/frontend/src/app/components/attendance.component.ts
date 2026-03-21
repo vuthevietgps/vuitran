@@ -9,11 +9,12 @@ import {
   StudentAttendanceItem,
 } from '../services/attendance.service';
 import { ClassItem } from '../services/class.service';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 @Component({
   selector: 'app-attendance',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -21,6 +22,7 @@ import { ClassItem } from '../services/class.service';
       <p>Chi ghi nhan hoc sinh co mat. Hoc sinh nghi se duoc giu o trang thai chua diem danh.</p>
     </div>
   </header>
+  <app-flow-guide featureKey="attendance"></app-flow-guide>
 
   <div class="attendance-controls">
     <div class="control-group">

@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -21,16 +22,56 @@ import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
 import { TeacherProfile } from '../teachers/schemas/teacher-profile.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
 
 @Injectable()
 export class ClassesService {
+  private readonly logger = new Logger(ClassesService.name);
+
   constructor(
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(TeacherProfile.name) private readonly teacherProfileModel: Model<any>,
+    private readonly studentSupportSnapshotService: StudentSupportSnapshotService,
   ) {}
+
+  private triggerStudentSupportSnapshotRefreshForClass(classId: string, reason: string) {
+    void this.refreshStudentSupportSnapshotForClass(classId, reason);
+  }
+
+  private triggerStudentSupportSnapshotRefreshForStudentIds(
+    studentIds: string[],
+    reason: string,
+  ) {
+    void this.refreshStudentSupportSnapshotForStudentIds(studentIds, reason);
+  }
+
+  private async refreshStudentSupportSnapshotForClass(classId: string, reason: string) {
+    try {
+      await this.studentSupportSnapshotService.rebuildForClass(classId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.warn(
+        `[StudentSupportSnapshot] Failed to refresh for class ${classId} (${reason}): ${message}`,
+      );
+    }
+  }
+
+  private async refreshStudentSupportSnapshotForStudentIds(
+    studentIds: string[],
+    reason: string,
+  ) {
+    try {
+      await this.studentSupportSnapshotService.rebuildForStudentIds(studentIds);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.warn(
+        `[StudentSupportSnapshot] Failed to refresh students (${reason}): ${message}`,
+      );
+    }
+  }
 
   private getActorId(actor?: JwtPayload): string | null {
     return actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? null;
@@ -145,6 +186,7 @@ export class ClassesService {
       );
     }
 
+    this.triggerStudentSupportSnapshotRefreshForClass(created._id.toString(), 'createClass');
     return this.findByIdPopulated(created._id);
   }
 
@@ -225,6 +267,9 @@ export class ClassesService {
   async update(id: string, dto: UpdateClassDto) {
     const existing = await this.classModel.findById(id).lean();
     if (!existing) throw new NotFoundException('Class not found');
+    const existingStudentIds = ((existing as any).students || []).map((studentId: any) =>
+      studentId?.toString?.(),
+    ).filter((studentId: string | undefined): studentId is string => !!studentId);
 
     const update: Record<string, unknown> = {};
     if (dto.name) update.name = dto.name;
@@ -303,6 +348,18 @@ export class ClassesService {
 
     await this.classModel.findByIdAndUpdate(id, update, { new: true }).lean();
 
+    if (Object.prototype.hasOwnProperty.call(update, 'students')) {
+      const updatedStudentIds = ((update.students as Types.ObjectId[]) || [])
+        .map((studentId) => studentId?.toString?.())
+        .filter((studentId: string | undefined): studentId is string => !!studentId);
+      this.triggerStudentSupportSnapshotRefreshForStudentIds(
+        [...new Set([...existingStudentIds, ...updatedStudentIds])],
+        'updateClassStudents',
+      );
+    } else {
+      this.triggerStudentSupportSnapshotRefreshForClass(id, 'updateClass');
+    }
+
     return this.findByIdPopulated(id);
   }
 
@@ -326,6 +383,10 @@ export class ClassesService {
     );
 
     const deleted = await this.classModel.findByIdAndDelete(id).lean();
+    const studentIds = ((classroom as any).students || []).map((studentId: any) =>
+      studentId?.toString?.(),
+    ).filter((studentId: string | undefined): studentId is string => !!studentId);
+    this.triggerStudentSupportSnapshotRefreshForStudentIds(studentIds, 'removeClass');
     return deleted;
   }
 
@@ -369,7 +430,8 @@ export class ClassesService {
     
     // Cập nhật danh sách học sinh trong lớp
     await this.classModel.findByIdAndUpdate(id, { students: merged });
-    
+
+    this.triggerStudentSupportSnapshotRefreshForClass(id, 'assignStudentsBySale');
     return this.findByIdPopulated(id);
   }
 
@@ -586,6 +648,7 @@ export class ClassesService {
     await this.assertClassAccess(classroom, actor);
     (classroom as any).curriculum = curriculum;
     await classroom.save();
+    this.triggerStudentSupportSnapshotRefreshForClass(classId, 'updateCurriculum');
     return this.findByIdPopulated(classId);
   }
 
@@ -612,6 +675,7 @@ export class ClassesService {
 
     (classroom as any).curriculum = curriculum;
     await classroom.save();
+    this.triggerStudentSupportSnapshotRefreshForClass(classId, 'markCurriculumItemCompleted');
     return this.findByIdPopulated(classId);
   }
 

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 import { Role } from '../../common/interfaces/role.enum';
 import { UserStatus } from '../../common/interfaces/user-status.enum';
 
@@ -34,6 +34,12 @@ export class User {
   @Prop({ type: String, trim: true })
   phone?: string;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: false })
+  saleOwnerId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  saleOwnerName?: string;
+
   @Prop({ type: String, trim: true })
   facebookLink?: string;
 
@@ -54,4 +60,5 @@ export const UserSchema = SchemaFactory.createForClass(User);
 
 // Indexes for frequently queried fields
 UserSchema.index({ role: 1 });
+UserSchema.index({ role: 1, saleOwnerId: 1 });
 

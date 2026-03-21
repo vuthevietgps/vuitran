@@ -274,4 +274,6 @@ export const ClassroomSchema = SchemaFactory.createForClass(Classroom);
 ClassroomSchema.index({ teacher: 1 });
 ClassroomSchema.index({ sale: 1 });
 ClassroomSchema.index({ status: 1 });
+ClassroomSchema.index({ students: 1, status: 1 });
+ClassroomSchema.index({ students: 1 });
 

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Types, Connection, ClientSession } from 'mongoose';
+import * as bcrypt from 'bcrypt';
 import { Order, OrderDocument, OrderStatus } from './schemas/order.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType } from '../invoices/schemas/invoice.schema';
@@ -11,7 +12,10 @@ import { AuditAction, AuditModule } from '../audit-log/schemas/audit-log.schema'
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/schemas/notification.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { UserStatus } from '../common/interfaces/user-status.enum';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import { MarketingAttributionService } from '../marketing-attribution/marketing-attribution.service';
+import { ParentAttributionSourceType } from '../marketing-attribution/schemas/parent-attribution.schema';
 
 export interface EnrollmentResult {
   success: boolean;
@@ -35,6 +39,7 @@ export class EnrollmentService {
     @InjectConnection() private readonly connection: Connection,
     private readonly auditLogService: AuditLogService,
     private readonly notificationsService: NotificationsService,
+    private readonly marketingAttributionService: MarketingAttributionService,
   ) {}
 
   /**
@@ -60,6 +65,7 @@ export class EnrollmentService {
     let studentCode = '';
     let isNew = false;
     let invoiceIds: string[] = [];
+    let parentUserId = '';
 
     try {
       await mongoSession.withTransaction(async () => {
@@ -68,6 +74,7 @@ export class EnrollmentService {
         studentId = studentResult.studentId;
         studentCode = studentResult.studentCode;
         isNew = studentResult.isNew;
+        parentUserId = studentResult.parentUserId;
 
         // ── Step 2: Tạo Invoice cho mỗi item ──
         invoiceIds = [];
@@ -79,6 +86,7 @@ export class EnrollmentService {
         // ── Step 3: Cập nhật processedResults + status → COMPLETED ──
         await this.orderModel.findByIdAndUpdate(orderId, {
           status: OrderStatus.COMPLETED,
+          parentUserId: new Types.ObjectId(parentUserId),
           processedResults: {
             studentId: new Types.ObjectId(studentId),
             invoiceIds: invoiceIds.map(id => new Types.ObjectId(id)),
@@ -104,6 +112,16 @@ export class EnrollmentService {
 
     // ── Non-critical operations OUTSIDE transaction ──
     try {
+      await this.marketingAttributionService.upsertParentAttribution({
+        parentUserId,
+        parentPhone: o.parentPhone,
+        adGroupId: o.adGroupId,
+        adGroupName: o.adGroupName,
+        platform: o.leadSource,
+        sourceOrderId: orderId,
+        sourceType: ParentAttributionSourceType.STUDENT,
+      });
+
       // ── Step 4: Audit log ──
       await this.auditLogService.log({
         userId: approver._id,
@@ -208,6 +226,36 @@ export class EnrollmentService {
       if (parentByPhone.length > 1) {
         throw new Error('Tim thay nhieu tai khoan phu huynh trung so dien thoai');
       }
+
+      // Auto-create PARENT user from order contact info
+      const normalizedPhoneDigits = phone.replace(/\D/g, '');
+      const autoEmail = `parent.${normalizedPhoneDigits}@school.local`;
+
+      const existingAutoEmail = await withSession(
+        this.userModel.findOne({ email: autoEmail }).select('_id role').lean(),
+      );
+      if (existingAutoEmail) {
+        if ((existingAutoEmail as any).role !== Role.PARENT) {
+          throw new Error(`Email tu dong ${autoEmail} da ton tai nhung khong phai tai khoan PHU HUYNH`);
+        }
+        return new Types.ObjectId((existingAutoEmail as any)._id);
+      }
+
+      const hashedPassword = await bcrypt.hash('TempParent123!', 10);
+      const parentUser = new this.userModel({
+        email: autoEmail,
+        password: hashedPassword,
+        fullName: (order.parentName || '').trim() || `Phu huynh ${normalizedPhoneDigits}`,
+        role: Role.PARENT,
+        phone,
+        status: UserStatus.ACTIVE,
+      });
+      const savedParent = mongoSession
+        ? await parentUser.save({ session: mongoSession })
+        : await parentUser.save();
+
+      this.logger.log(`Auto-created PARENT user: ${autoEmail} from order ${order.orderCode || order._id}`);
+      return new Types.ObjectId((savedParent as any)._id);
     }
 
     throw new Error(
@@ -219,7 +267,7 @@ export class EnrollmentService {
     order: any,
     approver: JwtPayload,
     mongoSession?: ClientSession,
-  ): Promise<{ studentId: string; studentCode: string; isNew: boolean }> {
+  ): Promise<{ studentId: string; studentCode: string; isNew: boolean; parentUserId: string }> {
     const sessionOpts = mongoSession ? { session: mongoSession } : {};
     const parentUserId = await this.resolveParentUserId(order, mongoSession);
 
@@ -248,6 +296,7 @@ export class EnrollmentService {
           studentId: (existing as any)._id.toString(),
           studentCode: (existing as any).studentCode,
           isNew: false,
+          parentUserId: parentUserId.toString(),
         };
       }
     }
@@ -280,6 +329,7 @@ export class EnrollmentService {
         studentId: (existingByPhone as any)._id.toString(),
         studentCode: (existingByPhone as any).studentCode,
         isNew: false,
+        parentUserId: parentUserId.toString(),
       };
     }
 
@@ -325,6 +375,7 @@ export class EnrollmentService {
       studentId: (saved as any)._id.toString(),
       studentCode,
       isNew: true,
+      parentUserId: parentUserId.toString(),
     };
   }
 

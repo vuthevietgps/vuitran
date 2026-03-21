@@ -6,6 +6,7 @@ export enum Role {
   TEACHER = 'TEACHER',       // Giáo viên
   PARENT = 'PARENT',         // Phụ huynh - đăng nhập xem lịch/ví/thanh toán
   SALE = 'SALE',             // Sale - tư vấn, tuyển HS, hoa hồng
+  ADSMANAGER = 'ADSMANAGER', // Ads manager - ads, analytics, chatbot settings
 
   // Legacy roles (deprecated, keep for backward compatibility during migration)
   /** @deprecated Use OPS instead */

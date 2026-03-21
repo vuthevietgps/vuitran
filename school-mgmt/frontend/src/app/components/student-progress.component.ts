@@ -1,8 +1,10 @@
 import { Component, signal, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 const HOMEWORK_STATUS_LABELS: Record<string, string> = {
   ASSIGNED: 'Đã giao', IN_PROGRESS: 'Đang làm', SUBMITTED: 'Đã nộp',
@@ -16,14 +18,16 @@ const HOMEWORK_STATUS_COLORS: Record<string, string> = {
 @Component({
   selector: 'app-student-progress',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FlowGuideComponent, RouterLink],
   template: `
   <header class="page-header">
     <div>
       <h2>Tiến trình học tập</h2>
       <p>Theo dõi kết quả và tiến độ học tập của con.</p>
     </div>
+    <a routerLink="/app/parent-chat" class="support-link">Chat ho tro</a>
   </header>
+  <app-flow-guide featureKey="student-progress"></app-flow-guide>
 
   <!-- Loading -->
   <div class="loading-box" *ngIf="loading()">
@@ -158,9 +162,15 @@ const HOMEWORK_STATUS_COLORS: Record<string, string> = {
   </ng-container>
   `,
   styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:center; padding:16px; }
+    .page-header { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:16px; }
     .page-header h2 { margin:0; color:#0f172a; }
     .page-header p { margin:4px 0 0; color:#64748b; font-size:13px; }
+    .support-link {
+      display:inline-flex; align-items:center; justify-content:center; padding:10px 16px;
+      border-radius:999px; background:#0f766e; color:#fff; text-decoration:none; font-size:13px; font-weight:600;
+      white-space:nowrap;
+    }
+    .support-link:hover { background:#115e59; }
     .loading-box { padding:32px; text-align:center; color:#64748b; font-size:14px; }
     .error { color:#dc2626; font-size:13px; padding:0 16px; }
     .empty-text { padding:16px; color:#64748b; font-size:13px; }
@@ -212,6 +222,7 @@ const HOMEWORK_STATUS_COLORS: Record<string, string> = {
     .tl-content { font-size:13px; color:#334155; margin-top:4px; line-height:1.5; }
 
     @media (max-width: 768px) {
+      .page-header { flex-direction:column; align-items:flex-start; }
       .score-cards { grid-template-columns:1fr; }
       .progress-grid { grid-template-columns:1fr; }
     }

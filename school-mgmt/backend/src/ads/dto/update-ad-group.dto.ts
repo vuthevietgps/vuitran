@@ -1,4 +1,4 @@
-import { IsString, IsNumber, Min, IsEnum, IsOptional, IsDateString } from 'class-validator';
+import { IsString, IsNumber, Min, IsEnum, IsOptional, IsDateString, IsArray } from 'class-validator';
 import { AdGroupStatus } from '../schemas/ad-group.schema';
 
 export class UpdateAdGroupDto {
@@ -34,4 +34,9 @@ export class UpdateAdGroupDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  trackingKeys?: string[];
 }

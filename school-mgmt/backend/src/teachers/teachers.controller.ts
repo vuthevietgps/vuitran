@@ -49,12 +49,13 @@ export class TeachersController {
     @Query('status') status?: TeacherStatus,
     @Query('subjects') subjects?: string,
     @Query('grades') grades?: string,
+    @Req() req?: AuthenticatedRequest,
   ) {
     const filters: any = {};
     if (status) filters.status = status;
     if (subjects) filters.subjects = subjects.split(',');
     if (grades) filters.grades = grades.split(',');
-    return this.teachersService.findAll(filters);
+    return this.teachersService.findAll(filters, req?.user);
   }
 
   @Get('me')
@@ -71,13 +72,13 @@ export class TeachersController {
 
   /** Profile chi tiết với thống kê lớp, buổi học, lương */
   @Get(':id/profile')
-  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER)
+  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.SALE)
   getFullProfile(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.teachersService.getFullProfile(id, req.user);
   }
 
   @Patch(':id')
-  @Roles(Role.OPS, Role.DIRECTOR, Role.TEACHER)
+  @Roles(Role.OPS, Role.DIRECTOR, Role.TEACHER, Role.SALE, Role.ACCOUNTING)
   update(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateTeacherProfileDto, @Req() req: AuthenticatedRequest) {
     return this.teachersService.update(id, dto, req.user);
   }

@@ -55,6 +55,17 @@ import {
   FanpageStatus,
   FanpageSyncSource,
 } from '../chatbot/schemas/fanpage.schema';
+import {
+  Invoice,
+  InvoiceDocument,
+  InvoiceStatus,
+} from '../invoices/schemas/invoice.schema';
+import {
+  ParentAttribution,
+  ParentAttributionDocument,
+} from '../marketing-attribution/schemas/parent-attribution.schema';
+import { GoogleAdsProvider } from './platforms/google-ads.service';
+import { TikTokAdsProvider } from './platforms/tiktok-ads.service';
 
 type NetProfitDailyRow = {
   date: string;
@@ -154,6 +165,10 @@ export class AdsService {
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
     @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
     @InjectModel(Fanpage.name) private fanpageModel: Model<FanpageDocument>,
+    @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(ParentAttribution.name) private parentAttributionModel: Model<ParentAttributionDocument>,
+    private readonly googleAdsProvider: GoogleAdsProvider,
+    private readonly tikTokAdsProvider: TikTokAdsProvider,
     private configService: ConfigService,
   ) {
     const key = this.configService.get<string>('TOKEN_ENCRYPTION_KEY');
@@ -529,7 +544,17 @@ export class AdsService {
 
   async deleteToken(id: string): Promise<void> {
     const token = await this.apiTokenModel.findById(id).exec();
-    if (!token) throw new NotFoundException('Token khÃ´ng tá»“n táº¡i');
+    if (!token) throw new NotFoundException('Token không tồn tại');
+
+    // Clean up Fanpage references before deleting token
+    await this.fanpageModel.updateMany(
+      { syncTokenId: token._id },
+      {
+        $unset: { syncTokenId: 1, syncTokenLabel: 1 },
+        $set: { syncSource: FanpageSyncSource.MANUAL },
+      },
+    );
+
     await this.apiTokenModel.findByIdAndDelete(id).exec();
   }
 
@@ -1443,6 +1468,14 @@ export class AdsService {
     }
 
     this.logger.log(`Ad cost sync complete. Synced: ${synced}, Errors: ${errors.length}`);
+
+    // After syncing costs, refresh true-revenue snapshots on all ad groups
+    try {
+      await this.syncTrueRevenue();
+    } catch (err: any) {
+      this.logger.error(`syncTrueRevenue cron error: ${err.message}`);
+    }
+
     return { synced, errors };
   }
 
@@ -2109,6 +2142,235 @@ export class AdsService {
 
     return { daily, summaryByGroup, overall };
   }
+  /**
+   * Dong bo du lieu tu Google MCC: tk quang cao, nhom QC, chi phi.
+   * Uy quyen toan bo logic cho GoogleAdsProvider.
+   */
+  async syncGoogleMccToken(
+    tokenId: string,
+    dateStr?: string,
+  ): Promise<import('./ads.types').BusinessTokenSyncResult> {
+    return this.googleAdsProvider.syncGoogleMccToken(tokenId, dateStr);
+  }
+
+  /**
+   * Dong bo du lieu tu TikTok Business Center: tk QC, nhom QC, chi phi.
+   * Uy quyen toan bo logic cho TikTokAdsProvider.
+   */
+  async syncTikTokBusinessCenterToken(
+    tokenId: string,
+    dateStr?: string,
+  ): Promise<import('./ads.types').BusinessTokenSyncResult> {
+    return this.tikTokAdsProvider.syncTikTokBusinessCenterToken(tokenId, dateStr);
+  }
+
+  /**
+   * Backfill ParentAttribution: duyet qua Leads, Orders co adGroupId va
+   * upsert ParentAttribution docs de dam bao du lieu attribution day du
+   * cho cac ban ghi cu truoc khi he thong co Attribution module.
+   */
+  async backfillParentAttribution(): Promise<{
+    conversations: number;
+    leads: number;
+    orders: number;
+    students: number;
+    upserted: number;
+  }> {
+    let leads = 0;
+    let orders = 0;
+    let students = 0;
+    let upserted = 0;
+    const conversations = 0; // legacy field, no conversation model in this context
+
+    // Backfill from Leads that have adGroupId but no ParentAttribution
+    const leadsWithAd = await this.leadModel
+      .find({ adGroupId: { $exists: true, $ne: null } })
+      .select('_id adGroupId adGroupName parentPhone parentEmail tracking')
+      .lean();
+
+    for (const lead of leadsWithAd) {
+      if (!lead.adGroupId) continue;
+      try {
+        const exists = await this.parentAttributionModel.findOne({
+          sourceLeadId: lead._id,
+        }).lean();
+        if (exists) continue;
+
+        await this.parentAttributionModel.create({
+          parentKey: lead.parentPhone
+            ? `phone:${String(lead.parentPhone).replace(/\D/g, '')}`
+            : `lead:${String(lead._id)}`,
+          normalizedParentPhone: lead.parentPhone
+            ? String(lead.parentPhone).replace(/\D/g, '')
+            : undefined,
+          adGroupId: lead.adGroupId,
+          adGroupName: (lead as any).adGroupName,
+          tracking: (lead as any).tracking,
+          sourceLeadId: lead._id,
+          attributionModel: 'FIRST_TOUCH_LOCKED',
+          firstAttributedAt: (lead as any).createdAt ?? new Date(),
+          lastConfirmedAt: new Date(),
+        });
+        upserted++;
+      } catch (err: any) {
+        this.logger.warn(`backfillParentAttribution lead ${lead._id}: ${err.message}`);
+      }
+      leads++;
+    }
+
+    // Backfill from Students that have adGroupId but no Attribution via parentUserId
+    const studentsWithAd = await this.studentModel
+      .find({ adGroupId: { $exists: true, $ne: null }, parentUserId: { $exists: true, $ne: null } })
+      .select('_id adGroupId adGroupName parentUserId')
+      .lean();
+
+    for (const student of studentsWithAd) {
+      if (!student.adGroupId || !(student as any).parentUserId) continue;
+      try {
+        const exists = await this.parentAttributionModel.findOne({
+          parentUserId: (student as any).parentUserId,
+        }).lean();
+        if (exists) continue;
+
+        await this.parentAttributionModel.create({
+          parentKey: `user:${String((student as any).parentUserId)}`,
+          parentUserId: (student as any).parentUserId,
+          adGroupId: student.adGroupId,
+          adGroupName: (student as any).adGroupName,
+          attributionModel: 'FIRST_TOUCH_LOCKED',
+          firstAttributedAt: (student as any).createdAt ?? new Date(),
+          lastConfirmedAt: new Date(),
+        });
+        upserted++;
+      } catch (err: any) {
+        this.logger.warn(`backfillParentAttribution student ${student._id}: ${err.message}`);
+      }
+      students++;
+    }
+
+    this.logger.log(
+      `backfillParentAttribution done: leads=${leads}, students=${students}, upserted=${upserted}`,
+    );
+    return { conversations, leads, orders, students, upserted };
+  }
+
+  /**
+   * Tinh lai doanh thu thuc te (totalRevenue), so leads (totalLeads) va
+   * tong chi phi (totalSpend) cho tung nhom quang cao, sau do luu snapshot
+   * vao AdGroup document de hien thi nhanh tren dashboard.
+   *
+   * Logic attribution:
+   *   1. Leads truc tiep: Lead.adGroupId = group._id
+   *   2. Students truc tiep: Student.adGroupId = group._id
+   *   3. Students qua ParentAttribution: attribution.adGroupId = group._id
+   *      -> lay parentUserId -> tim Students co cung parentUserId
+   *   Gop tat ca studentIds -> lay Invoice APPROVED/PAID -> sum amount = totalRevenue
+   */
+  async syncTrueRevenue(adGroupId?: string): Promise<{
+    groupsProcessed: number;
+    totalLeadsUpdated: number;
+    totalRevenueUpdated: number;
+    errors: string[];
+  }> {
+    const filter: any = adGroupId ? { _id: new Types.ObjectId(adGroupId) } : {};
+    const groups = await this.adGroupModel.find(filter).lean();
+
+    let groupsProcessed = 0;
+    let totalLeadsUpdated = 0;
+    let totalRevenueUpdated = 0;
+    const errors: string[] = [];
+
+    for (const group of groups) {
+      try {
+        const gId = group._id as Types.ObjectId;
+
+        // 1. Count leads directly attributed to this ad group
+        const totalLeads = await this.leadModel.countDocuments({ adGroupId: gId });
+
+        // 2. Total ad spend from AdCost records
+        const spendAgg = await this.adCostModel.aggregate<{ total: number }>([
+          { $match: { adGroupId: gId } },
+          { $group: { _id: null, total: { $sum: '$spend' } } },
+        ]);
+        const totalSpend = spendAgg[0]?.total ?? 0;
+
+        // 3a. Students directly attributed to this ad group
+        const directStudents = await this.studentModel
+          .find({ adGroupId: gId })
+          .select('_id')
+          .lean();
+
+        // 3b. Students via ParentAttribution -> parentUserId
+        const attributions = await this.parentAttributionModel
+          .find({ adGroupId: gId })
+          .select('parentUserId')
+          .lean();
+
+        const attributedParentIds = attributions
+          .filter((a) => a.parentUserId)
+          .map((a) => a.parentUserId as Types.ObjectId);
+
+        const attributedStudents =
+          attributedParentIds.length > 0
+            ? await this.studentModel
+                .find({ parentUserId: { $in: attributedParentIds } })
+                .select('_id')
+                .lean()
+            : [];
+
+        // Deduplicate student IDs
+        const studentIdSet = new Set<string>([
+          ...directStudents.map((s) => (s._id as Types.ObjectId).toString()),
+          ...attributedStudents.map((s) => (s._id as Types.ObjectId).toString()),
+        ]);
+
+        // 4. Sum approved/paid invoices for those students
+        let totalRevenue = 0;
+        if (studentIdSet.size > 0) {
+          const studentObjectIds = Array.from(studentIdSet).map(
+            (id) => new Types.ObjectId(id),
+          );
+          const revenueAgg = await this.invoiceModel.aggregate<{ total: number }>([
+            {
+              $match: {
+                studentId: { $in: studentObjectIds },
+                status: { $in: [InvoiceStatus.APPROVED, InvoiceStatus.PAID] },
+              },
+            },
+            { $group: { _id: null, total: { $sum: '$amount' } } },
+          ]);
+          totalRevenue = revenueAgg[0]?.total ?? 0;
+        }
+
+        // 5. Persist snapshot onto the AdGroup document
+        await this.adGroupModel.updateOne(
+          { _id: gId },
+          {
+            $set: {
+              totalLeads,
+              totalSpend,
+              totalRevenue,
+              revenueLastSyncedAt: new Date(),
+            },
+          },
+        );
+
+        groupsProcessed++;
+        totalLeadsUpdated += totalLeads;
+        totalRevenueUpdated += totalRevenue;
+      } catch (err: any) {
+        const msg = `AdGroup ${(group as any).name ?? String(group._id)}: ${err.message}`;
+        errors.push(msg);
+        this.logger.error(`syncTrueRevenue error: ${msg}`);
+      }
+    }
+
+    this.logger.log(
+      `syncTrueRevenue done: ${groupsProcessed} groups, totalRevenue=${totalRevenueUpdated}, errors=${errors.length}`,
+    );
+    return { groupsProcessed, totalLeadsUpdated, totalRevenueUpdated, errors };
+  }
+
   async backfillAdGroupIds(): Promise<{
     studentsUpdated: number;
     sessionsUpdated: number;

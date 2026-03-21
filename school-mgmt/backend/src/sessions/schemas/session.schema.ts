@@ -411,6 +411,9 @@ SessionSchema.index(
 );
 SessionSchema.index({ teacherId: 1, scheduledDate: 1 });
 SessionSchema.index({ parentUserId: 1, status: 1 });
+SessionSchema.index({ parentUserId: 1, studentId: 1, status: 1, scheduledDate: -1 });
+SessionSchema.index({ studentId: 1, status: 1, scheduledDate: 1 });
+SessionSchema.index({ classId: 1, status: 1, scheduledDate: -1 });
 SessionSchema.index({ status: 1, 'confirmation.teacherCompletedAt': 1 }); // For auto-confirm cron
 SessionSchema.index({ classId: 1, sessionNumber: 1 });
 SessionSchema.index({ teacherId: 1, hasTeachingReport: 1, status: 1 }); // Payroll + báo cáo giảng dạy

@@ -5,6 +5,8 @@ import { AttendanceService } from '../services/attendance.service';
 import { ClassItem } from '../services/class.service';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface AttendanceReportItem {
   _id: string;
   date: string;
@@ -36,8 +38,9 @@ interface AttendanceReportItem {
 @Component({
   selector: 'app-attendance-report',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="attendance-report"></app-flow-guide>
     <div class="report-container">
       <h1>📊 Báo cáo điểm danh tổng hợp</h1>
 
@@ -62,7 +65,7 @@ interface AttendanceReportItem {
           </select>
         </div>
 
-        <button class="btn-search" (click)="loadReport()" [disabled]="loading()">
+        <button class="btn-search" (click)="onApplyFilter()" [disabled]="loading()">
           {{ loading() ? '⏳ Đang tải...' : '🔍 Xem báo cáo' }}
         </button>
       </div>
@@ -78,7 +81,11 @@ interface AttendanceReportItem {
       <div *ngIf="reportData().length > 0" class="report-summary">
         <div class="summary-card">
           <h3>Tổng số lượt điểm danh</h3>
-          <p class="summary-number">{{ reportData().length }}</p>
+          <p class="summary-number">{{ totalItems() }}</p>
+        </div>
+        <div class="summary-card">
+          <h3>Trang hiện tại</h3>
+          <p class="summary-number">{{ page() }} / {{ totalPages() }}</p>
         </div>
       </div>
 
@@ -142,6 +149,13 @@ interface AttendanceReportItem {
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- Khối Phân trang -->
+      <div class="pagination" *ngIf="totalPages() > 1">
+        <button (click)="goToPage(page() - 1)" [disabled]="page() <= 1 || loading()">&laquo; Trước</button>
+        <span>Trang {{ page() }} / {{ totalPages() }} (Tổng: {{ totalItems() }} bản ghi)</span>
+        <button (click)="goToPage(page() + 1)" [disabled]="page() >= totalPages() || loading()">Sau &raquo;</button>
       </div>
 
       <!-- Image Modal -->
@@ -332,6 +346,30 @@ interface AttendanceReportItem {
     }
 
     .close:hover { color:#ccc; }
+
+    .pagination {
+      display:flex;
+      gap:16px;
+      align-items:center;
+      justify-content:center;
+      padding:20px 0;
+      background:white;
+      border-top:1px solid #e5e7eb;
+    }
+    .pagination button {
+      padding:8px 18px;
+      border:1px solid #d1d5db;
+      border-radius:6px;
+      background:#fff;
+      cursor:pointer;
+      font-size:14px;
+      font-weight:600;
+      color:#374151;
+      transition:all 0.2s;
+    }
+    .pagination button:hover:not(:disabled) { background:#f9fafb; border-color:#2563eb; color:#2563eb; }
+    .pagination button:disabled { opacity:0.4; cursor:not-allowed; }
+    .pagination span { font-size:14px; color:#6b7280; }
   `]
 })
 export class AttendanceReportComponent implements OnInit {
@@ -342,6 +380,12 @@ export class AttendanceReportComponent implements OnInit {
   loading = signal(false);
   error = signal('');
   modalImage = signal('');
+
+  // ── Pagination state ──────────────────────────────────────────────
+  page = signal(1);
+  limit = signal(20);
+  totalItems = signal(0);
+  totalPages = signal(1);
 
   startDate = '';
   endDate = '';
@@ -389,18 +433,34 @@ export class AttendanceReportComponent implements OnInit {
     this.error.set('');
 
     try {
-      const data = await this.attendanceService.getAttendanceReport(
+      const res = await this.attendanceService.getAttendanceReport(
         this.startDate,
         this.endDate,
-        this.selectedClassId || undefined
+        this.selectedClassId || undefined,
+        this.page(),
+        this.limit(),
       );
 
-      this.reportData.set(data);
+      this.reportData.set(res.data);
+      this.totalItems.set(res.meta.total);
+      this.totalPages.set(res.meta.totalPages);
     } catch (error: any) {
       this.error.set(error.message || 'Không thể tải báo cáo');
     } finally {
       this.loading.set(false);
     }
+  }
+
+  goToPage(p: number) {
+    if (p >= 1 && p <= this.totalPages()) {
+      this.page.set(p);
+      this.loadReport();
+    }
+  }
+
+  onApplyFilter() {
+    this.page.set(1);
+    this.loadReport();
   }
 
   getImageUrl(imageUrl: string): string {

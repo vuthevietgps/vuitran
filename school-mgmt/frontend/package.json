@@ -5,6 +5,8 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
+    "generate:internal-handbook-assets": "node ./scripts/generate-internal-handbook-assets.mjs",
+    "sync:teacher-docs": "node ./scripts/sync-teacher-docs-to-assets.mjs",
     "watch": "ng build --watch --configuration development",
     "test": "ng test"
   },
@@ -19,6 +21,7 @@
     "@angular/platform-browser-dynamic": "^17.3.0",
     "@angular/router": "^17.3.0",
     "rxjs": "~7.8.0",
+    "socket.io-client": "^4.8.3",
     "tslib": "^2.3.0",
     "zone.js": "~0.14.3"
   },

@@ -13,6 +13,7 @@ import { StudentItem, StudentService } from '../services/student.service';
 import { AuthService } from '../services/auth.service';
 import { UserItem, UserService } from '../services/user.service';
 import { environment } from '../../environments/environment';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 interface InvoiceForm {
   invoiceNumber: string;
@@ -30,7 +31,7 @@ interface InvoiceForm {
 @Component({
   selector: 'app-invoices',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -39,6 +40,8 @@ interface InvoiceForm {
     </div>
     <button class="primary" (click)="openModal()" *ngIf="activeTab === 'invoices'">+ Thêm hóa đơn</button>
   </header>
+
+  <app-flow-guide featureKey="invoices"></app-flow-guide>
 
   <!-- Tab bar -->
   <div class="tab-bar">
@@ -178,6 +181,7 @@ interface InvoiceForm {
             </td>
             <td>
               <div class="proof-stack">
+                <span class="proof-label">HD sale</span>
                 <img
                   *ngIf="invoice.receiptImage"
                   [src]="getImageUrl(invoice.receiptImage)"
@@ -186,6 +190,7 @@ interface InvoiceForm {
                   title="Chứng từ gốc"
                   (click)="showImageModal(getImageUrl(invoice.receiptImage))"
                 />
+                <span class="proof-label proof-label-approval">HD doi ung</span>
                 <img
                   *ngIf="invoice.approvalImage"
                   [src]="getImageUrl(invoice.approvalImage)"
@@ -333,6 +338,7 @@ interface InvoiceForm {
         <label>Ngày thanh toán <span class="req">*</span>
           <input name="paymentDate" type="date" [(ngModel)]="form.paymentDate" required />
         </label>
+        <p class="hint">Hoa don moi se o trang thai cho duyet. Muon duyet va cong vi thi phai co hoa don sale upload va hoa don doi ung cua nguoi duyet.</p>
 
         <p class="hint">Hóa đơn mới sẽ ở trạng thái chờ duyệt. Sau khi duyệt, ví phụ huynh sẽ được cộng tiền.</p>
 
@@ -373,6 +379,20 @@ interface InvoiceForm {
       </p>
 
       <label>Ảnh xác nhận duyệt <span class="req">*</span>
+        <div class="proof-compare" *ngIf="approvingInvoice()">
+          <div class="proof-panel">
+            <span class="proof-label">Hoa don sale upload</span>
+            <img
+              *ngIf="approvingInvoice()!.receiptImage; else missingSaleInvoice"
+              [src]="getImageUrl(approvingInvoice()!.receiptImage!)"
+              alt="Hoa don sale upload"
+              class="preview" />
+            <ng-template #missingSaleInvoice>
+              <p class="error">Chua co hoa don sale upload. Khong the duyet cho den khi sale bo sung anh hoa don goc.</p>
+            </ng-template>
+          </div>
+        </div>
+        <span class="hint">Hoa don doi ung do nguoi duyet upload de doi chieu doc lap voi hoa don sale upload.</span>
         <input type="file" accept="image/*" (change)="handleApproveImageChange($event)" />
       </label>
 
@@ -390,7 +410,7 @@ interface InvoiceForm {
         <button
           type="button"
           class="primary"
-          [disabled]="approveUploading() || !approveImage"
+          [disabled]="approveUploading() || !approveImage || !approvingInvoice()?.receiptImage"
           (click)="confirmApprove()">
           Duyệt hóa đơn
         </button>
@@ -462,7 +482,19 @@ interface InvoiceForm {
     .ghost:hover { background:#f1f5f9; }
 
     /* Cells */
-    .proof-stack { display:flex; gap:6px; align-items:center; }
+    .proof-stack { display:flex; gap:8px; align-items:flex-start; flex-wrap:wrap; }
+    .proof-item { display:flex; flex-direction:column; gap:4px; align-items:flex-start; }
+    .proof-label {
+      display:inline-flex;
+      align-items:center;
+      padding:2px 8px;
+      border-radius:999px;
+      background:#e0f2fe;
+      color:#0369a1;
+      font-size:11px;
+      font-weight:700;
+    }
+    .proof-label-approval { background:#dcfce7; color:#166534; }
     .receipt-thumb { width:56px; height:38px; object-fit:cover; border-radius:4px; cursor:pointer; border:1px solid #cbd5e1; }
     .approval-thumb { border-color:#16a34a; box-shadow:0 0 0 1px #bbf7d0 inset; }
     .actions-cell { text-align:right; white-space:nowrap; }
@@ -492,6 +524,8 @@ interface InvoiceForm {
     .error { color:#dc2626; font-size:13px; }
     .upload-status { display:flex; flex-direction:column; gap:6px; font-size:13px; }
     .preview { width:120px; height:80px; object-fit:cover; border-radius:8px; border:1px solid #cbd5e1; }
+    .proof-compare { margin-bottom:12px; }
+    .proof-panel { display:flex; flex-direction:column; gap:8px; }
     .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:4px; }
 
     /* Image lightbox */
@@ -772,7 +806,7 @@ export class InvoicesComponent {
     this.approveUploading.set(false);
 
     if (!result.ok || !result.url) {
-      this.approveUploadError.set(result.message || 'Tai anh xac nhan that bai');
+      this.approveUploadError.set(result.message || 'Tai hoa don doi ung that bai');
       return;
     }
 
@@ -783,12 +817,17 @@ export class InvoicesComponent {
     const invoice = this.approvingInvoice();
     if (!invoice) return;
 
-    if (!this.approveImage) {
-      this.approveUploadError.set('Vui long tai anh xac nhan truoc khi duyet');
+    if (!invoice.receiptImage) {
+      this.approveUploadError.set('Vui long bo sung hoa don sale upload truoc khi duyet');
       return;
     }
 
-    if (!confirm(`Duyet hoa don ${invoice.invoiceNumber}? Vi phu huynh se duoc cong ${this.formatCurrency(invoice.amount)}.`)) return;
+    if (!this.approveImage) {
+      this.approveUploadError.set('Vui long tai hoa don doi ung truoc khi duyet');
+      return;
+    }
+
+    if (!confirm(`Duyet hoa don ${invoice.invoiceNumber}? Vi phu huynh chi duoc cong sau khi doi chieu du hoa don sale va hoa don doi ung.`)) return;
 
     const result = await this.invoiceService.approve(invoice._id, 'APPROVE', undefined, this.approveImage);
     if (!result.ok) {

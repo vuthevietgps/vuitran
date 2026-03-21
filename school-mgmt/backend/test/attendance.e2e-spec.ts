@@ -537,8 +537,11 @@ describe('Attendance module (e2e)', () => {
       directorSession,
     ).expect(200);
 
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body.length).toBeGreaterThan(0);
-    expect(res.body.every((row: any) => ['PRESENT', 'LATE'].includes(row.status))).toBe(true);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    expect(res.body.meta?.total).toBeGreaterThan(0);
+    expect(
+      res.body.data.every((row: any) => ['PRESENT', 'LATE'].includes(row.status)),
+    ).toBe(true);
   });
 });

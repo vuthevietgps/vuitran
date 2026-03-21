@@ -38,7 +38,7 @@ export class WalletsController {
   @Get('me')
   @Roles(Role.PARENT)
   getMyWallet(@Req() req: AuthenticatedRequest) {
-    return this.walletsService.getOrCreateWallet(req.user.sub);
+    return this.walletsService.getOrCreateWalletView(req.user.sub);
   }
 
   /** OPS/ACCOUNTING xem danh sách tất cả ví */
@@ -62,7 +62,7 @@ export class WalletsController {
   @Get('user/:userId')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   getWalletByUser(@Param('userId', ParseMongoIdPipe) userId: string) {
-    return this.walletsService.findWalletByUserId(userId);
+    return this.walletsService.getWalletViewByUserId(userId);
   }
 
   /** Đóng băng ví */

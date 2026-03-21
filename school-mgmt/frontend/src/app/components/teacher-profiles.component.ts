@@ -1,430 +1,447 @@
-import { Component, OnInit, signal } from '@angular/core';
+﻿import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { TeacherService, TeacherProfile, TeacherFullProfile } from '../services/teacher.service';
+import {
+  TeacherFullProfile,
+  TeacherLinkedUser,
+  TeacherProfile,
+  TeacherProfileUpdatePayload,
+  TeacherService,
+} from '../services/teacher.service';
 import { AuthService } from '../services/auth.service';
+import { UserItem, UserService } from '../services/user.service';
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
+interface TeacherEditForm {
+  fullName: string;
+  email: string;
+  phone: string;
+  password: string;
+  subjects: string;
+  grades: string;
+  teachingMode: 'ONLINE' | 'OFFLINE' | 'BOTH';
+  locations: string;
+  bio: string;
+  yearsOfExperience: number;
+  pricePerSession: number;
+  pricePerHour: number | null;
+  bankName: string;
+  accountNumber: string;
+  accountHolderName: string;
+  bankBranch: string;
+  managedSales: string[];
+}
 
 @Component({
   selector: 'app-teacher-profiles',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="teacher-profiles"></app-flow-guide>
   <div class="profiles-page">
-    <!-- LIST VIEW -->
-    <div *ngIf="!selectedId">
+    <section *ngIf="!selectedId">
       <div class="header">
-        <h2>Hồ sơ giáo viên</h2>
+        <div>
+          <h2>Ho so giao vien</h2>
+          <p class="subtext">Sale chi thay giao vien va lop hoc trong pham vi cua minh.</p>
+        </div>
         <div class="controls">
-          <input type="text" [(ngModel)]="searchText" (input)="filterTeachers()" placeholder="Tìm kiếm..." class="search-input" />
+          <input class="search-input" [(ngModel)]="searchText" (input)="filterTeachers()" placeholder="Tim ten, ma TK, email, mon hoc" />
           <select [(ngModel)]="statusFilter" (change)="filterTeachers()">
-            <option value="ALL">Tất cả</option>
-            <option value="ACTIVE">Đang hoạt động</option>
-            <option value="APPROVED">Đã duyệt</option>
-            <option value="PENDING">Chờ duyệt</option>
-            <option value="SUSPENDED">Tạm ngưng</option>
-            <option value="INACTIVE">Không hoạt động</option>
+            <option value="ALL">Tat ca</option>
+            <option value="ACTIVE">Dang hoat dong</option>
+            <option value="APPROVED">Da duyet</option>
+            <option value="PENDING">Cho duyet</option>
+            <option value="SUSPENDED">Tam ngung</option>
+            <option value="INACTIVE">Khong hoat dong</option>
           </select>
         </div>
       </div>
 
-      <div *ngIf="loading()" class="loading">Đang tải danh sách giáo viên...</div>
+      <div *ngIf="loading()" class="loading">Dang tai danh sach giao vien...</div>
       <div *ngIf="error()" class="error">{{ error() }}</div>
 
       <div *ngIf="filteredList.length > 0" class="teachers-grid">
-        <div *ngFor="let t of filteredList" class="teacher-card" (click)="openProfile(t._id)">
+        <article *ngFor="let teacher of filteredList" class="teacher-card" (click)="openProfile(teacher._id)">
           <div class="tc-header">
-            <div class="tc-avatar">{{ getInitials(t) }}</div>
+            <div class="tc-avatar">{{ getInitials(teacher) }}</div>
             <div class="tc-info">
-              <h4>{{ getUserName(t) }}</h4>
-              <span class="tc-email">{{ getUserEmail(t) }}</span>
+              <h4>{{ getUserName(teacher) }}</h4>
+              <div class="muted">{{ getUserCode(teacher) || 'Chua co ma TK' }}</div>
+              <div class="muted">{{ getUserEmail(teacher) }}</div>
             </div>
-            <span class="badge" [attr.data-status]="t.status">{{ statusLabel(t.status) }}</span>
+            <span class="badge" [attr.data-status]="teacher.status">{{ statusLabel(teacher.status) }}</span>
           </div>
-          <div class="tc-tags" *ngIf="t.subjects?.length">
-            <span class="tag" *ngFor="let s of t.subjects">{{ s }}</span>
+
+          <div class="chips" *ngIf="teacher.subjects?.length">
+            <span class="tag" *ngFor="let subject of teacher.subjects">{{ subject }}</span>
           </div>
-          <div class="tc-stats">
-            <div class="tc-stat">
-              <span class="tc-stat-val">{{ t.totalSessions || 0 }}</span>
-              <span class="tc-stat-lbl">Buổi dạy</span>
-            </div>
-            <div class="tc-stat">
-              <span class="tc-stat-val">{{ t.activeClasses || 0 }}</span>
-              <span class="tc-stat-lbl">Lớp đang dạy</span>
-            </div>
-            <div class="tc-stat">
-              <span class="tc-stat-val">{{ t.rating || 'N/A' }}</span>
-              <span class="tc-stat-lbl">Đánh giá</span>
-            </div>
-            <div class="tc-stat">
-              <span class="tc-stat-val">{{ t.yearsOfExperience || 0 }}</span>
-              <span class="tc-stat-lbl">Năm KN</span>
-            </div>
+          <div class="chips" *ngIf="getManagedSales(teacher).length">
+            <span class="manager-chip" *ngFor="let manager of getManagedSales(teacher)">{{ getManagerName(manager) }}</span>
           </div>
-          <div class="tc-footer">
-            <span>{{ teachingModeLabel(t.teachingMode) }}</span>
-            <span>{{ t.pricePerSession | number:'1.0-0' }}đ/buổi</span>
+
+          <div class="stats-row">
+            <div><strong>{{ teacher.totalSessions || 0 }}</strong><span>Buoi day</span></div>
+            <div><strong>{{ teacher.activeClasses || 0 }}</strong><span>Lop dang day</span></div>
+            <div><strong>{{ teacher.rating || 'N/A' }}</strong><span>Danh gia</span></div>
+            <div><strong>{{ teacher.yearsOfExperience || 0 }}</strong><span>Nam KN</span></div>
           </div>
+        </article>
+      </div>
+
+      <div *ngIf="filteredList.length === 0 && !loading()" class="empty">Khong tim thay giao vien nao</div>
+    </section>
+
+    <section *ngIf="selectedId">
+      <div class="header">
+        <button class="ghost-btn" (click)="closeProfile()">&larr; Quay lai</button>
+        <div class="detail-title">
+          <h2>Chi tiet giao vien</h2>
+          <p class="subtext" *ngIf="isSale()">Sale chi thay lop, hoc sinh va buoi hoc thuoc sale cua minh.</p>
         </div>
+        <button *ngIf="canEditSelected()" class="primary-btn" (click)="openEditModal()">Sua</button>
       </div>
 
-      <div *ngIf="filteredList.length === 0 && !loading()" class="empty">
-        Không tìm thấy giáo viên nào
-      </div>
-    </div>
-
-    <!-- DETAIL VIEW -->
-    <div *ngIf="selectedId">
-      <div class="detail-header">
-        <button class="back-btn" (click)="closeProfile()">&larr; Quay lại</button>
-        <h2>Chi tiết hồ sơ giáo viên</h2>
-      </div>
-
-      <div *ngIf="detailLoading()" class="loading">Đang tải hồ sơ...</div>
+      <div *ngIf="detailLoading()" class="loading">Dang tai ho so...</div>
       <div *ngIf="detailError()" class="error">{{ detailError() }}</div>
 
-      <div *ngIf="fullProfile()" class="profile-content">
-        <!-- Top Stats -->
-        <div class="stats-strip">
-          <div class="stat-card accent-blue">
-            <div class="stat-icon">📚</div>
-            <div class="stat-info">
-              <div class="stat-value">{{ fullProfile()!.sessions.totalCount }}</div>
-              <div class="stat-label">Tổng buổi dạy</div>
-            </div>
-          </div>
-          <div class="stat-card accent-green">
-            <div class="stat-icon">💰</div>
-            <div class="stat-info">
-              <div class="stat-value">{{ fullProfile()!.payroll.totalPaid | number:'1.0-0' }}đ</div>
-              <div class="stat-label">Tổng thu nhập</div>
-            </div>
-          </div>
-          <div class="stat-card accent-purple">
-            <div class="stat-icon">🏫</div>
-            <div class="stat-info">
-              <div class="stat-value">{{ fullProfile()!.classes.totalActive }}</div>
-              <div class="stat-label">Lớp đang dạy</div>
-            </div>
-          </div>
-          <div class="stat-card accent-orange">
-            <div class="stat-icon">⭐</div>
-            <div class="stat-info">
-              <div class="stat-value">{{ profileData()!.rating || 'N/A' }}</div>
-              <div class="stat-label">Đánh giá ({{ profileData()!.totalReviews }} lượt)</div>
-            </div>
-          </div>
+      <div *ngIf="fullProfile() as fp">
+        <div class="stats-strip" [class.sale-view]="isSale()">
+          <div class="stat-card"><strong>{{ fp.sessions.totalCount }}</strong><span>Tong buoi day</span></div>
+          <div class="stat-card" *ngIf="showFinance()"><strong>{{ fp.payroll.totalPaid | number:'1.0-0' }}d</strong><span>Tong thu nhap</span></div>
+          <div class="stat-card" *ngIf="!showFinance()"><strong>{{ getManagedSales(profileData()).length }}</strong><span>Sale quan ly</span></div>
+          <div class="stat-card"><strong>{{ fp.classes.totalActive }}</strong><span>Lop dang day</span></div>
+          <div class="stat-card"><strong>{{ profileData()?.rating || 'N/A' }}</strong><span>Danh gia</span></div>
         </div>
 
         <div class="content-grid">
-          <!-- Personal Info -->
-          <div class="section-card">
-            <div class="section-header"><h3>👤 Thông tin cá nhân</h3></div>
+          <section class="card">
+            <h3>Thong tin tai khoan</h3>
             <div class="info-grid">
-              <div class="info-item">
-                <label>Họ tên</label>
-                <span>{{ getProfileUserName(fullProfile()!.profile) }}</span>
-              </div>
-              <div class="info-item">
-                <label>Email</label>
-                <span>{{ getProfileUserEmail(fullProfile()!.profile) }}</span>
-              </div>
-              <div class="info-item">
-                <label>Số điện thoại</label>
-                <span>{{ getProfileUserPhone(fullProfile()!.profile) || 'Chưa cập nhật' }}</span>
-              </div>
-              <div class="info-item">
-                <label>Trạng thái</label>
-                <span class="badge" [attr.data-status]="profileData()!.status">{{ statusLabel(profileData()!.status) }}</span>
-              </div>
-              <div class="info-item">
-                <label>Kinh nghiệm</label>
-                <span>{{ profileData()!.yearsOfExperience }} năm</span>
-              </div>
-              <div class="info-item">
-                <label>Hình thức</label>
-                <span>{{ teachingModeLabel(profileData()!.teachingMode) }}</span>
-              </div>
+              <div><label>Ma TK</label><span>{{ getProfileUserCode(profileData()) || 'Chua co' }}</span></div>
+              <div><label>Trang thai</label><span class="badge" [attr.data-status]="profileData()?.status">{{ statusLabel(profileData()?.status || '') }}</span></div>
+              <div><label>Ho ten</label><span>{{ getProfileUserName(profileData()) }}</span></div>
+              <div><label>Email</label><span>{{ getProfileUserEmail(profileData()) }}</span></div>
+              <div><label>So dien thoai</label><span>{{ getProfileUserPhone(profileData()) || 'Chua cap nhat' }}</span></div>
+              <div><label>Kinh nghiem</label><span>{{ profileData()?.yearsOfExperience || 0 }} nam</span></div>
             </div>
-            <div class="info-item full" *ngIf="profileData()!.bio">
-              <label>Giới thiệu</label>
-              <p class="bio-text">{{ profileData()!.bio }}</p>
+            <div class="field-block">
+              <label>Sale quan ly</label>
+              <div class="chips" *ngIf="getManagedSales(profileData()).length; else noManagers">
+                <span class="manager-chip" *ngFor="let manager of getManagedSales(profileData()); let idx = index">Sale quan ly {{ idx + 1 }}: {{ getManagerName(manager) }}</span>
+              </div>
+              <ng-template #noManagers><p class="muted">Chua khai bao sale quan ly.</p></ng-template>
             </div>
-          </div>
+            <div class="field-block" *ngIf="profileData()?.bio">
+              <label>Gioi thieu</label>
+              <p class="bio-text">{{ profileData()?.bio }}</p>
+            </div>
+          </section>
 
-          <!-- Teaching Info -->
-          <div class="section-card">
-            <div class="section-header"><h3>📖 Thông tin giảng dạy</h3></div>
+          <section class="card">
+            <h3>Thong tin giang day</h3>
             <div class="info-grid">
-              <div class="info-item">
-                <label>Môn dạy</label>
-                <div class="tag-list">
-                  <span class="tag blue" *ngFor="let s of profileData()!.subjects">{{ s }}</span>
+              <div>
+                <label>Mon day</label>
+                <div class="chips">
+                  <span class="tag" *ngFor="let subject of profileData()?.subjects || []">{{ subject }}</span>
+                  <span *ngIf="!(profileData()?.subjects || []).length" class="muted">Chua cap nhat</span>
                 </div>
               </div>
-              <div class="info-item">
-                <label>Khối lớp</label>
-                <div class="tag-list">
-                  <span class="tag green" *ngFor="let g of profileData()!.grades">{{ g }}</span>
+              <div>
+                <label>Khoi lop</label>
+                <div class="chips">
+                  <span class="tag gray" *ngFor="let grade of profileData()?.grades || []">{{ grade }}</span>
+                  <span *ngIf="!(profileData()?.grades || []).length" class="muted">Chua cap nhat</span>
                 </div>
               </div>
-              <div class="info-item">
-                <label>Khu vực</label>
-                <div class="tag-list">
-                  <span class="tag gray" *ngFor="let l of profileData()!.locations">{{ l }}</span>
-                  <span *ngIf="!profileData()!.locations?.length" class="empty-text">Chưa cập nhật</span>
-                </div>
-              </div>
+              <div><label>Hinh thuc</label><span>{{ teachingModeLabel(profileData()?.teachingMode || '') }}</span></div>
+              <div><label>Khu vuc</label><span>{{ (profileData()?.locations || []).join(', ') || 'Chua cap nhat' }}</span></div>
+              <div><label>Gia/buoi</label><span>{{ profileData()?.pricePerSession | number:'1.0-0' }}d</span></div>
+              <div *ngIf="profileData()?.pricePerHour"><label>Gia/gio</label><span>{{ profileData()?.pricePerHour | number:'1.0-0' }}d</span></div>
             </div>
-            <div class="pricing-row">
-              <div class="price-box">
-                <label>Giá/buổi</label>
-                <span class="price">{{ profileData()!.pricePerSession | number:'1.0-0' }}đ</span>
-              </div>
-              <div class="price-box" *ngIf="profileData()!.pricePerHour">
-                <label>Giá/giờ</label>
-                <span class="price">{{ profileData()!.pricePerHour | number:'1.0-0' }}đ</span>
-              </div>
-            </div>
-          </div>
+          </section>
 
-          <!-- Qualifications -->
-          <div class="section-card" *ngIf="profileData()!.qualifications?.length">
-            <div class="section-header"><h3>🎓 Bằng cấp & Chứng chỉ</h3></div>
-            <div class="qualification-list">
-              <div class="qualification-card" *ngFor="let q of profileData()!.qualifications">
-                <div class="qual-icon">🏅</div>
-                <div class="qual-info">
-                  <div class="qual-title">{{ q.title }}</div>
-                  <div class="qual-meta" *ngIf="q.institution">{{ q.institution }}</div>
-                  <div class="qual-meta" *ngIf="q.year">Năm: {{ q.year }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Availability -->
-          <div class="section-card" *ngIf="profileData()!.availability?.length">
-            <div class="section-header"><h3>🕐 Lịch rảnh</h3></div>
-            <div class="schedule-grid">
-              <div class="schedule-item" *ngFor="let a of profileData()!.availability">
-                <span class="day-badge">{{ dayLabel(a.day) }}</span>
-                <span class="time-range">{{ a.startTime }} - {{ a.endTime }}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Bank Info (readonly for director) -->
-          <div class="section-card" *ngIf="profileData()!.bankInfo">
-            <div class="section-header"><h3>🏦 Thông tin ngân hàng</h3></div>
+          <section class="card" *ngIf="showFinance() && profileData()?.bankInfo">
+            <h3>Thong tin ngan hang</h3>
             <div class="info-grid">
-              <div class="info-item"><label>Ngân hàng</label><span>{{ profileData()!.bankInfo!.bankName }}</span></div>
-              <div class="info-item"><label>Số TK</label><span>{{ profileData()!.bankInfo!.accountNumber }}</span></div>
-              <div class="info-item"><label>Chủ TK</label><span>{{ profileData()!.bankInfo!.accountHolderName }}</span></div>
-              <div class="info-item" *ngIf="profileData()!.bankInfo!.branch"><label>Chi nhánh</label><span>{{ profileData()!.bankInfo!.branch }}</span></div>
+              <div><label>Ngan hang</label><span>{{ profileData()?.bankInfo?.bankName }}</span></div>
+              <div><label>So TK</label><span>{{ profileData()?.bankInfo?.accountNumber }}</span></div>
+              <div><label>Chu TK</label><span>{{ profileData()?.bankInfo?.accountHolderName }}</span></div>
+              <div *ngIf="profileData()?.bankInfo?.branch"><label>Chi nhanh</label><span>{{ profileData()?.bankInfo?.branch }}</span></div>
             </div>
-          </div>
+          </section>
 
-          <!-- Active Classes -->
-          <div class="section-card wide" *ngIf="fullProfile()!.classes.active.length">
-            <div class="section-header"><h3>🏫 Lớp đang dạy ({{ fullProfile()!.classes.totalActive }})</h3></div>
-            <table class="data-table">
-              <thead><tr><th>Tên lớp</th><th>Mã lớp</th><th>Số HS</th><th>Giá/buổi</th><th>Lương GV/buổi</th></tr></thead>
-              <tbody>
-                <tr *ngFor="let c of fullProfile()!.classes.active">
-                  <td><strong>{{ c.name }}</strong></td>
-                  <td>{{ c.code }}</td>
-                  <td>{{ c.students?.length || 0 }}</td>
-                  <td>{{ c.pricePerSession | number:'1.0-0' }}đ</td>
-                  <td>{{ c.teacherPayPerSession | number:'1.0-0' }}đ</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Session Stats -->
-          <div class="section-card" *ngIf="fullProfile()!.sessions.totalCount">
-            <div class="section-header"><h3>📊 Thống kê buổi học</h3></div>
+          <section class="card wide">
+            <h3>Lop dang day ({{ fp.classes.totalActive }})</h3>
+            <div *ngIf="fp.classes.active.length; else noClasses" class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Ten lop</th>
+                    <th>Ma lop</th>
+                    <th>Hoc sinh</th>
+                    <th>Gia/buoi</th>
+                    <th *ngIf="showFinance()">Luong GV/buoi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let classItem of fp.classes.active">
+                    <td>{{ classItem.name }}</td>
+                    <td>{{ classItem.code }}</td>
+                    <td>{{ getStudentNames(classItem.students) }}</td>
+                    <td>{{ classItem.pricePerSession | number:'1.0-0' }}d</td>
+                    <td *ngIf="showFinance()">{{ classItem.teacherPayPerSession | number:'1.0-0' }}d</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <ng-template #noClasses><p class="muted">Chua co lop dang day.</p></ng-template>
+          </section>
+          <section class="card" *ngIf="objectEntries(fp.sessions.byStatus).length">
+            <h3>Thong ke buoi hoc</h3>
             <div class="session-stats">
-              <div *ngFor="let item of objectEntries(fullProfile()!.sessions.byStatus)" class="session-stat-row">
+              <div *ngFor="let item of objectEntries(fp.sessions.byStatus)" class="session-row">
                 <span class="badge" [attr.data-status]="item[0]">{{ item[0] }}</span>
-                <span class="stat-count">{{ item[1].count }} buổi</span>
-                <span class="stat-amount">{{ item[1].totalPayout | number:'1.0-0' }}đ</span>
+                <span>{{ item[1].count }} buoi</span>
+                <span *ngIf="showFinance()" class="money">{{ item[1].totalPayout | number:'1.0-0' }}d</span>
               </div>
             </div>
-          </div>
+          </section>
 
-          <!-- Recent Sessions -->
-          <div class="section-card wide" *ngIf="fullProfile()!.sessions.recent.length">
-            <div class="section-header"><h3>📋 Buổi dạy gần đây</h3></div>
-            <table class="data-table">
-              <thead><tr><th>Ngày</th><th>Lớp</th><th>Học sinh</th><th>Trạng thái</th><th>Lương</th></tr></thead>
-              <tbody>
-                <tr *ngFor="let s of fullProfile()!.sessions.recent">
-                  <td>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</td>
-                  <td>{{ s.classId?.name || 'N/A' }}</td>
-                  <td>{{ s.studentId?.fullName || 'N/A' }}</td>
-                  <td><span class="badge" [attr.data-status]="s.status">{{ s.status }}</span></td>
-                  <td>{{ s.teacherPayout | number:'1.0-0' }}đ</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Approval Info -->
-          <div class="section-card" *ngIf="profileData()!.approvedBy">
-            <div class="section-header"><h3>✅ Thông tin phê duyệt</h3></div>
-            <div class="info-grid">
-              <div class="info-item"><label>Người duyệt</label><span>{{ profileData()!.approvedBy?.fullName || 'N/A' }}</span></div>
-              <div class="info-item"><label>Ngày duyệt</label><span>{{ profileData()!.approvedAt | date:'dd/MM/yyyy HH:mm' }}</span></div>
-              <div class="info-item full" *ngIf="profileData()!.adminNotes"><label>Ghi chú</label><span>{{ profileData()!.adminNotes }}</span></div>
+          <section class="card wide" *ngIf="fp.sessions.recent.length">
+            <h3>Buoi day gan day</h3>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Ngay</th>
+                    <th>Lop</th>
+                    <th>Hoc sinh</th>
+                    <th>Trang thai</th>
+                    <th *ngIf="showFinance()">Luong</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr *ngFor="let session of fp.sessions.recent">
+                    <td>{{ session.scheduledDate | date:'dd/MM/yyyy' }}</td>
+                    <td>{{ session.classId?.name || 'N/A' }}</td>
+                    <td>{{ session.studentId?.fullName || 'N/A' }}</td>
+                    <td><span class="badge" [attr.data-status]="session.status">{{ session.status }}</span></td>
+                    <td *ngIf="showFinance()">{{ session.teacherPayout | number:'1.0-0' }}d</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
-          </div>
+          </section>
         </div>
       </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop" *ngIf="showEditModal()">
+    <div class="modal">
+      <div class="header compact">
+        <h3>Sua ho so giao vien</h3>
+        <button type="button" class="ghost-btn" (click)="closeEditModal()">Dong</button>
+      </div>
+
+      <form (ngSubmit)="saveProfile()" class="edit-form">
+        <div class="form-grid">
+          <label>Ho ten<input [(ngModel)]="editForm.fullName" name="fullName" required /></label>
+          <label>Email<input [(ngModel)]="editForm.email" name="email" type="email" required /></label>
+          <label>So dien thoai<input [(ngModel)]="editForm.phone" name="phone" /></label>
+          <label *ngIf="isDirector()">Mat khau moi
+            <input [(ngModel)]="editForm.password" name="password" type="password" autocomplete="new-password" placeholder="Bo trong neu khong doi" />
+          </label>
+          <label>Hinh thuc day
+            <select [(ngModel)]="editForm.teachingMode" name="teachingMode">
+              <option value="ONLINE">Online</option>
+              <option value="OFFLINE">Offline</option>
+              <option value="BOTH">Ca hai</option>
+            </select>
+          </label>
+          <label>Mon day<input [(ngModel)]="editForm.subjects" name="subjects" placeholder="Toan, Van, Anh" /></label>
+          <label>Khoi lop<input [(ngModel)]="editForm.grades" name="grades" placeholder="Lop 6, Lop 7" /></label>
+          <label>Khu vuc<input [(ngModel)]="editForm.locations" name="locations" placeholder="Q1, Q3" /></label>
+          <label>Kinh nghiem (nam)<input [(ngModel)]="editForm.yearsOfExperience" name="yearsOfExperience" type="number" min="0" /></label>
+          <label>Gia/buoi<input [(ngModel)]="editForm.pricePerSession" name="pricePerSession" type="number" min="0" /></label>
+          <label>Gia/gio<input [(ngModel)]="editForm.pricePerHour" name="pricePerHour" type="number" min="0" /></label>
+        </div>
+
+        <label class="full-width">Gioi thieu<textarea [(ngModel)]="editForm.bio" name="bio" rows="4"></textarea></label>
+
+        <div *ngIf="showFinance()" class="sales-editor">
+          <div class="header compact">
+            <h4>Thong tin ngan hang</h4>
+          </div>
+          <div class="form-grid">
+            <label>Ngan hang<input [(ngModel)]="editForm.bankName" name="bankName" /></label>
+            <label>So TK<input [(ngModel)]="editForm.accountNumber" name="accountNumber" /></label>
+            <label>Chu TK<input [(ngModel)]="editForm.accountHolderName" name="accountHolderName" /></label>
+            <label>Chi nhanh<input [(ngModel)]="editForm.bankBranch" name="bankBranch" /></label>
+          </div>
+        </div>
+
+        <div *ngIf="isDirector()" class="sales-editor">
+          <div class="header compact">
+            <h4>Sale quan ly</h4>
+            <button type="button" class="secondary-btn" (click)="addManagedSaleSlot()">+ Them sale</button>
+          </div>
+          <div *ngIf="!editForm.managedSales.length" class="muted">Chua co sale quan ly nao.</div>
+          <div *ngFor="let saleId of editForm.managedSales; let idx = index" class="sale-row">
+            <label>
+              Sale quan ly {{ idx + 1 }}
+              <select [ngModel]="saleId" (ngModelChange)="updateManagedSaleSlot(idx, $event)" [name]="'managedSale' + idx">
+                <option value="">-- Chon sale --</option>
+                <option *ngFor="let sale of salesOptions()" [value]="sale._id">{{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}</option>
+              </select>
+            </label>
+            <button type="button" class="danger-btn" (click)="removeManagedSaleSlot(idx)">Xoa</button>
+          </div>
+        </div>
+
+        <div *ngIf="formError()" class="error">{{ formError() }}</div>
+        <div class="form-actions">
+          <button type="button" class="ghost-btn" (click)="closeEditModal()">Huy</button>
+          <button type="submit" class="primary-btn" [disabled]="saving()">{{ saving() ? 'Dang luu...' : 'Luu thay doi' }}</button>
+        </div>
+      </form>
     </div>
   </div>
   `,
   styles: [`
-    .profiles-page { padding: 24px; max-width: 1200px; margin: 0 auto; }
-
-    /* Header */
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
-    .header h2 { margin: 0; color: #1e293b; font-size: 20px; }
-    .controls { display: flex; gap: 8px; }
-    .search-input { padding: 8px 14px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; min-width: 200px; }
-    .controls select { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
-
-    .loading { text-align: center; padding: 40px; color: #64748b; }
-    .error { background: #fef2f2; color: #dc2626; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
-    .empty { text-align: center; padding: 60px; color: #94a3b8; font-size: 16px; }
-
-    /* Teacher Grid */
-    .teachers-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-    .teacher-card { background: #fff; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }
-    .teacher-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); border-color: #bfdbfe; }
-    .tc-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-    .tc-avatar { width: 42px; height: 42px; border-radius: 50%; background: #3b82f6; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; flex-shrink: 0; }
+    .profiles-page { padding: 24px; max-width: 1280px; margin: 0 auto; }
+    .header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .header.compact { margin-bottom: 12px; }
+    h2, h3, h4 { margin: 0; color: #1e293b; }
+    .subtext, .muted { margin: 0; color: #64748b; font-size: 13px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+    input, select, textarea { padding: 9px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
+    .search-input { min-width: 240px; }
+    .loading, .empty { text-align: center; padding: 36px; color: #64748b; }
+    .error { background: #fef2f2; color: #dc2626; padding: 12px; border-radius: 10px; }
+    .teachers-grid, .content-grid { display: grid; gap: 16px; }
+    .teachers-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+    .content-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 20px; }
+    .teacher-card, .card, .stat-card, .modal { background: #fff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06); }
+    .teacher-card { padding: 18px; cursor: pointer; }
+    .card { padding: 20px; }
+    .wide { grid-column: span 2; }
+    .tc-header { display: flex; gap: 12px; align-items: flex-start; }
+    .tc-avatar { width: 44px; height: 44px; border-radius: 50%; background: linear-gradient(135deg, #0f766e, #22c55e); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; }
     .tc-info { flex: 1; min-width: 0; }
-    .tc-info h4 { margin: 0; font-size: 15px; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .tc-email { font-size: 12px; color: #94a3b8; }
-    .tc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
-    .tag { padding: 2px 8px; border-radius: 99px; font-size: 11px; background: #dbeafe; color: #2563eb; }
-    .tag.blue { background: #dbeafe; color: #2563eb; }
-    .tag.green { background: #dcfce7; color: #16a34a; }
-    .tag.gray { background: #f1f5f9; color: #475569; }
-    .tc-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-    .tc-stat { text-align: center; }
-    .tc-stat-val { display: block; font-weight: 700; font-size: 16px; color: #1e293b; }
-    .tc-stat-lbl { font-size: 10px; color: #94a3b8; }
-    .tc-footer { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; padding-top: 10px; border-top: 1px solid #f1f5f9; }
-
-    /* Detail */
-    .detail-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-    .detail-header h2 { margin: 0; color: #1e293b; font-size: 20px; }
-    .back-btn { padding: 8px 16px; border: 1px solid #cbd5e1; background: #fff; border-radius: 8px; cursor: pointer; font-size: 14px; }
-    .back-btn:hover { background: #f1f5f9; }
-
-    /* Stats Strip */
-    .stats-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-    .stat-card { display: flex; align-items: center; gap: 14px; background: #fff; border-radius: 12px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid; }
-    .stat-card.accent-blue { border-color: #3b82f6; }
-    .stat-card.accent-green { border-color: #22c55e; }
-    .stat-card.accent-purple { border-color: #8b5cf6; }
-    .stat-card.accent-orange { border-color: #f97316; }
-    .stat-icon { font-size: 28px; }
-    .stat-value { font-size: 22px; font-weight: 700; color: #1e293b; }
-    .stat-label { font-size: 12px; color: #94a3b8; margin-top: 2px; }
-
-    /* Content Grid */
-    .content-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
-    .section-card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-    .section-card.wide { grid-column: span 2; }
-    .section-header { margin-bottom: 16px; border-bottom: 1px solid #f1f5f9; padding-bottom: 12px; }
-    .section-header h3 { margin: 0; font-size: 16px; color: #334155; }
-    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .info-item { display: flex; flex-direction: column; gap: 4px; }
-    .info-item.full { grid-column: span 2; margin-top: 12px; }
-    .info-item label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-    .info-item span { font-size: 14px; color: #334155; }
-    .bio-text { font-size: 14px; color: #475569; line-height: 1.6; margin: 0; white-space: pre-line; }
-    .empty-text { color: #cbd5e1; font-style: italic; font-size: 13px; }
-    .tag-list { display: flex; flex-wrap: wrap; gap: 6px; }
-    .pricing-row { display: flex; gap: 24px; margin-top: 16px; padding-top: 16px; border-top: 1px solid #f1f5f9; }
-    .price-box { display: flex; flex-direction: column; gap: 4px; }
-    .price-box label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-    .price { font-size: 20px; font-weight: 700; color: #059669; }
-    .qualification-list { display: flex; flex-direction: column; gap: 12px; }
-    .qualification-card { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: #f8fafc; border-radius: 8px; }
-    .qual-icon { font-size: 24px; }
-    .qual-title { font-weight: 600; color: #334155; font-size: 14px; }
-    .qual-meta { font-size: 13px; color: #64748b; }
-    .schedule-grid { display: flex; flex-wrap: wrap; gap: 10px; }
-    .schedule-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: #f0f9ff; border-radius: 8px; border: 1px solid #bae6fd; }
-    .day-badge { font-weight: 600; color: #0369a1; font-size: 13px; min-width: 60px; }
-    .time-range { color: #475569; font-size: 13px; font-family: monospace; }
-    .session-stats { display: flex; flex-direction: column; gap: 8px; }
-    .session-stat-row { display: flex; align-items: center; gap: 12px; padding: 6px 0; }
-    .stat-count { font-weight: 600; color: #334155; min-width: 80px; }
-    .stat-amount { color: #059669; font-weight: 500; margin-left: auto; }
-    .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .data-table th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #e2e8f0; color: #64748b; font-size: 12px; text-transform: uppercase; }
-    .data-table td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; color: #334155; }
-    .data-table tr:hover { background: #f8fafc; }
-
-    .badge { padding: 2px 8px; border-radius: 99px; font-size: 11px; background: #e2e8f0; color: #475569; font-weight: 600; display: inline-block; }
-    .badge[data-status="ACTIVE"] { background: #dcfce7; color: #16a34a; }
-    .badge[data-status="PENDING"] { background: #fef9c3; color: #ca8a04; }
-    .badge[data-status="APPROVED"] { background: #dbeafe; color: #2563eb; }
-    .badge[data-status="SUSPENDED"] { background: #fef2f2; color: #dc2626; }
-    .badge[data-status="INACTIVE"] { background: #f1f5f9; color: #64748b; }
-    .badge[data-status="FINALIZED"], .badge[data-status="PAID"] { background: #dcfce7; color: #16a34a; }
-    .badge[data-status="SCHEDULED"] { background: #dbeafe; color: #2563eb; }
-    .badge[data-status="CANCELLED"] { background: #fef2f2; color: #dc2626; }
-
-    @media (max-width: 900px) {
-      .stats-strip { grid-template-columns: repeat(2, 1fr); }
-      .content-grid { grid-template-columns: 1fr; }
-      .section-card.wide { grid-column: span 1; }
-      .teachers-grid { grid-template-columns: 1fr; }
+    .tc-info h4 { margin-bottom: 4px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .tag, .manager-chip, .badge { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .tag { background: #dbeafe; color: #1d4ed8; }
+    .tag.gray { background: #f1f5f9; color: #334155; }
+    .manager-chip { background: #fef3c7; color: #92400e; }
+    .badge { background: #e2e8f0; color: #475569; }
+    .badge[data-status="ACTIVE"] { background: #dcfce7; color: #166534; }
+    .badge[data-status="APPROVED"] { background: #dbeafe; color: #1d4ed8; }
+    .badge[data-status="PENDING"] { background: #fef3c7; color: #a16207; }
+    .badge[data-status="SUSPENDED"], .badge[data-status="CANCELLED"] { background: #fee2e2; color: #b91c1c; }
+    .badge[data-status="INACTIVE"] { background: #f1f5f9; color: #475569; }
+    .badge[data-status="FINALIZED"], .badge[data-status="PAID"] { background: #dcfce7; color: #166534; }
+    .badge[data-status="SCHEDULED"] { background: #dbeafe; color: #1d4ed8; }
+    .badge[data-status="TEACHER_COMPLETED"] { background: #fef3c7; color: #a16207; }
+    .stats-row, .info-grid, .stats-strip, .form-grid { display: grid; gap: 10px; }
+    .stats-row, .stats-strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .stats-strip.sale-view { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .stats-row div, .stat-card { padding: 12px; background: #f8fafc; border-radius: 12px; }
+    .stats-row strong, .stat-card strong { display: block; color: #0f172a; }
+    .stats-row span, .stat-card span { font-size: 12px; color: #64748b; }
+    .stat-card { background: #fff; }
+    .info-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 12px; }
+    .info-grid label, .field-block label { display: block; font-size: 12px; font-weight: 700; color: #64748b; text-transform: uppercase; margin-bottom: 4px; }
+    .field-block { margin-top: 14px; }
+    .bio-text { margin: 6px 0 0; color: #334155; white-space: pre-line; }
+    .table-wrap { overflow-x: auto; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+    .data-table th, .data-table td { padding: 10px 12px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+    .data-table th { color: #64748b; font-size: 11px; text-transform: uppercase; }
+    .session-stats { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+    .session-row { display: flex; align-items: center; gap: 12px; }
+    .money { margin-left: auto; color: #059669; font-weight: 600; }
+    .ghost-btn, .secondary-btn, .danger-btn, .primary-btn { border: none; border-radius: 10px; padding: 10px 14px; cursor: pointer; }
+    .ghost-btn { background: #fff; border: 1px solid #cbd5e1; color: #334155; }
+    .secondary-btn { background: #e2e8f0; color: #0f172a; }
+    .danger-btn { background: #fee2e2; color: #b91c1c; }
+    .primary-btn { background: #0f766e; color: #fff; }
+    .primary-btn:disabled { opacity: .6; cursor: not-allowed; }
+    .detail-title { flex: 1; min-width: 220px; }
+    .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
+    .modal { width: min(820px, 100%); max-height: calc(100vh - 40px); overflow: auto; padding: 20px; }
+    .edit-form { display: flex; flex-direction: column; gap: 16px; }
+    .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .form-grid label, .full-width, .sale-row label { display: flex; flex-direction: column; gap: 6px; color: #334155; }
+    .full-width { width: 100%; }
+    .sales-editor { border-top: 1px solid #e2e8f0; padding-top: 16px; }
+    .sale-row { display: flex; align-items: end; gap: 10px; margin-top: 10px; }
+    .sale-row label { flex: 1; }
+    .form-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    @media (max-width: 960px) {
+      .content-grid, .info-grid, .form-grid { grid-template-columns: 1fr; }
+      .wide { grid-column: span 1; }
+      .stats-row, .stats-strip, .stats-strip.sale-view { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .sale-row { flex-direction: column; align-items: stretch; }
     }
-    @media (max-width: 600px) {
-      .stats-strip { grid-template-columns: 1fr; }
+    @media (max-width: 640px) {
       .profiles-page { padding: 16px; }
+      .teachers-grid { grid-template-columns: 1fr; }
+      .controls { width: 100%; }
+      .search-input { min-width: 0; flex: 1; }
     }
-  `]
+  `],
 })
 export class TeacherProfilesComponent implements OnInit {
-  allTeachers: any[] = [];
-  filteredList: any[] = [];
+  allTeachers: TeacherProfile[] = [];
+  filteredList: TeacherProfile[] = [];
   loading = signal(false);
   error = signal('');
   searchText = '';
   statusFilter = 'ALL';
-
   selectedId: string | null = null;
   fullProfile = signal<TeacherFullProfile | null>(null);
   detailLoading = signal(false);
   detailError = signal('');
+  showEditModal = signal(false);
+  saving = signal(false);
+  formError = signal('');
+  salesOptions = signal<UserItem[]>([]);
+  editForm: TeacherEditForm = this.blankForm();
 
   constructor(
     private teacherService: TeacherService,
+    private userService: UserService,
     private auth: AuthService,
     private route: ActivatedRoute,
     private router: Router,
   ) {}
-
   ngOnInit() {
-    // Check if route has an id param
-    this.route.paramMap.subscribe(params => {
+    this.route.paramMap.subscribe((params) => {
       const id = params.get('id');
+      this.selectedId = id;
       if (id) {
-        this.selectedId = id;
-        this.loadFullProfile(id);
+        void this.loadFullProfile(id);
+      } else {
+        this.fullProfile.set(null);
+        this.detailError.set('');
       }
     });
-    this.loadTeachers();
+    void this.loadTeachers();
+    if (this.isDirector()) void this.loadSales();
+  }
+
+  isDirector(): boolean { return this.auth.userSignal()?.role === 'DIRECTOR'; }
+  isSale(): boolean { return this.auth.userSignal()?.role === 'SALE'; }
+  showFinance(): boolean { return !this.isSale(); }
+
+  canEditSelected(): boolean {
+    const role = this.auth.userSignal()?.role;
+    return role === 'DIRECTOR' || role === 'SALE' || role === 'ACCOUNTING';
   }
 
   async loadTeachers() {
@@ -434,111 +451,212 @@ export class TeacherProfilesComponent implements OnInit {
       this.allTeachers = await this.teacherService.getAllTeachers();
       this.filterTeachers();
     } catch (e: any) {
-      this.error.set(e?.error?.message || 'Lỗi tải danh sách giáo viên');
+      this.error.set(e?.error?.message || 'Loi tai danh sach giao vien');
     } finally {
       this.loading.set(false);
     }
   }
 
+  async loadSales() {
+    try {
+      const sales = await this.userService.listSales();
+      this.salesOptions.set((sales || []).filter((item) => item.role === 'SALE'));
+    } catch {
+      this.salesOptions.set([]);
+    }
+  }
+
   filterTeachers() {
     let list = [...this.allTeachers];
-    if (this.statusFilter !== 'ALL') {
-      list = list.filter(t => t.status === this.statusFilter);
-    }
+    if (this.statusFilter !== 'ALL') list = list.filter((teacher) => teacher.status === this.statusFilter);
     if (this.searchText.trim()) {
-      const search = this.searchText.toLowerCase().trim();
-      list = list.filter(t => {
-        const name = this.getUserName(t).toLowerCase();
-        const email = this.getUserEmail(t).toLowerCase();
-        const subjects = (t.subjects || []).join(',').toLowerCase();
-        return name.includes(search) || email.includes(search) || subjects.includes(search);
+      const keyword = this.searchText.toLowerCase().trim();
+      list = list.filter((teacher) => {
+        const searchable = [
+          this.getUserName(teacher),
+          this.getUserCode(teacher),
+          this.getUserEmail(teacher),
+          ...(teacher.subjects || []),
+          ...this.getManagedSales(teacher).map((manager) => this.getManagerName(manager)),
+        ].filter(Boolean).join(' ').toLowerCase();
+        return searchable.includes(keyword);
       });
     }
     this.filteredList = list;
   }
 
-  async openProfile(id: string) {
-    this.selectedId = id;
-    await this.loadFullProfile(id);
-  }
-
-  closeProfile() {
-    this.selectedId = null;
-    this.fullProfile.set(null);
-    this.detailError.set('');
-  }
+  async openProfile(id: string) { await this.router.navigate(['/app/teacher-profiles', id]); }
+  async closeProfile() { this.showEditModal.set(false); await this.router.navigate(['/app/teacher-profiles']); }
 
   async loadFullProfile(id: string) {
     this.detailLoading.set(true);
     this.detailError.set('');
     try {
-      const fp = await this.teacherService.getFullProfile(id);
-      this.fullProfile.set(fp);
+      this.fullProfile.set(await this.teacherService.getFullProfile(id));
     } catch (e: any) {
-      this.detailError.set(e?.error?.message || 'Lỗi tải hồ sơ chi tiết');
+      this.detailError.set(e?.error?.message || 'Loi tai ho so chi tiet');
     } finally {
       this.detailLoading.set(false);
     }
   }
 
-  profileData(): any {
-    return this.fullProfile()?.profile;
-  }
-
-  getUserName(t: any): string {
-    if (typeof t.userId === 'object' && t.userId?.fullName) return t.userId.fullName;
-    return 'N/A';
-  }
-
-  getUserEmail(t: any): string {
-    if (typeof t.userId === 'object' && t.userId?.email) return t.userId.email;
-    return '';
-  }
-
-  getProfileUserName(profile: any): string {
-    if (typeof profile.userId === 'object' && profile.userId?.fullName) return profile.userId.fullName;
-    return 'N/A';
-  }
-
-  getProfileUserEmail(profile: any): string {
-    if (typeof profile.userId === 'object' && profile.userId?.email) return profile.userId.email;
-    return '';
-  }
-
-  getProfileUserPhone(profile: any): string {
-    if (typeof profile.userId === 'object' && (profile.userId as any)?.phone) return (profile.userId as any).phone;
-    return '';
-  }
-
-  getInitials(t: any): string {
-    const name = this.getUserName(t);
-    const parts = name.split(' ');
-    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-    return name.substring(0, 2).toUpperCase();
-  }
-
-  statusLabel(s: string): string {
-    const labels: Record<string, string> = {
-      PENDING: 'Chờ duyệt', APPROVED: 'Đã duyệt', ACTIVE: 'Đang hoạt động',
-      SUSPENDED: 'Tạm ngưng', INACTIVE: 'Không hoạt động',
+  openEditModal() {
+    const profile = this.profileData();
+    if (!profile) return;
+    this.editForm = {
+      fullName: this.getProfileUserName(profile),
+      email: this.getProfileUserEmail(profile),
+      phone: this.getProfileUserPhone(profile),
+      password: '',
+      subjects: (profile.subjects || []).join(', '),
+      grades: (profile.grades || []).join(', '),
+      teachingMode: (profile.teachingMode || 'BOTH') as 'ONLINE' | 'OFFLINE' | 'BOTH',
+      locations: (profile.locations || []).join(', '),
+      bio: profile.bio || '',
+      yearsOfExperience: profile.yearsOfExperience || 0,
+      pricePerSession: profile.pricePerSession || 0,
+      pricePerHour: profile.pricePerHour ?? null,
+      bankName: profile.bankInfo?.bankName || '',
+      accountNumber: profile.bankInfo?.accountNumber || '',
+      accountHolderName: profile.bankInfo?.accountHolderName || '',
+      bankBranch: profile.bankInfo?.branch || '',
+      managedSales: this.getManagedSales(profile).map((manager) => this.getManagerId(manager)).filter(Boolean),
     };
-    return labels[s] || s;
+    if (this.isDirector() && !this.editForm.managedSales.length) this.editForm.managedSales = [''];
+    this.formError.set('');
+    this.showEditModal.set(true);
   }
 
-  teachingModeLabel(m: string): string {
-    const labels: Record<string, string> = { ONLINE: 'Online', OFFLINE: 'Offline', BOTH: 'Cả hai' };
-    return labels[m] || m;
-  }
+  closeEditModal() { this.showEditModal.set(false); this.formError.set(''); }
+  addManagedSaleSlot() { this.editForm.managedSales = [...this.editForm.managedSales, '']; }
+  updateManagedSaleSlot(index: number, saleId: string) { this.editForm.managedSales = this.editForm.managedSales.map((item, idx) => idx === index ? saleId : item); }
+  removeManagedSaleSlot(index: number) { this.editForm.managedSales = this.editForm.managedSales.filter((_, idx) => idx !== index); }
 
-  dayLabel(d: string): string {
-    const labels: Record<string, string> = {
-      MONDAY: 'T2', TUESDAY: 'T3', WEDNESDAY: 'T4', THURSDAY: 'T5',
-      FRIDAY: 'T6', SATURDAY: 'T7', SUNDAY: 'CN',
+  async saveProfile() {
+    if (!this.selectedId) return;
+    const fullName = this.editForm.fullName.trim();
+    const email = this.editForm.email.trim();
+    if (!fullName || !email) {
+      this.formError.set('Ho ten va email la bat buoc.');
+      return;
+    }
+
+    const payload: TeacherProfileUpdatePayload = {
+      user: {
+        fullName,
+        email,
+        phone: this.editForm.phone.trim() || undefined,
+      },
+      subjects: this.parseCommaList(this.editForm.subjects),
+      grades: this.parseCommaList(this.editForm.grades),
+      teachingMode: this.editForm.teachingMode,
+      locations: this.parseCommaList(this.editForm.locations),
+      bio: this.editForm.bio.trim(),
+      yearsOfExperience: Number(this.editForm.yearsOfExperience || 0),
+      pricePerSession: Number(this.editForm.pricePerSession || 0),
+      pricePerHour: this.editForm.pricePerHour ? Number(this.editForm.pricePerHour) : undefined,
     };
-    return labels[d] || d;
+    if (this.isDirector() && this.editForm.password.trim()) {
+      payload.user = {
+        ...payload.user,
+        password: this.editForm.password.trim(),
+      };
+    }
+    const bankInfo = this.buildBankInfoPayload();
+    if (bankInfo) {
+      payload.bankInfo = bankInfo;
+    }
+    if (this.isDirector()) {
+      payload.managedSales = Array.from(new Set(this.editForm.managedSales.map((saleId) => saleId.trim()).filter(Boolean)));
+    }
+
+    this.saving.set(true);
+    this.formError.set('');
+    try {
+      await this.teacherService.updateProfile(this.selectedId, payload);
+      this.showEditModal.set(false);
+      await Promise.all([this.loadTeachers(), this.loadFullProfile(this.selectedId)]);
+    } catch (e: any) {
+      this.formError.set(e?.error?.message || 'Khong the cap nhat ho so giao vien');
+    } finally {
+      this.saving.set(false);
+    }
   }
 
-  objectEntries(obj: any): [string, any][] {
-    return obj ? Object.entries(obj) : [];
+  profileData(): TeacherProfile | null { return this.fullProfile()?.profile || null; }
+  parseCommaList(value: string): string[] { return value.split(',').map((item) => item.trim()).filter(Boolean); }
+  buildBankInfoPayload() {
+    if (!this.showFinance()) {
+      return undefined;
+    }
+    const bankName = this.editForm.bankName.trim();
+    const accountNumber = this.editForm.accountNumber.trim();
+    const accountHolderName = this.editForm.accountHolderName.trim();
+    const branch = this.editForm.bankBranch.trim();
+    if (!bankName && !accountNumber && !accountHolderName && !branch) {
+      return undefined;
+    }
+    return {
+      bankName,
+      accountNumber,
+      accountHolderName,
+      branch: branch || undefined,
+    };
   }
+  blankForm(): TeacherEditForm {
+    return {
+      fullName: '',
+      email: '',
+      phone: '',
+      password: '',
+      subjects: '',
+      grades: '',
+      teachingMode: 'BOTH',
+      locations: '',
+      bio: '',
+      yearsOfExperience: 0,
+      pricePerSession: 0,
+      pricePerHour: null,
+      bankName: '',
+      accountNumber: '',
+      accountHolderName: '',
+      bankBranch: '',
+      managedSales: [],
+    };
+  }
+
+  getInitials(profile: TeacherProfile): string {
+    const name = this.getUserName(profile).trim();
+    if (!name) return 'GV';
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
+  }
+
+  getUserName(profile: TeacherProfile | null): string { const user = profile?.userId; return typeof user === 'object' ? user.fullName || 'N/A' : 'N/A'; }
+  getUserCode(profile: TeacherProfile | null): string { const user = profile?.userId; return typeof user === 'object' ? user.userCode || '' : ''; }
+  getUserEmail(profile: TeacherProfile | null): string { const user = profile?.userId; return typeof user === 'object' ? user.email || '' : ''; }
+  getProfileUserName(profile: TeacherProfile | null): string { return this.getUserName(profile); }
+  getProfileUserCode(profile: TeacherProfile | null): string { return this.getUserCode(profile); }
+  getProfileUserEmail(profile: TeacherProfile | null): string { return this.getUserEmail(profile); }
+  getProfileUserPhone(profile: TeacherProfile | null): string { const user = profile?.userId; return typeof user === 'object' ? user.phone || '' : ''; }
+
+  getManagedSales(profile: TeacherProfile | null): TeacherLinkedUser[] {
+    if (!profile || !Array.isArray(profile.managedSales)) return [];
+    return profile.managedSales.filter((item): item is TeacherLinkedUser => typeof item === 'object');
+  }
+
+  getManagerName(manager: TeacherLinkedUser | string): string { return typeof manager === 'object' ? manager.fullName || manager.email || 'Sale' : manager; }
+  getManagerId(manager: TeacherLinkedUser | string): string { return typeof manager === 'object' ? manager._id : manager; }
+  getStudentNames(students: Array<{ fullName?: string; studentCode?: string }> | undefined): string { return !students?.length ? 'Chua co hoc sinh' : students.map((student) => student.fullName || student.studentCode || 'Hoc sinh').join(', '); }
+
+  statusLabel(status: string): string {
+    return ({ PENDING: 'Cho duyet', APPROVED: 'Da duyet', ACTIVE: 'Dang hoat dong', SUSPENDED: 'Tam ngung', INACTIVE: 'Khong hoat dong' } as Record<string, string>)[status] || status;
+  }
+
+  teachingModeLabel(mode: string): string {
+    return ({ ONLINE: 'Online', OFFLINE: 'Offline', BOTH: 'Ca hai' } as Record<string, string>)[mode] || mode;
+  }
+
+  objectEntries(obj: Record<string, any> | null | undefined): [string, any][] { return obj ? Object.entries(obj) : []; }
 }

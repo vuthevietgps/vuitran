@@ -4,13 +4,18 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import {
   AdAccountItem,
+  AdGroupBackfillResult,
   AdCostItem,
   AdGroupItem,
   AdsService,
   ApiTokenItem,
+  ParentAttributionBackfillResult,
 } from '../services/ads.service';
+import { AuditLogService } from '../services/audit-log.service';
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
+import { FlowGuideComponent } from './shared/flow-guide.component';
+import { AdsActionsComponent } from './ads-actions.component';
 
 const PLATFORM_LABELS: Record<string, string> = {
   FACEBOOK: 'Facebook',
@@ -39,11 +44,15 @@ const TOKEN_STATUS_LABELS: Record<string, string> = {
 const TOKEN_TYPE_LABELS: Record<string, string> = {
   ACCOUNT: 'Token tai khoan quang cao',
   FACEBOOK_SYSTEM_USER: 'Facebook BM / System User',
+  GOOGLE_MCC: 'Google MCC',
+  TIKTOK_BUSINESS_CENTER: 'TikTok Business Center',
 };
 
 const SYNC_SOURCE_LABELS: Record<string, string> = {
   MANUAL: 'Nhap tay',
   FACEBOOK_BM: 'Dong bo BM',
+  GOOGLE_MCC: 'Dong bo MCC',
+  TIKTOK_BC: 'Dong bo BC',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -55,10 +64,24 @@ const STATUS_COLORS: Record<string, string> = {
   REVOKED: '#7f1d1d',
 };
 
+type MaintenanceResultView = {
+  title: string;
+  description: string;
+  items: Array<{ label: string; value: number | string }>;
+};
+
+type MaintenanceHistoryItem = {
+  title: string;
+  actor: string;
+  actorEmail: string;
+  createdAt: string;
+  summary: string;
+};
+
 @Component({
   selector: 'app-ads-management',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent, AdsActionsComponent],
   templateUrl: './ads-management.component.html',
   styleUrls: ['./ads-management.component.css'],
 })
@@ -74,6 +97,10 @@ export class AdsManagementComponent implements OnInit {
   error = signal('');
   syncing = signal(false);
   syncResult = signal<any | null>(null);
+  maintenanceRunning = signal(false);
+  maintenanceResult = signal<MaintenanceResultView | null>(null);
+  maintenanceHistory = signal<MaintenanceHistoryItem[]>([]);
+  maintenanceHistoryLoading = signal(false);
 
   showAccountModal = signal(false);
   showGroupModal = signal(false);
@@ -108,6 +135,7 @@ export class AdsManagementComponent implements OnInit {
 
   constructor(
     private readonly adsService: AdsService,
+    private readonly auditLogService: AuditLogService,
     private readonly authService: AuthService,
     private readonly router: Router,
   ) {}
@@ -123,6 +151,9 @@ export class AdsManagementComponent implements OnInit {
     if (this.canManageTokens()) {
       this.loadTokens();
     }
+    if (this.canRunBackfill()) {
+      void this.loadMaintenanceHistory();
+    }
   }
 
   switchTab(tab: string) {
@@ -132,6 +163,13 @@ export class AdsManagementComponent implements OnInit {
     if (tab === 'groups') this.loadGroups();
     if (tab === 'tokens') this.loadTokens();
     if (tab === 'costs') this.loadCosts();
+    if (tab === 'costs' && this.canRunBackfill()) {
+      void this.loadMaintenanceHistory();
+    }
+  }
+
+  canViewActions() {
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER]);
   }
 
   platformLabel(value?: string) {
@@ -171,7 +209,7 @@ export class AdsManagementComponent implements OnInit {
   }
 
   canManageGroups() {
-    return this.authService.hasRole([Role.DIRECTOR, Role.OPS]);
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER]);
   }
 
   canDeleteGroups() {
@@ -187,6 +225,10 @@ export class AdsManagementComponent implements OnInit {
   }
 
   canTriggerSync() {
+    return this.isDirector();
+  }
+
+  canRunBackfill() {
     return this.isDirector();
   }
 
@@ -215,22 +257,56 @@ export class AdsManagementComponent implements OnInit {
   }
 
   tokenTargetLabel(token: ApiTokenItem) {
-    if (token.tokenType === 'FACEBOOK_SYSTEM_USER') {
+    if (this.isManagerTokenType(token.tokenType)) {
       if (token.businessName || token.businessId) {
-        return `${token.businessName || 'Business Manager'}${token.businessId ? ` (${token.businessId})` : ''}`;
+        return `${token.businessName || this.tokenBusinessTargetLabel(token.tokenType)}${token.businessId ? ` (${token.businessId})` : ''}`;
       }
-      return 'Tat ca BM token truy cap duoc';
+      return `Tat ca ${this.tokenBusinessTargetLabel(token.tokenType).toLowerCase()} token truy cap duoc`;
     }
     return token.adAccountName || token.adAccountId || '-';
   }
 
-  isBusinessTokenForm() {
-    return this.tokenForm.tokenType === 'FACEBOOK_SYSTEM_USER';
+  isManagerTokenType(tokenType?: string) {
+    return ['FACEBOOK_SYSTEM_USER', 'GOOGLE_MCC', 'TIKTOK_BUSINESS_CENTER'].includes(tokenType || '');
+  }
+
+  isManagerTokenForm() {
+    return this.isManagerTokenType(this.tokenForm.tokenType);
+  }
+
+  tokenBusinessTargetLabel(tokenType?: string) {
+    if (tokenType === 'GOOGLE_MCC') return 'MCC';
+    if (tokenType === 'TIKTOK_BUSINESS_CENTER') return 'Business Center';
+    return 'Business Manager';
+  }
+
+  tokenBusinessIdLabel() {
+    if (this.tokenForm.tokenType === 'GOOGLE_MCC') return 'MCC customer ID';
+    if (this.tokenForm.tokenType === 'TIKTOK_BUSINESS_CENTER') return 'Business Center ID';
+    return 'Business ID';
+  }
+
+  tokenBusinessNameLabel() {
+    if (this.tokenForm.tokenType === 'GOOGLE_MCC') return 'MCC name';
+    if (this.tokenForm.tokenType === 'TIKTOK_BUSINESS_CENTER') return 'Business Center name';
+    return 'Business name';
+  }
+
+  tokenHelperText() {
+    if (this.tokenForm.tokenType === 'GOOGLE_MCC') {
+      return 'Sau khi luu token MCC, bam Dong bo de keo danh sach customer ads, campaign va chi phi Google Ads theo ngay.';
+    }
+    if (this.tokenForm.tokenType === 'TIKTOK_BUSINESS_CENTER') {
+      return 'Sau khi luu token Business Center, bam Dong bo de keo danh sach advertiser, campaign va chi phi TikTok Ads theo ngay.';
+    }
+    return 'Sau khi luu token BM, bam Dong bo de keo danh sach ad account, fanpage, page access token va chi phi ads theo ad set tung ngay.';
   }
 
   onTokenTypeChange() {
-    if (this.isBusinessTokenForm()) {
-      this.tokenForm.platform = 'FACEBOOK';
+    if (this.isManagerTokenForm()) {
+      if (this.tokenForm.tokenType === 'GOOGLE_MCC') this.tokenForm.platform = 'GOOGLE';
+      else if (this.tokenForm.tokenType === 'TIKTOK_BUSINESS_CENTER') this.tokenForm.platform = 'TIKTOK';
+      else this.tokenForm.platform = 'FACEBOOK';
       this.tokenForm.adAccountId = '';
     } else {
       this.tokenForm.businessId = '';
@@ -338,6 +414,28 @@ export class AdsManagementComponent implements OnInit {
     }
   }
 
+  async loadMaintenanceHistory() {
+    if (!this.canRunBackfill()) return;
+    this.maintenanceHistoryLoading.set(true);
+    try {
+      const result = await this.auditLogService.getAll({
+        module: 'ADS',
+        page: 1,
+        limit: 6,
+      });
+      const items = Array.isArray(result?.data) ? result.data : [];
+      this.maintenanceHistory.set(
+        items
+          .filter((item: any) => ['backfill-parent-attribution', 'backfill-adgroup'].includes(item?.targetId))
+          .map((item: any) => this.mapMaintenanceHistoryItem(item)),
+      );
+    } catch {
+      this.maintenanceHistory.set([]);
+    } finally {
+      this.maintenanceHistoryLoading.set(false);
+    }
+  }
+
   openAccountModal() {
     if (!this.canManageAccounts()) return;
     this.editingAccount = null;
@@ -405,6 +503,7 @@ export class AdsManagementComponent implements OnInit {
       endDate: '',
       targetAudience: '',
       notes: '',
+      trackingKeysInput: '',
     };
     this.error.set('');
     this.showGroupModal.set(true);
@@ -424,17 +523,34 @@ export class AdsManagementComponent implements OnInit {
       targetAudience: group.targetAudience || '',
       status: group.status,
       notes: group.notes || '',
+      trackingKeysInput: (group.trackingKeys || []).join(', '),
     };
     this.error.set('');
     this.showGroupModal.set(true);
   }
 
+  parseTrackingKeysInput(value?: string) {
+    return Array.from(
+      new Set(
+        String(value || '')
+          .split(/[\n,]+/)
+          .map((item) => item.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
   async submitGroup() {
     if (!this.canManageGroups()) return;
     this.error.set('');
+    const payload = {
+      ...this.grpForm,
+      trackingKeys: this.parseTrackingKeysInput(this.grpForm.trackingKeysInput),
+    };
+    delete payload.trackingKeysInput;
     const result = this.editingGroup
-      ? await this.adsService.updateGroup(this.editingGroup._id, this.grpForm)
-      : await this.adsService.createGroup(this.grpForm);
+      ? await this.adsService.updateGroup(this.editingGroup._id, payload)
+      : await this.adsService.createGroup(payload);
     if (!result.ok) {
       this.error.set(result.message || 'Khong luu duoc nhom quang cao.');
       return;
@@ -496,24 +612,38 @@ export class AdsManagementComponent implements OnInit {
     if (!this.canManageTokens()) return;
     this.error.set('');
 
-    const payload: any = {
-      tokenType: this.tokenForm.tokenType,
-      platform: this.tokenForm.platform,
-      label: this.tokenForm.label || undefined,
-      status: this.tokenForm.status || undefined,
-      businessId: this.tokenForm.businessId || undefined,
-      businessName: this.tokenForm.businessName || undefined,
-      expiresAt: this.tokenForm.expiresAt || undefined,
-      refreshToken: this.tokenForm.refreshToken || undefined,
-      adAccountId: this.tokenForm.adAccountId || undefined,
-    };
+    const payload: any = this.editingToken
+      ? {
+          // Update DTO fields
+          tokenType: this.tokenForm.tokenType,
+          label: this.tokenForm.label || undefined,
+          status: this.tokenForm.status || undefined,
+          businessId: this.tokenForm.businessId || undefined,
+          businessName: this.tokenForm.businessName || undefined,
+          expiresAt: this.tokenForm.expiresAt || undefined,
+          refreshToken: this.tokenForm.refreshToken || undefined,
+          adAccountId: this.tokenForm.adAccountId || undefined,
+        }
+      : {
+          // Create DTO fields
+          tokenType: this.tokenForm.tokenType,
+          platform: this.tokenForm.platform,
+          label: this.tokenForm.label || undefined,
+          businessId: this.tokenForm.businessId || undefined,
+          businessName: this.tokenForm.businessName || undefined,
+          expiresAt: this.tokenForm.expiresAt || undefined,
+          refreshToken: this.tokenForm.refreshToken || undefined,
+          adAccountId: this.tokenForm.adAccountId || undefined,
+        };
 
     if (this.tokenForm.accessToken) {
       payload.accessToken = this.tokenForm.accessToken;
     }
 
-    if (payload.tokenType === 'FACEBOOK_SYSTEM_USER') {
-      payload.platform = 'FACEBOOK';
+    if (this.isManagerTokenType(payload.tokenType)) {
+      if (payload.tokenType === 'GOOGLE_MCC') payload.platform = 'GOOGLE';
+      if (payload.tokenType === 'TIKTOK_BUSINESS_CENTER') payload.platform = 'TIKTOK';
+      if (payload.tokenType === 'FACEBOOK_SYSTEM_USER') payload.platform = 'FACEBOOK';
       delete payload.adAccountId;
     } else {
       delete payload.businessId;
@@ -586,7 +716,7 @@ export class AdsManagementComponent implements OnInit {
 
   async syncToken(token: ApiTokenItem) {
     if (!this.canManageTokens()) return;
-    if (token.tokenType !== 'FACEBOOK_SYSTEM_USER' && !token.adAccountId) {
+    if (!this.isManagerTokenType(token.tokenType) && !token.adAccountId) {
       alert('Token nay chua gan voi tai khoan quang cao.');
       return;
     }
@@ -595,7 +725,11 @@ export class AdsManagementComponent implements OnInit {
 
     const result = token.tokenType === 'FACEBOOK_SYSTEM_USER'
       ? await this.adsService.syncFacebookBusinessToken(token._id)
-      : await this.adsService.triggerSync(token.adAccountId);
+      : token.tokenType === 'GOOGLE_MCC'
+        ? await this.adsService.syncGoogleMccToken(token._id)
+        : token.tokenType === 'TIKTOK_BUSINESS_CENTER'
+          ? await this.adsService.syncTikTokBusinessCenterToken(token._id)
+          : await this.adsService.triggerSync(token.adAccountId);
 
     this.syncing.set(false);
     if (!result.ok) {
@@ -627,8 +761,97 @@ export class AdsManagementComponent implements OnInit {
     await this.loadCosts();
   }
 
+  private openMaintenanceResult(
+    title: string,
+    description: string,
+    items: Array<{ label: string; value: number | string }>,
+  ) {
+    this.maintenanceResult.set({ title, description, items });
+  }
+
+  async runParentAttributionBackfill() {
+    if (!this.canRunBackfill()) return;
+    if (!confirm('Chay backfill parent attribution cho du lieu cu?')) return;
+
+    this.maintenanceRunning.set(true);
+    this.error.set('');
+    const result = await this.adsService.backfillParentAttribution();
+    this.maintenanceRunning.set(false);
+
+    if (!result.ok || !result.data) {
+      alert(result.message || 'Backfill parent attribution that bai.');
+      return;
+    }
+
+    await this.loadMaintenanceHistory();
+    this.openMaintenanceResult(
+      'Ket qua backfill parent attribution',
+      'Da quet lai conversation, lead, order va student cu de bo sung parent attribution.',
+      this.mapParentAttributionBackfillItems(result.data),
+    );
+  }
+
+  async runAdGroupBackfill() {
+    if (!this.canRunBackfill()) return;
+    if (!confirm('Chay backfill adGroup cho student/session cu?')) return;
+
+    this.maintenanceRunning.set(true);
+    this.error.set('');
+    const result = await this.adsService.backfillAdGroupIds();
+    this.maintenanceRunning.set(false);
+
+    if (!result.ok || !result.data) {
+      alert(result.message || 'Backfill adGroup that bai.');
+      return;
+    }
+
+    await this.loadMaintenanceHistory();
+    this.openMaintenanceResult(
+      'Ket qua backfill adGroup',
+      'Da bo sung adGroup tu order cu sang student va session chua co tracking nhom quang cao.',
+      this.mapAdGroupBackfillItems(result.data),
+    );
+  }
+
+  private mapParentAttributionBackfillItems(data: ParentAttributionBackfillResult) {
+    return [
+      { label: 'Conversations', value: data.conversations },
+      { label: 'Leads', value: data.leads },
+      { label: 'Orders', value: data.orders },
+      { label: 'Students', value: data.students },
+      { label: 'Upserted', value: data.upserted },
+    ];
+  }
+
+  private mapAdGroupBackfillItems(data: AdGroupBackfillResult) {
+    return [
+      { label: 'Students updated', value: data.studentsUpdated },
+      { label: 'Sessions updated', value: data.sessionsUpdated },
+    ];
+  }
+
+  private mapMaintenanceHistoryItem(item: any): MaintenanceHistoryItem {
+    const payload = item?.newValue || {};
+    const isParentAttribution = payload.operation === 'BACKFILL_PARENT_ATTRIBUTION'
+      || item?.targetId === 'backfill-parent-attribution';
+
+    return {
+      title: item?.targetName || (isParentAttribution ? 'Backfill parent attribution' : 'Backfill adGroup'),
+      actor: item?.userFullName || 'He thong',
+      actorEmail: item?.userEmail || '',
+      createdAt: item?.createdAt || '',
+      summary: isParentAttribution
+        ? `Conv ${payload.conversations || 0} | Leads ${payload.leads || 0} | Orders ${payload.orders || 0} | Students ${payload.students || 0} | Upserted ${payload.upserted || 0}`
+        : `Students updated ${payload.studentsUpdated || 0} | Sessions updated ${payload.sessionsUpdated || 0}`,
+    };
+  }
+
   closeSyncResult() {
     this.syncResult.set(null);
+  }
+
+  closeMaintenanceResult() {
+    this.maintenanceResult.set(null);
   }
 
   async openFanpageSettings() {

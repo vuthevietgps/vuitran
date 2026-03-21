@@ -1,4 +1,14 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsEmail,
+  IsEnum,
+  IsMongoId,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Role } from '../../common/interfaces/role.enum';
 
 export class CreateUserDto {
@@ -32,4 +42,18 @@ export class CreateUserDto {
   @IsOptional()
   @MaxLength(255)
   address?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  phone?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  saleOwnerId?: string;
+
+  @IsArray()
+  @IsMongoId({ each: true })
+  @IsOptional()
+  managedSales?: string[];
 }

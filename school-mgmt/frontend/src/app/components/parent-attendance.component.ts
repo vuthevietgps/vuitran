@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 interface AttendanceRecord {
   _id: string;
@@ -67,7 +68,7 @@ interface ChildrenAttendanceStatsResponse {
 @Component({
   selector: 'app-parent-attendance',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -75,6 +76,7 @@ interface ChildrenAttendanceStatsResponse {
       <p>Theo doi tinh hinh diem danh cua con.</p>
     </div>
   </header>
+  <app-flow-guide featureKey="parent-attendance"></app-flow-guide>
 
   <!-- Filters -->
   <section class="filters">

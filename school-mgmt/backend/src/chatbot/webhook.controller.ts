@@ -3,8 +3,11 @@ import {
   HttpStatus, Logger, RawBodyRequest,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import { ChatbotService } from './chatbot.service';
 import { WebhookService } from './webhook.service';
+import { CHATBOT_WEBHOOK_QUEUE, WebhookMessageJobData } from './chatbot-webhook.constants';
 
 @Controller('webhooks')
 export class WebhookController {
@@ -13,6 +16,7 @@ export class WebhookController {
   constructor(
     private readonly chatbotService: ChatbotService,
     private readonly webhookService: WebhookService,
+    @InjectQueue(CHATBOT_WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
   ) {}
 
   // ─── Facebook Webhook Verification ──────────────────────────
@@ -43,7 +47,7 @@ export class WebhookController {
     @Req() req: RawBodyRequest<Request>,
     @Res() res: Response,
   ) {
-    // Always respond 200 quickly to prevent Facebook retries
+    // Respond 200 immediately to prevent Facebook retries
     res.status(HttpStatus.OK).send('EVENT_RECEIVED');
 
     try {
@@ -53,7 +57,6 @@ export class WebhookController {
         return;
       }
 
-      // Verify signature if appSecret is configured
       const signature = req.headers['x-hub-signature-256'] as string;
       if (fanpage.appSecret) {
         if (!signature) {
@@ -70,16 +73,47 @@ export class WebhookController {
         }
       }
 
+      // Check Redis availability once for the entire batch of messages.
+      const redisReady = await this.isRedisReady();
+
       const messages = this.webhookService.parseFacebookWebhookPayload(req.body);
       for (const msg of messages) {
-        await this.chatbotService.handleIncomingCustomerMessage(
-          fanpage._id.toString(),
-          msg.senderId,
-          msg.messageText,
-          msg.senderName,
-          msg.adRefParam,
-          msg.messageId,
-        );
+        const jobData: WebhookMessageJobData = {
+          fanpageId: fanpage._id.toString(),
+          platformUserId: msg.senderId,
+          messageText: msg.messageText,
+          senderName: msg.senderName,
+          adRefParam: msg.adRefParam,
+          messageId: msg.messageId,
+        };
+        if (redisReady) {
+          await this.webhookQueue.add('process-message', jobData, {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 1000 },
+            removeOnComplete: true,
+            removeOnFail: 100, // keep last 100 failed jobs for inspection
+          });
+        } else {
+          // Redis/BullMQ unavailable — process synchronously
+          this.logger.warn(
+            `Redis not ready, processing webhook synchronously for fanpage ${fanpage._id}`,
+          );
+          try {
+            await this.chatbotService.handleIncomingCustomerMessage(
+              jobData.fanpageId,
+              jobData.platformUserId,
+              jobData.messageText || '',
+              jobData.senderName,
+              jobData.adRefParam,
+              jobData.messageId,
+            );
+          } catch (syncErr: any) {
+            this.logger.error(
+              `Sync fallback failed for fanpage ${fanpage._id}: ${syncErr.message}`,
+              syncErr.stack,
+            );
+          }
+        }
       }
     } catch (err: any) {
       this.logger.error(`Facebook webhook error: ${err.message}`, err.stack);
@@ -103,8 +137,7 @@ export class WebhookController {
         return;
       }
 
-      // Verify signature if appSecret is configured
-      const signature = req.headers['x-tiktok-signature'] as string;
+      const signature = (req.headers['tiktok-signature'] || req.headers['x-tiktok-signature']) as string;
       if (fanpage.appSecret) {
         if (!signature) {
           this.logger.warn(
@@ -120,19 +153,68 @@ export class WebhookController {
         }
       }
 
+      const redisReady = await this.isRedisReady();
+
       const messages = this.webhookService.parseTikTokWebhookPayload(req.body);
       for (const msg of messages) {
-        await this.chatbotService.handleIncomingCustomerMessage(
-          fanpage._id.toString(),
-          msg.senderId,
-          msg.messageText,
-          msg.senderName,
-          msg.adRefParam,
-          msg.messageId,
-        );
+        const jobData: WebhookMessageJobData = {
+          fanpageId: fanpage._id.toString(),
+          platformUserId: msg.senderId,
+          messageText: msg.messageText,
+          senderName: msg.senderName,
+          adRefParam: msg.adRefParam,
+          messageId: msg.messageId,
+        };
+        if (redisReady) {
+          await this.webhookQueue.add('process-message', jobData, {
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 1000 },
+            removeOnComplete: true,
+            removeOnFail: 100,
+          });
+        } else {
+          this.logger.warn(
+            `Redis not ready, processing TikTok webhook synchronously for fanpage ${fanpage._id}`,
+          );
+          try {
+            await this.chatbotService.handleIncomingCustomerMessage(
+              jobData.fanpageId,
+              jobData.platformUserId,
+              jobData.messageText || '',
+              jobData.senderName,
+              jobData.adRefParam,
+              jobData.messageId,
+            );
+          } catch (syncErr: any) {
+            this.logger.error(
+              `TikTok sync fallback failed for fanpage ${fanpage._id}: ${syncErr.message}`,
+              syncErr.stack,
+            );
+          }
+        }
       }
     } catch (err: any) {
       this.logger.error(`TikTok webhook error: ${err.message}`, err.stack);
+    }
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────
+
+  /** Returns true only when the BullMQ underlying Redis client is in 'ready' state.
+   *  Uses a short race timeout so we never hang waiting for a Redis connection that
+   *  may never arrive (e.g., Redis is not running).
+   */
+  private async isRedisReady(): Promise<boolean> {
+    try {
+      await Promise.race([
+        this.webhookQueue.client, // resolves only when ioredis emits 'ready'
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Redis check timeout')), 150),
+        ),
+      ]);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

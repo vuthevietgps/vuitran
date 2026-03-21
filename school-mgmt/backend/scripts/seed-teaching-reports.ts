@@ -111,12 +111,10 @@ const sampleData = {
       attendedAt: new Date('2026-02-08T09:30:00.000Z'),
       status: 'PRESENT',
       sessionDuration: 90,
-      salaryAmount: 150000,
       sessionContent: 'Ôn tập bảng cửu chương 7, 8, 9',
       comment: 'Em đã tiến bộ rõ rệt',
       recordLink: 'https://meet.google.com/rec/abc123xyz',
       parentConfirm: 'OK',
-      paymentStatus: 0,
       imageUrl: 'https://storage.school.vn/attendance/20260208_093000_HS2024001.jpg',
       sessionIndex: 15
     },
@@ -129,15 +127,12 @@ const sampleData = {
       attendedAt: new Date('2026-02-07T14:00:00.000Z'),
       status: 'PRESENT',
       sessionDuration: 60,
-      salaryAmount: 100000,
       sessionContent: 'Học từ vựng tiếng Anh chủ đề Animals',
       comment: 'Em có khả năng nghe tốt',
       recordLink: 'https://zoom.us/rec/share/xyz789',
       parentConfirm: 'OK',
-      paymentStatus: 1,
       imageUrl: 'https://storage.school.vn/attendance/20260207_140000_HS2024002.jpg',
-      sessionIndex: 12,
-      notes: 'Đã thanh toán ngày 08/02'
+      sessionIndex: 12
     },
     {
       _id: '65abc123def456791',
@@ -148,14 +143,58 @@ const sampleData = {
       attendedAt: new Date('2026-02-06T16:30:00.000Z'),
       status: 'PRESENT',
       sessionDuration: 90,
-      salaryAmount: 180000,
       sessionContent: 'Luyện đọc hiểu văn bản "Bài ca chú ve con"',
       comment: 'Em có khiếu văn học',
       recordLink: '',
       parentConfirm: 'PENDING',
-      paymentStatus: 0,
       imageUrl: 'https://storage.school.vn/attendance/20260206_163000_HS2024003.jpg',
       sessionIndex: 8
+    }
+  ],
+
+  // PayrollTransactions - Sổ phụ tính lương (Single Source of Truth cho salary)
+  payrollTransactions: [
+    {
+      teacherId: '65teacher123',
+      sessionId: '65abc123def456789',
+      classId: '65class123',
+      studentId: '65student123',
+      sessionDate: new Date('2026-02-08T00:00:00.000Z'),
+      baseSalary: 150000,
+      penaltyAmount: 0,
+      bonusAmount: 0,
+      adjustmentAmount: 0,
+      finalSalary: 150000,
+      status: 'PENDING',
+      isLateReport: false
+    },
+    {
+      teacherId: '65teacher124',
+      sessionId: '65abc123def456790',
+      classId: '65class124',
+      studentId: '65student124',
+      sessionDate: new Date('2026-02-07T00:00:00.000Z'),
+      baseSalary: 100000,
+      penaltyAmount: 0,
+      bonusAmount: 0,
+      adjustmentAmount: 0,
+      finalSalary: 100000,
+      status: 'PAID',
+      isLateReport: false
+    },
+    {
+      teacherId: '65teacher125',
+      sessionId: '65abc123def456791',
+      classId: '65class125',
+      studentId: '65student125',
+      sessionDate: new Date('2026-02-06T00:00:00.000Z'),
+      baseSalary: 180000,
+      penaltyAmount: 0,
+      bonusAmount: 0,
+      adjustmentAmount: 0,
+      finalSalary: 180000,
+      status: 'PENDING',
+      isLateReport: false
     }
   ]
 };
@@ -174,6 +213,7 @@ async function seedData() {
     const Class = connection.collection('classes');
     const Session = connection.collection('sessions');
     const Attendance = connection.collection('attendances');
+    const PayrollTransaction = connection.collection('payrolltransactions');
 
     // Clear existing sample data (optional - uncomment if needed)
     // console.log('🗑️  Clearing existing sample data...');
@@ -201,10 +241,15 @@ async function seedData() {
     await Session.insertMany(sampleData.sessions);
     console.log(`✅ Inserted ${sampleData.sessions.length} sessions`);
 
-    // Insert attendance
-    console.log('✍️ Inserting attendance records...');
+    // Insert attendance (WITHOUT salary fields - clean data)
+    console.log('✍️ Inserting attendance records (without salary fields)...');
     await Attendance.insertMany(sampleData.attendance);
     console.log(`✅ Inserted ${sampleData.attendance.length} attendance records`);
+
+    // Insert payroll transactions (SINGLE SOURCE OF TRUTH for salary)
+    console.log('💰 Inserting payroll transactions (salary data)...');
+    await PayrollTransaction.insertMany(sampleData.payrollTransactions);
+    console.log(`✅ Inserted ${sampleData.payrollTransactions.length} payroll transactions`);
 
     console.log('\n🎉 SEED SUCCESSFUL!');
     console.log('\n📊 Summary:');
@@ -213,6 +258,9 @@ async function seedData() {
     console.log(`   - Classes: ${sampleData.classes.length}`);
     console.log(`   - Sessions: ${sampleData.sessions.length}`);
     console.log(`   - Attendance: ${sampleData.attendance.length}`);
+    console.log(`   - PayrollTransactions: ${sampleData.payrollTransactions.length}`);
+    console.log('\n💡 Note: Salary data is now stored in PayrollTransactions collection');
+    console.log('         Attendance records no longer contain salary/paymentStatus fields');
     console.log('\n💡 Next steps:');
     console.log('   1. Login as a teacher (e.g., binh.teacher@school.vn)');
     console.log('   2. Navigate to Teaching Report page');

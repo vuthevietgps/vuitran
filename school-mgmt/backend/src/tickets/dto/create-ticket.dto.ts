@@ -48,6 +48,10 @@ export class CreateTicketDto {
 
   @IsMongoId()
   @IsOptional()
+  sourceConversationId?: string;
+
+  @IsMongoId()
+  @IsOptional()
   payrollId?: string;
 
   @IsMongoId()

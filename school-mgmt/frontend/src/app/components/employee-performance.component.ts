@@ -4,6 +4,8 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface TeacherPerf {
   name: string;
   totalSessions: number;
@@ -36,7 +38,7 @@ interface EmployeePerformanceData {
 @Component({
   selector: 'app-employee-performance',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -44,6 +46,8 @@ interface EmployeePerformanceData {
       <p>Tổng quan hiệu suất theo bộ phận: Giáo viên, Kinh doanh, Vận hành.</p>
     </div>
   </header>
+
+  <app-flow-guide featureKey="employee-performance"></app-flow-guide>
 
   <!-- Tab bar -->
   <div class="tab-bar">

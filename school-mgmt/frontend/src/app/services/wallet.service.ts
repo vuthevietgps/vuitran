@@ -12,6 +12,10 @@ export interface WalletItem {
   totalRefunded: number;
   status: string;
   lastTransactionAt?: string;
+  adGroupId?: string;
+  adGroupName?: string;
+  adPlatform?: string;
+  adAttributionSource?: 'PARENT_ATTRIBUTION' | 'STUDENT_FALLBACK' | 'UNATTRIBUTED' | null;
 }
 
 export interface LedgerItem {

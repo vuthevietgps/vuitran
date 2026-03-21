@@ -10,6 +10,8 @@ import { LedgerEntry, LedgerEntryDocument } from '../wallets/schemas/ledger-entr
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction, AuditModule } from '../audit-log/schemas/audit-log.schema';
 import { buildDateFilter } from '../common/utils/date.utils';
+import { AdsService } from '../ads/ads.service';
+import { AdsAnalyticsService } from '../ads/ads-analytics.service';
 
 @Injectable()
 export class ExportService {
@@ -21,6 +23,8 @@ export class ExportService {
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(LedgerEntry.name) private ledgerModel: Model<LedgerEntryDocument>,
     private auditLogService: AuditLogService,
+    private adsService: AdsService,
+    private adsAnalyticsService: AdsAnalyticsService,
   ) {}
 
   /** Export payroll data as CSV */
@@ -182,15 +186,247 @@ export class ExportService {
     return '\uFEFF' + [header, ...rows].join('\n');
   }
 
-  private async logExport(user: any, reportType: string, recordCount: number) {
+  async exportAdsParentProfitCsv(query: {
+    startDate?: string;
+    endDate?: string;
+    adGroupId?: string;
+    platform?: string;
+  }, user: any): Promise<string> {
+    const { startDate, endDate } = this.requireAdsDateRange(query.startDate, query.endDate);
+    const report = await this.adsAnalyticsService.getParentProfitability(
+      startDate,
+      endDate,
+      query.adGroupId,
+      query.platform,
+    );
+
+    const header = this.csvRow([
+      'Report start',
+      'Report end',
+      'Parent key',
+      'Parent user id',
+      'Parent name',
+      'Parent phone',
+      'Ad group',
+      'Ad group id',
+      'Platform',
+      'Attributed at',
+      'Sessions',
+      'Students',
+      'Revenue',
+      'Teacher cost',
+      'Direct parent expense',
+      'Allocated group expense',
+      'Allocated global overhead',
+      'Allocated ad spend',
+      'Net profit',
+      'Net margin %',
+    ]);
+    const rows = report.rows.map((row) => this.csvRow([
+      startDate,
+      endDate,
+      row.parentKey,
+      row.parentUserId || '',
+      row.parentName || '',
+      row.parentPhone || '',
+      row.adGroupName || '',
+      row.adGroupId || '',
+      row.platform || '',
+      this.formatDateTime(row.attributedAt),
+      row.sessionCount,
+      row.studentCount,
+      row.revenue,
+      row.teacherCost,
+      row.directParentExpense,
+      row.allocatedGroupExpense,
+      row.allocatedGlobalOverhead,
+      row.allocatedAdSpend,
+      row.netProfit,
+      row.netMargin,
+    ]));
+
+    await this.logExport(user, 'ads-parent-profit', report.rows.length, {
+      module: AuditModule.ADS,
+      targetId: 'export-ads-parent-profit',
+      targetName: 'Export ads parent profit',
+      description: `Xuat report ads parent-profit tu ${startDate} den ${endDate} (${report.rows.length} dong).`,
+      newValue: {
+        startDate,
+        endDate,
+        adGroupId: query.adGroupId || null,
+        platform: query.platform || null,
+        rowCount: report.rows.length,
+      },
+    });
+
+    return '\uFEFF' + [header, ...rows].join('\n');
+  }
+
+  async exportAdsRealizedCohortCsv(query: {
+    startDate?: string;
+    endDate?: string;
+    maturityDays?: string | number;
+    adGroupId?: string;
+    platform?: string;
+    refundRatePercentX?: string | number;
+  }, user: any): Promise<string> {
+    const { startDate, endDate } = this.requireAdsDateRange(query.startDate, query.endDate);
+    const maturityDays = this.parseOptionalNumber(query.maturityDays);
+    const refundRatePercentX = this.parseOptionalNumber(query.refundRatePercentX);
+    const report = await this.adsAnalyticsService.getRealizedCohortAnalytics(
+      startDate,
+      endDate,
+      query.adGroupId,
+      query.platform,
+      maturityDays,
+      refundRatePercentX,
+    );
+
+    const header = this.csvRow([
+      'Report start',
+      'Report end',
+      'Maturity days',
+      'Refund rate X',
+      'Acquire date',
+      'Ad group',
+      'Ad group id',
+      'Platform',
+      'Cohort age days',
+      'Is matured',
+      'Impressions',
+      'Clicks',
+      'Conversions',
+      'Leads',
+      'New parents',
+      'Ad spend',
+      'Collected revenue',
+      'Remaining session units',
+      'Net realized revenue',
+      'Projected revenue',
+      'Estimated remaining refund',
+      'Estimated remaining teacher cost',
+      'Estimated remaining other cost',
+      'Teacher cost',
+      'Direct parent expense',
+      'Allocated group expense',
+      'Allocated global overhead',
+      'Net profit',
+      'Projected net profit',
+      'Effective net profit',
+      'ROI %',
+      'Projection basis',
+    ]);
+    const rows = report.rows.map((row) => this.csvRow([
+      startDate,
+      endDate,
+      report.maturityDays,
+      report.refundRatePercentX ?? '',
+      row.date,
+      row.adGroupName || '',
+      row.adGroupId || '',
+      row.platform || '',
+      row.cohortAgeDays,
+      row.isMatured ? 'YES' : 'NO',
+      row.impressions,
+      row.clicks,
+      row.conversions,
+      row.leadCount,
+      row.newParentCount,
+      row.adSpend,
+      row.collectedRevenue,
+      row.remainingSessionUnits,
+      row.netRealizedRevenue,
+      row.projectedRevenue,
+      row.estimatedRemainingRefund,
+      row.estimatedRemainingTeacherCost,
+      row.estimatedRemainingOtherCost,
+      row.teacherCost,
+      row.directParentExpense,
+      row.allocatedGroupExpense,
+      row.allocatedGlobalOverhead,
+      row.netProfit,
+      row.projectedNetProfit,
+      row.effectiveNetProfit,
+      row.roi,
+      row.projectionBasis,
+    ]));
+
+    await this.logExport(user, 'ads-realized-cohort', report.rows.length, {
+      module: AuditModule.ADS,
+      targetId: 'export-ads-realized-cohort',
+      targetName: 'Export ads realized cohort',
+      description: `Xuat report ads realized-cohort tu ${startDate} den ${endDate} (${report.rows.length} dong).`,
+      newValue: {
+        startDate,
+        endDate,
+        maturityDays: report.maturityDays,
+        refundRatePercentX: report.refundRatePercentX,
+        adGroupId: query.adGroupId || null,
+        platform: query.platform || null,
+        rowCount: report.rows.length,
+      },
+    });
+
+    return '\uFEFF' + [header, ...rows].join('\n');
+  }
+
+  private requireAdsDateRange(startDate?: string, endDate?: string) {
+    if (!startDate || !endDate) {
+      throw new BadRequestException('startDate and endDate are required for ads exports');
+    }
+    return { startDate, endDate };
+  }
+
+  private parseOptionalNumber(value?: string | number): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private formatDateTime(value?: string | Date | null) {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.toLocaleDateString('vi-VN')} ${date.toLocaleTimeString('vi-VN', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })}`;
+  }
+
+  private csvRow(values: unknown[]) {
+    return values.map((value) => this.csvEscape(value)).join(',');
+  }
+
+  private csvEscape(value: unknown) {
+    const normalized = value === undefined || value === null
+      ? ''
+      : String(value).replace(/\r?\n/g, ' ').replace(/"/g, '""');
+    return `"${normalized}"`;
+  }
+
+  private async logExport(
+    user: any,
+    reportType: string,
+    recordCount: number,
+    options: {
+      module?: AuditModule;
+      targetId?: string;
+      targetName?: string;
+      description?: string;
+      newValue?: Record<string, any>;
+    } = {},
+  ) {
     await this.auditLogService.log({
       userId: user.sub,
       userEmail: user.email,
       userFullName: user.fullName,
       userRole: user.role,
       action: AuditAction.EXPORT,
-      module: AuditModule.USERS,
-      description: `Xuất báo cáo ${reportType} (${recordCount} bản ghi)`,
+      module: options.module || AuditModule.USERS,
+      targetId: options.targetId,
+      targetName: options.targetName,
+      description: options.description || `Xuat bao cao ${reportType} (${recordCount} ban ghi)`,
+      newValue: options.newValue,
     });
   }
 }

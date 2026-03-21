@@ -18,6 +18,8 @@ export enum AdAccountStatus {
 export enum AdAccountSyncSource {
   MANUAL = 'MANUAL',
   FACEBOOK_BM = 'FACEBOOK_BM',
+  GOOGLE_MCC = 'GOOGLE_MCC',
+  TIKTOK_BC = 'TIKTOK_BC',
 }
 
 @Schema({ timestamps: true })

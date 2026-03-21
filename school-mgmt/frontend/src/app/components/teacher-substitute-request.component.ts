@@ -6,6 +6,8 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const STATUS_LABELS: Record<string, string> = {
   OPEN: 'Mới tạo',
   IN_PROGRESS: 'Đang xử lý',
@@ -34,7 +36,7 @@ const PRIORITY_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-teacher-substitute-request',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -43,6 +45,8 @@ const PRIORITY_LABELS: Record<string, string> = {
     </div>
     <button class="primary" (click)="openCreate()">+ Tạo yêu cầu</button>
   </header>
+
+  <app-flow-guide featureKey="teacher-substitute"></app-flow-guide>
 
   <!-- Stats -->
   <section class="stats">

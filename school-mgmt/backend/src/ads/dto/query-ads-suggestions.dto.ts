@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsDateString, IsNumber, Min } from 'class-validator';
+import { IsDateString, IsInt, IsNumber, IsOptional, Max, Min } from 'class-validator';
 
 export class QueryAdsSuggestionsDto {
   @IsDateString()
@@ -12,4 +12,18 @@ export class QueryAdsSuggestionsDto {
   @IsNumber()
   @Min(0)
   totalBudget!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(180)
+  @IsOptional()
+  maturityDays?: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  refundRatePercentX?: number;
 }

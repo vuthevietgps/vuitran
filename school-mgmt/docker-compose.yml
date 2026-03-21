@@ -1,15 +1,46 @@
 name: school-mgmt
 
 services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["mongod", "--bind_ip_all", "--replSet", "rs0"]
+    volumes:
+      - mongo_data:/data/db
+
+  mongo-init:
+    image: mongo:7
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_started
+    volumes:
+      - ./docker/mongo-init-replica.sh:/scripts/mongo-init-replica.sh:ro
+    entrypoint: ["sh", "/scripts/mongo-init-replica.sh"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
     environment:
       NODE_ENV: development
       PORT: 3000
-      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/school-mgmt?replicaSet=rs0}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:4200}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:4200}
       JWT_SECRET: ${JWT_SECRET:-replace_with_strong_jwt_secret_for_local}
@@ -20,6 +51,8 @@ services:
       ADMIN_FULLNAME: ${ADMIN_FULLNAME:-Director Admin}
       DEMO_PASSWORD: ${DEMO_PASSWORD:-ChangeThisDemoPass2024!}
       DEMO_SYNC_EXISTING: ${DEMO_SYNC_EXISTING:-true}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
     ports:
       - "3000:3000"
     volumes:
@@ -38,3 +71,5 @@ services:
 
 volumes:
   backend_uploads:
+  redis_data:
+  mongo_data:

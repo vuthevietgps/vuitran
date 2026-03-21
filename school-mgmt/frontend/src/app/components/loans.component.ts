@@ -5,6 +5,8 @@ import { LoanService, Loan, LoanPayment, LoanSummary } from '../services/loan.se
 import { AuthService } from '../services/auth.service';
 import { Role } from '../models/role.enum';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const LENDER_TYPE_LABELS: Record<string, string> = {
   BANK: 'Ngân hàng',
   INDIVIDUAL: 'Cá nhân',
@@ -65,7 +67,7 @@ const INTEREST_TYPE_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-loans',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -77,6 +79,8 @@ const INTEREST_TYPE_LABELS: Record<string, string> = {
       <button class="primary" *ngIf="isDirector" (click)="openCreateModal()">+ Tạo khoản vay</button>
     </div>
   </header>
+
+  <app-flow-guide featureKey="loans"></app-flow-guide>
 
   <!-- Tab bar -->
   <div class="tab-bar">

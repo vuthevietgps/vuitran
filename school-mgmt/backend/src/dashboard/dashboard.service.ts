@@ -989,7 +989,7 @@ export class DashboardService {
 
   async getStaffLists() {
     // Tất cả user trừ PARENT (nhân sự nội bộ)
-    const staffRoles = ['DIRECTOR', 'ACCOUNTING', 'OPS', 'TEACHER', 'SALE', 'HCNS', 'MANAGER', 'STAFF', 'PARTIME'];
+    const staffRoles = ['DIRECTOR', 'ACCOUNTING', 'OPS', 'TEACHER', 'SALE', 'ADSMANAGER', 'HCNS', 'MANAGER', 'STAFF', 'PARTIME'];
 
     const [users, teacherProfiles] = await Promise.all([
       this.userModel.find(

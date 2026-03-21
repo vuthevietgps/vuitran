@@ -1,8 +1,13 @@
 import { Component, signal, computed, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
 import { ChatbotService, ConversationItem, MessageItem, FanpageItem } from '../services/chatbot.service';
 import { AuthService } from '../services/auth.service';
+import { ChatbotSocketService } from '../services/chatbot-socket.service';
+import { UserService, UserItem } from '../services/user.service';
+import { Role } from '../models/role.enum';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 const PLATFORM_LABELS: Record<string, string> = { FACEBOOK: 'Facebook', TIKTOK: 'TikTok' };
 const STATUS_LABELS: Record<string, string> = { AI_HANDLING: 'AI xử lý', HUMAN_HANDLING: 'Nhân viên', CLOSED: 'Đã đóng' };
@@ -11,7 +16,7 @@ const STATUS_COLORS: Record<string, string> = { AI_HANDLING: '#3b82f6', HUMAN_HA
 @Component({
   selector: 'app-conversations',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -19,6 +24,8 @@ const STATUS_COLORS: Record<string, string> = { AI_HANDLING: '#3b82f6', HUMAN_HA
       <p>Quản lý hội thoại với khách hàng từ fanpage.</p>
     </div>
   </header>
+
+  <app-flow-guide featureKey="conversations"></app-flow-guide>
 
   <div class="conv-layout">
     <!-- LEFT: Conversation List -->
@@ -81,7 +88,7 @@ const STATUS_COLORS: Record<string, string> = { AI_HANDLING: '#3b82f6', HUMAN_HA
         </div>
       </div>
 
-      <div class="messages-area" #messagesArea>
+      <div class="messages-area" #messagesArea (scroll)="onMessagesScroll($event)">
         <div class="messages-list">
           <div *ngFor="let msg of messages()"
             class="message-bubble"
@@ -164,6 +171,13 @@ const STATUS_COLORS: Record<string, string> = { AI_HANDLING: '#3b82f6', HUMAN_HA
           <input [(ngModel)]="leadForm.parentEmail" />
           <label>Tên học sinh</label>
           <input [(ngModel)]="leadForm.studentName" />
+          <label *ngIf="!isSaleRole">Sale phá»¥ trÃ¡ch</label>
+          <select *ngIf="!isSaleRole" [(ngModel)]="leadForm.saleId">
+            <option value="">-- Chá»n sale --</option>
+            <option *ngFor="let sale of sales()" [value]="sale._id">{{sale.fullName}}</option>
+          </select>
+          <label *ngIf="isSaleRole">Sale phá»¥ trÃ¡ch</label>
+          <input *ngIf="isSaleRole" [value]="currentUserName" disabled />
           <label>Ghi chú</label>
           <textarea [(ngModel)]="leadForm.notes" rows="2"></textarea>
           <div class="form-actions">
@@ -187,6 +201,13 @@ const STATUS_COLORS: Record<string, string> = { AI_HANDLING: '#3b82f6', HUMAN_HA
           <input [(ngModel)]="orderForm.parentPhone" />
           <label>Tên học sinh</label>
           <input [(ngModel)]="orderForm.studentName" />
+          <label *ngIf="!isSaleRole">Sale phá»¥ trÃ¡ch</label>
+          <select *ngIf="!isSaleRole" [(ngModel)]="orderForm.saleId">
+            <option value="">-- Chá»n sale --</option>
+            <option *ngFor="let sale of sales()" [value]="sale._id">{{sale.fullName}}</option>
+          </select>
+          <label *ngIf="isSaleRole">Sale phá»¥ trÃ¡ch</label>
+          <input *ngIf="isSaleRole" [value]="currentUserName" disabled />
           <label>Ghi chú</label>
           <textarea [(ngModel)]="orderForm.notes" rows="2"></textarea>
           <p class="hint">Các mục sản phẩm có thể thêm sau khi tạo đơn.</p>
@@ -312,6 +333,10 @@ export class ConversationsComponent implements OnInit, OnDestroy {
   filterStatus = '';
   filterFanpageId = '';
   fanpages = signal<FanpageItem[]>([]);
+  sales = signal<UserItem[]>([]);
+  isSaleRole = false;
+  currentUserId = '';
+  currentUserName = '';
 
   totalPages = computed(() => Math.ceil(this.totalConvs() / 20) || 1);
 
@@ -321,39 +346,87 @@ export class ConversationsComponent implements OnInit, OnDestroy {
   messageInput = '';
   sending = signal(false);
 
+  // Messages pagination for infinite scroll
+  private messagesPage = 1;
+  private messageTotal = 0;
+  private loadingMoreMessages = false;
+
   // Sidebar form
   sidebarForm = { customerName: '', customerPhone: '', customerEmail: '', notes: '' };
 
   // Lead/Order forms
   showLeadForm = signal(false);
-  leadForm = { parentName: '', parentPhone: '', parentEmail: '', studentName: '', notes: '' };
+  leadForm = { parentName: '', parentPhone: '', parentEmail: '', studentName: '', notes: '', saleId: '' };
   savingLead = signal(false);
   leadError = signal('');
 
   showOrderForm = signal(false);
-  orderForm = { parentName: '', parentPhone: '', studentName: '', notes: '' };
+  orderForm = { parentName: '', parentPhone: '', studentName: '', notes: '', saleId: '' };
   savingOrder = signal(false);
   orderError = signal('');
 
-  // Polling
-  private pollingInterval: any = null;
-  private listPollingInterval: any = null;
+  private socketSubs: Subscription[] = [];
 
   constructor(
     private chatbotService: ChatbotService,
     private authService: AuthService,
+    private socketService: ChatbotSocketService,
+    private userService: UserService,
   ) {}
 
   ngOnInit() {
+    const currentUser = this.authService.userSignal();
+    this.isSaleRole = currentUser?.role === Role.SALE;
+    this.currentUserId = currentUser?.sub || '';
+    this.currentUserName = currentUser?.fullName || '';
     this.loadFanpages();
+    if (!this.isSaleRole) {
+      void this.loadSales();
+    }
     this.loadConversations();
-    // Poll conversation list every 15 seconds
-    this.listPollingInterval = setInterval(() => this.loadConversations(), 15000);
+
+    // Connect WebSocket and subscribe to real-time events
+    this.socketService.connect();
+
+    // New message in the open conversation
+    this.socketSubs.push(
+      this.socketService.newMessage$.subscribe(event => {
+        const conv = this.selectedConv();
+        if (!conv || event.conversationId !== conv._id) return;
+        const current = this.messages();
+        // Avoid duplicate messages
+        if (current.some(m => m._id === event.message._id)) return;
+        this.messages.set([...current, event.message]);
+        this.messageTotal++;
+        setTimeout(() => this.scrollToBottom(), 50);
+      })
+    );
+
+    // Conversation list updates (new conv, status change, last message)
+    this.socketSubs.push(
+      this.socketService.conversationUpdated$.subscribe(event => {
+        const incoming = event.conversation;
+        const list = this.conversations();
+        const idx = list.findIndex(c => c._id === incoming._id);
+        if (idx !== -1) {
+          const updated = [...list];
+          updated[idx] = { ...updated[idx], ...incoming };
+          // Move updated conversation to top
+          updated.splice(idx, 1);
+          this.conversations.set([incoming, ...updated]);
+        } else {
+          // New conversation not yet in list — re-fetch page 1
+          this.loadConversations();
+        }
+      })
+    );
   }
 
   ngOnDestroy() {
-    if (this.pollingInterval) clearInterval(this.pollingInterval);
-    if (this.listPollingInterval) clearInterval(this.listPollingInterval);
+    this.socketSubs.forEach(s => s.unsubscribe());
+    const conv = this.selectedConv();
+    if (conv) this.socketService.leaveConversation(conv._id);
+    this.socketService.disconnect();
   }
 
   platformLabel(p: string) { return PLATFORM_LABELS[p] || p; }
@@ -380,6 +453,10 @@ export class ConversationsComponent implements OnInit, OnDestroy {
     } catch {}
   }
 
+  async loadSales() {
+    this.sales.set(await this.userService.listSales());
+  }
+
   async loadConversations() {
     try {
       const params: Record<string, string> = { page: String(this.convPage), limit: '20' };
@@ -398,6 +475,10 @@ export class ConversationsComponent implements OnInit, OnDestroy {
   // ─── Select conversation ────────────────────────────────────
 
   async selectConversation(conv: ConversationItem) {
+    // Leave previous conversation room
+    const prev = this.selectedConv();
+    if (prev) this.socketService.leaveConversation(prev._id);
+
     this.selectedConv.set(conv);
     this.sidebarForm = {
       customerName: conv.customerName || '',
@@ -409,47 +490,67 @@ export class ConversationsComponent implements OnInit, OnDestroy {
     // Pre-fill lead/order forms
     this.leadForm = {
       parentName: conv.customerName || '', parentPhone: conv.customerPhone || '',
-      parentEmail: conv.customerEmail || '', studentName: '', notes: '',
+      parentEmail: conv.customerEmail || '', studentName: '', notes: '', saleId: this.defaultSaleId(conv),
     };
     this.orderForm = {
       parentName: conv.customerName || '', parentPhone: conv.customerPhone || '',
-      studentName: '', notes: '',
+      studentName: '', notes: '', saleId: this.defaultSaleId(conv),
     };
     this.showLeadForm.set(false);
     this.showOrderForm.set(false);
 
-    await this.loadMessages();
-    this.startPolling();
+    // Reset pagination and load first page of messages
+    this.messagesPage = 1;
+    this.messageTotal = 0;
+    this.loadingMoreMessages = false;
+    await this.loadMessages(true);
+
+    // Join WebSocket room for real-time updates
+    this.socketService.joinConversation(conv._id);
   }
 
-  async loadMessages() {
+  private defaultSaleId(conv: ConversationItem): string {
+    if (this.isSaleRole) return this.currentUserId;
+    const assignedId = conv.assignedAgentId || '';
+    return this.sales().some((sale) => sale._id === assignedId) ? assignedId : '';
+  }
+
+  async loadMessages(initial = false) {
     const conv = this.selectedConv();
     if (!conv) return;
     try {
-      const res = await this.chatbotService.getMessages(conv._id, { limit: '100' });
-      this.messages.set(res.data);
-      setTimeout(() => this.scrollToBottom(), 100);
+      const pageSize = 50;
+      const res = await this.chatbotService.getMessages(conv._id, {
+        page: String(this.messagesPage),
+        limit: String(pageSize),
+      });
+      this.messageTotal = res.total;
+      if (initial) {
+        this.messages.set(res.data);
+        setTimeout(() => this.scrollToBottom(), 100);
+      } else {
+        // Prepend older messages, preserve scroll position
+        const area = this.messagesArea?.nativeElement as HTMLElement;
+        const prevHeight = area?.scrollHeight ?? 0;
+        this.messages.set([...res.data, ...this.messages()]);
+        setTimeout(() => {
+          if (area) area.scrollTop = area.scrollHeight - prevHeight;
+        }, 50);
+      }
     } catch {}
   }
 
-  private startPolling() {
-    if (this.pollingInterval) clearInterval(this.pollingInterval);
-    this.pollingInterval = setInterval(async () => {
-      const conv = this.selectedConv();
-      if (!conv) return;
-      try {
-        // Refresh messages
-        const res = await this.chatbotService.getMessages(conv._id, { limit: '100' });
-        const oldCount = this.messages().length;
-        this.messages.set(res.data);
-        if (res.data.length > oldCount) {
-          setTimeout(() => this.scrollToBottom(), 100);
-        }
-        // Refresh conversation status
-        const updated = await this.chatbotService.getConversation(conv._id);
-        this.selectedConv.set(updated);
-      } catch {}
-    }, 5000);
+  /** Called when user scrolls to the top — load the previous page */
+  async onMessagesScroll(event: Event) {
+    const el = event.target as HTMLElement;
+    if (el.scrollTop !== 0) return;
+    if (this.loadingMoreMessages) return;
+    if (this.messages().length >= this.messageTotal) return;
+
+    this.loadingMoreMessages = true;
+    this.messagesPage++;
+    await this.loadMessages(false);
+    this.loadingMoreMessages = false;
   }
 
   private scrollToBottom() {
@@ -466,11 +567,14 @@ export class ConversationsComponent implements OnInit, OnDestroy {
     const conv = this.selectedConv();
     if (!conv || !this.messageInput.trim()) return;
     this.sending.set(true);
-    const res = await this.chatbotService.sendMessage(conv._id, this.messageInput.trim());
+    const content = this.messageInput.trim();
+    const res = await this.chatbotService.sendMessage(conv._id, content);
     this.sending.set(false);
     if (res.ok) {
       this.messageInput = '';
-      await this.loadMessages();
+      // The sent message will arrive via WebSocket. As a fallback, reload if
+      // the socket is not yet subscribed to this conversation room.
+      await this.loadMessages(true);
     }
   }
 

@@ -18,11 +18,16 @@ import {
   TransactionType,
   TransactionStatus,
   PaymentMethod,
+  AdjustmentType,
 } from './schemas/ledger-entry.schema';
 
 import { User } from '../users/schemas/user.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
 import { BankAccount, BankAccountDocument, BankAccountStatus } from '../financial-control/schemas/bank-account.schema';
+import { Role } from '../common/interfaces/role.enum';
+import { Student, StudentDocument } from '../students/schemas/student.schema';
+import { ParentAttribution, ParentAttributionDocument } from '../marketing-attribution/schemas/parent-attribution.schema';
+import { normalizePhone } from '../marketing-attribution/parent-attribution.util';
 import { TopUpRequestDto } from './dto/top-up-request.dto';
 import { ApproveTopUpDto } from './dto/approve-top-up.dto';
 import { AdjustBalanceDto } from './dto/adjust-balance.dto';
@@ -39,6 +44,9 @@ export class WalletsService {
     @InjectModel(User.name) private userModel: Model<any>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
     @InjectModel(BankAccount.name) private bankAccountModel: Model<BankAccountDocument>,
+    @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
+    @InjectModel(ParentAttribution.name)
+    private parentAttributionModel: Model<ParentAttributionDocument>,
     @InjectConnection() private connection: Connection,
   ) {}
 
@@ -63,6 +71,19 @@ export class WalletsService {
   /** Lấy ví theo userId, auto-create nếu chưa có */
   async getOrCreateWallet(userId: string): Promise<WalletDocument> {
     return this.createWallet(userId);
+  }
+
+  /** Bản trả về cho UI: luôn kèm user profile + ad attribution nếu có */
+  async getOrCreateWalletView(userId: string) {
+    await this.createWallet(userId);
+    return this.getWalletViewByUserId(userId);
+  }
+
+  async getWalletViewByUserId(userId: string) {
+    const wallet = await this.walletModel.findOne({ userId: new Types.ObjectId(userId) }).lean();
+    if (!wallet) throw new NotFoundException('Ví không tồn tại cho user này');
+    const [decorated] = await this.decorateWallets([wallet]);
+    return decorated;
   }
 
   /** Lấy ví theo ID */
@@ -91,6 +112,123 @@ export class WalletsService {
     const wallet = await this.findWalletByUserId(userId);
     wallet.status = WalletStatus.ACTIVE;
     return wallet.save();
+  }
+
+  private walletOwnerId(wallet: any): string | null {
+    const userId = wallet?.userId?._id || wallet?.userId;
+    return userId ? userId.toString() : null;
+  }
+
+  private async decorateWallets(wallets: any[]) {
+    if (!wallets.length) return [];
+
+    const userIds = Array.from(
+      new Set(
+        wallets
+          .map((wallet) => this.walletOwnerId(wallet))
+          .filter((id): id is string => !!id && Types.ObjectId.isValid(id)),
+      ),
+    );
+
+    const userObjectIds = userIds.map((id) => new Types.ObjectId(id));
+    const users = userObjectIds.length
+      ? await this.userModel
+          .find({ _id: { $in: userObjectIds } })
+          .select('_id fullName email phone role')
+          .lean()
+      : [];
+    const userMap = new Map<string, any>(
+      users.map((user: any) => [user._id.toString(), user]),
+    );
+
+    const parentUsers = users.filter((user: any) => user.role === Role.PARENT);
+    const parentUserIds = parentUsers.map((user: any) => user._id);
+    const normalizedPhones = Array.from(
+      new Set(
+        parentUsers
+          .map((user: any) => normalizePhone(user.phone))
+          .filter((phone): phone is string => !!phone),
+      ),
+    );
+
+    const attributionOr: any[] = [];
+    if (parentUserIds.length) attributionOr.push({ parentUserId: { $in: parentUserIds } });
+    if (normalizedPhones.length) attributionOr.push({ normalizedParentPhone: { $in: normalizedPhones } });
+
+    const attributions = attributionOr.length
+      ? await this.parentAttributionModel
+          .find({ $or: attributionOr })
+          .select('parentUserId normalizedParentPhone adGroupId adGroupName platform lastConfirmedAt')
+          .sort({ lastConfirmedAt: -1 })
+          .lean()
+      : [];
+
+    const attributionByUserId = new Map<string, any>();
+    const attributionByPhone = new Map<string, any>();
+
+    for (const attribution of attributions as any[]) {
+      const ownerId = attribution.parentUserId?.toString?.();
+      if (ownerId && !attributionByUserId.has(ownerId)) {
+        attributionByUserId.set(ownerId, attribution);
+      }
+
+      const normalizedParentPhone = normalizePhone(attribution.normalizedParentPhone);
+      if (normalizedParentPhone && !attributionByPhone.has(normalizedParentPhone)) {
+        attributionByPhone.set(normalizedParentPhone, attribution);
+      }
+    }
+
+    const fallbackParentIds = parentUsers
+      .map((user: any) => user._id.toString())
+      .filter((userId) => {
+        if (attributionByUserId.has(userId)) return false;
+        const normalizedParentPhone = normalizePhone(userMap.get(userId)?.phone);
+        return !normalizedParentPhone || !attributionByPhone.has(normalizedParentPhone);
+      });
+
+    const fallbackStudents = fallbackParentIds.length
+      ? await this.studentModel
+          .find({
+            parentUserId: { $in: fallbackParentIds.map((id) => new Types.ObjectId(id)) },
+            adGroupId: { $exists: true, $ne: null },
+          })
+          .select('parentUserId adGroupId adGroupName updatedAt createdAt')
+          .sort({ updatedAt: -1, createdAt: -1 })
+          .lean()
+      : [];
+
+    const fallbackStudentByParent = new Map<string, any>();
+    for (const student of fallbackStudents as any[]) {
+      const parentUserId = student.parentUserId?.toString?.();
+      if (parentUserId && !fallbackStudentByParent.has(parentUserId)) {
+        fallbackStudentByParent.set(parentUserId, student);
+      }
+    }
+
+    return wallets.map((wallet) => {
+      const ownerId = this.walletOwnerId(wallet);
+      const user = ownerId ? userMap.get(ownerId) : null;
+      const normalizedParentPhone = normalizePhone(user?.phone);
+      const attribution =
+        (ownerId ? attributionByUserId.get(ownerId) : null)
+        || (normalizedParentPhone ? attributionByPhone.get(normalizedParentPhone) : null)
+        || (ownerId ? fallbackStudentByParent.get(ownerId) : null);
+
+      const adGroupId = attribution?.adGroupId?.toString?.();
+      const isParentWallet = user?.role === Role.PARENT;
+      const adAttributionSource = !attribution
+        ? (isParentWallet ? 'UNATTRIBUTED' : null)
+        : (attribution?.lastConfirmedAt ? 'PARENT_ATTRIBUTION' : 'STUDENT_FALLBACK');
+
+      return {
+        ...wallet,
+        userId: user || wallet.userId,
+        adGroupId,
+        adGroupName: attribution?.adGroupName || '',
+        adPlatform: attribution?.platform || '',
+        adAttributionSource,
+      };
+    });
   }
 
   // ══════════════════════════════════════════════════════════════════
@@ -551,6 +689,34 @@ export class WalletsService {
       this.logger.log(
         `Session deduct: ${params.amount}đ from wallet ${wallet._id} (session: ${params.sessionId})`,
       );
+
+      // ─── Grace Period: Cảnh báo khi ví cạn/âm ────────────────────────────
+      // Nếu balance sau khi trừ <= 0, tự động bắn cảnh báo cho Sales follow-up
+      if (atomicResult.balance <= 0) {
+        const debtSessions = params.pricePerSession && params.pricePerSession > 0
+          ? Math.ceil(Math.abs(atomicResult.balance) / params.pricePerSession)
+          : Math.abs(Math.floor(atomicResult.balance / params.amount));
+
+        this.logger.warn(
+          `LOW_BALANCE_ALERT: Wallet ${wallet._id} balance=${atomicResult.balance}đ ` +
+          `(nợ ~${debtSessions} buổi). Parent ${params.parentUserId} cần nạp tiền.`,
+        );
+
+        // Emit event for Sales notification (runs after transaction committed)
+        // Can be consumed by EventEmitter/Bull queue for async notifications
+        setImmediate(() => {
+          this.emitLowBalanceAlert({
+            walletId: wallet._id.toString(),
+            parentUserId: params.parentUserId,
+            studentId: params.studentId,
+            currentBalance: atomicResult.balance,
+            debtSessions,
+            effectiveDebtLimit,
+            pricePerSession: params.pricePerSession,
+          });
+        });
+      }
+
       return entry[0];
     } catch (err) {
       await mongoSession.abortTransaction();
@@ -690,8 +856,11 @@ export class WalletsService {
         },
         { session: mongoSession },
       );
-      
+
       const updatedWallet = await this.walletModel.findById(wallet._id).session(mongoSession);
+
+      // Xác định loại điều chỉnh (mặc định MANUAL_ADJUST)
+      const adjustmentType = dto.adjustmentType || AdjustmentType.MANUAL_ADJUST;
 
       const entry = await this.ledgerModel.create(
         [
@@ -704,6 +873,9 @@ export class WalletsService {
             balanceBefore,
             balanceAfter: updatedWallet!.balance,
             description: `[${dto.direction}] ${dto.description}`,
+            // ── Audit trail fields for compliance ──
+            adjustmentType,
+            adjustmentReason: dto.reason || dto.description, // Fallback to description if no reason
             paymentMethod: PaymentMethod.SYSTEM,
             approvedBy: new Types.ObjectId(adjustedBy),
             approvedAt: new Date(),
@@ -714,9 +886,22 @@ export class WalletsService {
       );
 
       await mongoSession.commitTransaction();
-      this.logger.log(
-        `Adjustment: ${dto.direction} ${dto.amount}đ wallet ${wallet._id} by ${adjustedBy}`,
-      );
+
+      // Structured logging for audit
+      this.logger.log({
+        event: 'WALLET_ADJUSTMENT',
+        walletId: wallet._id.toString(),
+        userId: wallet.userId.toString(),
+        direction: dto.direction,
+        amount: dto.amount,
+        adjustmentType,
+        reason: dto.reason || dto.description,
+        performedBy: adjustedBy,
+        balanceBefore,
+        balanceAfter: updatedWallet!.balance,
+        timestamp: new Date().toISOString(),
+      });
+
       return entry[0];
     } catch (err) {
       await mongoSession.abortTransaction();
@@ -996,8 +1181,10 @@ export class WalletsService {
       this.walletModel.countDocuments(filter),
     ]);
 
+    const decoratedData = await this.decorateWallets(data);
+
     return {
-      data,
+      data: decoratedData,
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -1120,6 +1307,43 @@ export class WalletsService {
     }
 
     return trialSessions * pricePerSession;
+  }
+
+  /**
+   * Bắn cảnh báo ví cạn/âm cho Sales team follow-up.
+   * Trong production, có thể kết nối với:
+   * - EventEmitter2 để publish event 'wallet.lowBalance'
+   * - Bull queue để gửi notification async
+   * - Slack/Telegram webhook
+   */
+  private emitLowBalanceAlert(data: {
+    walletId: string;
+    parentUserId: string;
+    studentId: string;
+    currentBalance: number;
+    debtSessions: number;
+    effectiveDebtLimit: number;
+    pricePerSession?: number;
+  }): void {
+    // Log structured data for monitoring/alerting systems
+    this.logger.warn({
+      event: 'WALLET_LOW_BALANCE_ALERT',
+      walletId: data.walletId,
+      parentUserId: data.parentUserId,
+      studentId: data.studentId,
+      balance: data.currentBalance,
+      debtSessions: data.debtSessions,
+      debtLimit: data.effectiveDebtLimit,
+      pricePerSession: data.pricePerSession,
+      requiresFollowUp: true,
+      timestamp: new Date().toISOString(),
+    });
+
+    // TODO: Integrate with notification system when available
+    // Example integrations:
+    // - this.eventEmitter.emit('wallet.lowBalance', data);
+    // - this.notificationQueue.add('lowBalanceAlert', data);
+    // - Post to Slack/Telegram webhook
   }
 
   // ══════════════════════════════════════════════════════════════════

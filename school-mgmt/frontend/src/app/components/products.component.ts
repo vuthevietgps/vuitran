@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ProductService, ProductItem } from '../services/product.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const MODE_LABELS: Record<string, string> = {
   ONLINE: 'Online',
   OFFLINE: 'Offline',
@@ -21,7 +23,7 @@ interface ProductForm {
 @Component({
   selector: 'app-products',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -30,6 +32,8 @@ interface ProductForm {
     </div>
     <button class="primary" (click)="openModal()">+ Them goi</button>
   </header>
+
+  <app-flow-guide featureKey="products"></app-flow-guide>
 
   <section class="filters">
     <input placeholder="Tim ten goi" [(ngModel)]="keyword" />

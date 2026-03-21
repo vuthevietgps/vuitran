@@ -1,42 +1,387 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { TeachingMaterial, TeachingMaterialDocument } from './schemas/teaching-material.schema';
-import { CreateTeachingMaterialDto, UpdateTeachingMaterialDto } from './dto/teaching-material.dto';
+import { FilterQuery, Model, Types } from 'mongoose';
+import {
+  MaterialFileCategory,
+  MaterialExtractionStatus,
+  TeachingMaterial,
+  TeachingMaterialDocument,
+} from './schemas/teaching-material.schema';
+import {
+  TeachingMaterialChunk,
+  TeachingMaterialChunkDocument,
+} from './schemas/teaching-material-chunk.schema';
+import {
+  CreateTeachingMaterialDto,
+  UpdateTeachingMaterialDto,
+} from './dto/teaching-material.dto';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
-import { existsSync, unlinkSync } from 'fs';
+import { existsSync } from 'fs';
+import { readFile, unlink } from 'fs/promises';
 import { join } from 'path';
+import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
+
+const CHUNK_SIZE = 900;
+const CHUNK_OVERLAP = 120;
+const MAX_KNOWLEDGE_TEXT_LENGTH = 16000;
+const DEFAULT_PAGE_SIZE = 18;
+const MAX_PAGE_SIZE = 60;
+
+type MaterialListFilters = {
+  subject?: string;
+  grade?: string;
+  classId?: string;
+  search?: string;
+  fileCategory?: MaterialFileCategory;
+  extractionStatus?: MaterialExtractionStatus;
+  page?: number;
+  limit?: number;
+};
+
+type ScopedMaterialStats = {
+  total: number;
+  readyForAI: number;
+  totalChunks: number;
+  bySubject: Record<string, number>;
+  byGrade: Record<string, number>;
+  totalSizeBytes: number;
+  totalSizeMB: number;
+};
 
 @Injectable()
 export class TeachingMaterialsService {
+  private readonly logger = new Logger(TeachingMaterialsService.name);
+
   constructor(
     @InjectModel(TeachingMaterial.name)
     private readonly materialModel: Model<TeachingMaterialDocument>,
+    @InjectModel(TeachingMaterialChunk.name)
+    private readonly chunkModel: Model<TeachingMaterialChunkDocument>,
+    private readonly studentSupportSnapshotService: StudentSupportSnapshotService,
   ) {}
 
-  /**
-   * Upload tài liệu giảng dạy
-   */
+  private triggerStudentSupportSnapshotRefreshForClassIds(
+    classIds: Array<string | null | undefined>,
+    reason: string,
+  ) {
+    void this.refreshStudentSupportSnapshotForClassIds(classIds, reason);
+  }
+
+  private async refreshStudentSupportSnapshotForClassIds(
+    classIds: Array<string | null | undefined>,
+    reason: string,
+  ) {
+    const uniqueClassIds = [...new Set(classIds.filter((classId): classId is string => !!classId))];
+
+    for (const classId of uniqueClassIds) {
+      try {
+        await this.studentSupportSnapshotService.rebuildForClass(classId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error';
+        this.logger.warn(
+          `[StudentSupportSnapshot] Failed to refresh for class ${classId} (${reason}): ${message}`,
+        );
+      }
+    }
+  }
+
+  private parseTags(input?: string[] | string): string[] {
+    if (!input) return [];
+    if (typeof input !== 'string') return input;
+
+    try {
+      const parsed = JSON.parse(input);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return input.split(',').map((tag) => tag.trim()).filter(Boolean);
+    }
+  }
+
+  private normalizeMaterialText(value?: string | null) {
+    if (!value) return '';
+    return value
+      .replace(/\r\n/g, '\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  private clipText(value?: string | null, limit = 300) {
+    const normalized = this.normalizeMaterialText(value);
+    if (!normalized) return '';
+    if (normalized.length <= limit) return normalized;
+    return `${normalized.slice(0, limit - 3)}...`;
+  }
+
+  private isTextExtractableMime(fileType?: string) {
+    return ['text/plain', 'text/csv', 'application/json'].includes(fileType || '');
+  }
+
+  private resolveFilePath(fileUrl?: string) {
+    const relativePath = (fileUrl || '').replace(/^[/\\]+/, '');
+    return join(process.cwd(), relativePath);
+  }
+
+  private resolveFileCategory(fileType?: string): MaterialFileCategory {
+    if (!fileType) return MaterialFileCategory.OTHER;
+    if (fileType.includes('pdf')) return MaterialFileCategory.PDF;
+    if (fileType.includes('word') || fileType.includes('msword')) return MaterialFileCategory.DOC;
+    if (fileType.includes('powerpoint') || fileType.includes('presentation')) return MaterialFileCategory.PPT;
+    if (fileType.includes('excel') || fileType.includes('spreadsheet')) return MaterialFileCategory.EXCEL;
+    if (fileType.startsWith('image/')) return MaterialFileCategory.IMAGE;
+    if (fileType.startsWith('video/')) return MaterialFileCategory.VIDEO;
+    return MaterialFileCategory.OTHER;
+  }
+
+  private buildFileCategoryFilter(
+    category?: MaterialFileCategory,
+  ): FilterQuery<TeachingMaterialDocument> | null {
+    if (!category) return null;
+
+    const knownPatterns = [
+      /pdf/i,
+      /(word|msword|officedocument\.wordprocessingml)/i,
+      /(powerpoint|presentation)/i,
+      /(excel|spreadsheet)/i,
+      /^image\//i,
+      /^video\//i,
+    ];
+
+    const fallbackByCategory: Record<MaterialFileCategory, FilterQuery<TeachingMaterialDocument>> = {
+      [MaterialFileCategory.PDF]: { fileType: { $regex: /pdf/i } },
+      [MaterialFileCategory.DOC]: {
+        fileType: { $regex: /(word|msword|officedocument\.wordprocessingml)/i },
+      },
+      [MaterialFileCategory.PPT]: {
+        fileType: { $regex: /(powerpoint|presentation)/i },
+      },
+      [MaterialFileCategory.EXCEL]: {
+        fileType: { $regex: /(excel|spreadsheet)/i },
+      },
+      [MaterialFileCategory.IMAGE]: {
+        fileType: { $regex: /^image\//i },
+      },
+      [MaterialFileCategory.VIDEO]: {
+        fileType: { $regex: /^video\//i },
+      },
+      [MaterialFileCategory.OTHER]: {
+        $and: [
+          { fileCategory: { $exists: false } },
+          { $nor: knownPatterns.map((pattern) => ({ fileType: { $regex: pattern } })) },
+        ],
+      },
+    };
+
+    return {
+      $or: [
+        { fileCategory: category },
+        fallbackByCategory[category],
+      ],
+    };
+  }
+
+  private buildVisibilityFilter(actor: JwtPayload): FilterQuery<TeachingMaterialDocument> {
+    if (actor.role === Role.TEACHER) {
+      return {
+        $or: [
+          { teacherId: new Types.ObjectId(actor.sub) },
+          { isShared: true },
+        ],
+      };
+    }
+
+    return {};
+  }
+
+  private buildScopedFilter(
+    actor: JwtPayload,
+    filters?: MaterialListFilters,
+  ): FilterQuery<TeachingMaterialDocument> {
+    const clauses: FilterQuery<TeachingMaterialDocument>[] = [];
+    const visibilityFilter = this.buildVisibilityFilter(actor);
+
+    if (Object.keys(visibilityFilter).length) {
+      clauses.push(visibilityFilter);
+    }
+    if (filters?.subject) {
+      clauses.push({ subject: filters.subject });
+    }
+    if (filters?.grade) {
+      clauses.push({ grade: filters.grade });
+    }
+    if (filters?.classId) {
+      clauses.push({ classId: new Types.ObjectId(filters.classId) });
+    }
+    const fileCategoryFilter = this.buildFileCategoryFilter(filters?.fileCategory);
+    if (fileCategoryFilter) {
+      clauses.push(fileCategoryFilter);
+    }
+    if (filters?.extractionStatus) {
+      clauses.push({ extractionStatus: filters.extractionStatus });
+    }
+
+    const searchTerm = filters?.search?.trim();
+    if (searchTerm) {
+      clauses.push({ $text: { $search: searchTerm } });
+    }
+
+    if (clauses.length === 0) return {};
+    if (clauses.length === 1) return clauses[0];
+    return { $and: clauses };
+  }
+
+  private buildChunkDocuments(material: any, knowledgeText: string) {
+    const boundedText = this.normalizeMaterialText(knowledgeText).slice(0, MAX_KNOWLEDGE_TEXT_LENGTH);
+    if (!boundedText) return [];
+
+    const chunks: Array<{
+      materialId: Types.ObjectId;
+      classId?: Types.ObjectId;
+      chunkIndex: number;
+      content: string;
+      preview: string;
+      charCount: number;
+    }> = [];
+
+    const step = Math.max(CHUNK_SIZE - CHUNK_OVERLAP, 200);
+    for (let start = 0, index = 0; start < boundedText.length; start += step, index++) {
+      const content = boundedText.slice(start, start + CHUNK_SIZE).trim();
+      if (!content) continue;
+
+      chunks.push({
+        materialId: material._id,
+        classId: material.classId,
+        chunkIndex: index,
+        content,
+        preview: this.clipText(content, 180),
+        charCount: content.length,
+      });
+
+      if (start + CHUNK_SIZE >= boundedText.length) break;
+    }
+
+    return chunks;
+  }
+
+  private buildSummary(material: any, extractedText: string) {
+    const manualSummary = this.clipText(material.manualSummary, 320);
+    if (manualSummary) return manualSummary;
+
+    const summarySource = this.normalizeMaterialText(
+      [
+        material.description,
+        extractedText.split('\n').find((line: string) => line.trim()),
+        extractedText.split('\n').find((line: string) => line.trim()?.length > 30),
+      ]
+        .filter(Boolean)
+        .join(' '),
+    );
+
+    if (summarySource) return this.clipText(summarySource, 320);
+    return this.clipText(material.title, 200);
+  }
+
+  private async processMaterialKnowledge(materialId: string) {
+    const material = await this.materialModel.findById(materialId).lean<any>();
+    if (!material) {
+      throw new NotFoundException('Tai lieu khong ton tai');
+    }
+
+    let extractedText = '';
+    let extractionStatus = MaterialExtractionStatus.UNSUPPORTED;
+    let processingError = '';
+
+    try {
+      if (this.isTextExtractableMime(material.fileType)) {
+        const filePath = this.resolveFilePath(material.fileUrl);
+        if (!existsSync(filePath)) {
+          throw new Error('Source file not found');
+        }
+
+        extractedText = this.normalizeMaterialText(await readFile(filePath, 'utf8'));
+      }
+    } catch (err) {
+      extractionStatus = MaterialExtractionStatus.FAILED;
+      processingError = err instanceof Error ? err.message : 'Unknown extraction error';
+      this.logger.warn(
+        `[TeachingMaterials] Failed to extract text for ${materialId}: ${processingError}`,
+      );
+    }
+
+    const knowledgeText = this.normalizeMaterialText(
+      [
+        material.title ? `Tieu de: ${material.title}` : '',
+        material.description ? `Mo ta: ${material.description}` : '',
+        material.manualSummary ? `Tom tat: ${material.manualSummary}` : '',
+        extractedText ? `Noi dung: ${extractedText}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+
+    if (extractionStatus !== MaterialExtractionStatus.FAILED) {
+      extractionStatus = knowledgeText
+        ? MaterialExtractionStatus.READY
+        : MaterialExtractionStatus.UNSUPPORTED;
+    }
+
+    const aiSummary = this.buildSummary(material, extractedText);
+    const extractedTextPreview = this.clipText(
+      extractedText || material.manualSummary || material.description || material.title,
+      500,
+    );
+    const chunkDocuments = this.buildChunkDocuments(material, knowledgeText);
+
+    await this.chunkModel.deleteMany({ materialId: material._id });
+    if (chunkDocuments.length) {
+      await this.chunkModel.insertMany(chunkDocuments, { ordered: true });
+    }
+
+    await this.materialModel.findByIdAndUpdate(materialId, {
+      $set: {
+        fileCategory: this.resolveFileCategory(material.fileType),
+        extractionStatus,
+        aiSummary,
+        extractedTextPreview,
+        chunkCount: chunkDocuments.length,
+        lastProcessedAt: new Date(),
+        processingError,
+      },
+    });
+  }
+
+  private async findMaterialForView(id: string) {
+    return this.materialModel
+      .findById(id)
+      .populate('classId', 'name code')
+      .populate('teacherId', 'fullName')
+      .lean();
+  }
+
+  private async assertMaterialAccess(id: string, actor: JwtPayload) {
+    const material = await this.materialModel.findById(id).lean<any>();
+    if (!material) {
+      throw new NotFoundException('Tai lieu khong ton tai');
+    }
+
+    if (actor.role === Role.TEACHER && material.teacherId?.toString() !== actor.sub) {
+      throw new ForbiddenException('Ban khong co quyen thao tac tai lieu nay');
+    }
+
+    return material;
+  }
+
   async create(
     dto: CreateTeachingMaterialDto,
     file: Express.Multer.File,
     actor: JwtPayload,
   ): Promise<TeachingMaterial> {
-    // Parse tags nếu gửi dạng JSON string
-    let tags: string[] = [];
-    if (dto.tags) {
-      if (typeof dto.tags === 'string') {
-        try {
-          tags = JSON.parse(dto.tags as string);
-        } catch {
-          tags = (dto.tags as string).split(',').map(t => t.trim()).filter(Boolean);
-        }
-      } else {
-        tags = dto.tags;
-      }
-    }
-
     const material = new this.materialModel({
       teacherId: new Types.ObjectId(actor.sub),
       title: dto.title,
@@ -46,190 +391,221 @@ export class TeachingMaterialsService {
       classId: dto.classId ? new Types.ObjectId(dto.classId) : undefined,
       fileUrl: `/uploads/materials/${file.filename}`,
       fileType: file.mimetype,
+      fileCategory: this.resolveFileCategory(file.mimetype),
       fileSize: file.size,
       originalName: file.originalname,
-      tags,
+      tags: this.parseTags(dto.tags),
       isShared: dto.isShared === true || (dto.isShared as any) === 'true',
+      manualSummary: dto.manualSummary?.trim() || undefined,
     });
 
-    return material.save();
+    const savedMaterial = await material.save();
+    await this.processMaterialKnowledge(savedMaterial._id.toString());
+    this.triggerStudentSupportSnapshotRefreshForClassIds(
+      [savedMaterial.classId?.toString()],
+      'createTeachingMaterial',
+    );
+
+    const hydrated = await this.findMaterialForView(savedMaterial._id.toString());
+    if (!hydrated) {
+      throw new NotFoundException('Tai lieu khong ton tai');
+    }
+    return hydrated as TeachingMaterial;
   }
 
-  /**
-   * Lấy danh sách tài liệu của GV
-   * - TEACHER: chỉ xem tài liệu của mình + tài liệu shared
-   * - Staff: xem tất cả
-   */
   async findAll(
     actor: JwtPayload,
-    filters?: { subject?: string; grade?: string; classId?: string; search?: string },
-  ): Promise<TeachingMaterial[]> {
-    const query: any = {};
+    filters?: MaterialListFilters,
+  ): Promise<{
+    data: TeachingMaterial[];
+    meta: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+      hasNextPage: boolean;
+      hasPrevPage: boolean;
+    };
+  }> {
+    const page = Math.max(1, Number(filters?.page) || 1);
+    const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Number(filters?.limit) || DEFAULT_PAGE_SIZE));
+    const query = this.buildScopedFilter(actor, filters);
+    const hasSearch = !!filters?.search?.trim();
+    const projection = hasSearch ? { score: { $meta: 'textScore' } } : undefined;
 
-    if (actor.role === Role.TEACHER) {
-      // GV xem: của mình HOẶC isShared = true
-      query.$or = [
-        { teacherId: new Types.ObjectId(actor.sub) },
-        { isShared: true },
-      ];
-    }
+    const [total, data] = await Promise.all([
+      this.materialModel.countDocuments(query),
+      this.materialModel
+        .find(query, projection)
+        .populate('classId', 'name code')
+        .sort(hasSearch ? { score: { $meta: 'textScore' }, updatedAt: -1 } : { updatedAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+    ]);
 
-    if (filters?.subject) query.subject = filters.subject;
-    if (filters?.grade) query.grade = filters.grade;
-    if (filters?.classId) query.classId = new Types.ObjectId(filters.classId);
-    if (filters?.search) {
-      query.$or = [
-        ...(query.$or || []),
-        { title: { $regex: filters.search, $options: 'i' } },
-        { description: { $regex: filters.search, $options: 'i' } },
-        { tags: { $in: [new RegExp(filters.search, 'i')] } },
-      ];
-      // If we had both $or conditions, we need $and
-      if (actor.role === Role.TEACHER && filters.search) {
-        const ownerOrShared = [
-          { teacherId: new Types.ObjectId(actor.sub) },
-          { isShared: true },
-        ];
-        const searchOr = [
-          { title: { $regex: filters.search, $options: 'i' } },
-          { description: { $regex: filters.search, $options: 'i' } },
-          { tags: { $in: [new RegExp(filters.search, 'i')] } },
-        ];
-        delete query.$or;
-        query.$and = [
-          { $or: ownerOrShared },
-          { $or: searchOr },
-        ];
-      }
-    }
+    const totalPages = Math.max(1, Math.ceil(total / limit));
 
-    return this.materialModel
-      .find(query)
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName')
-      .sort({ createdAt: -1 })
-      .lean();
+    return {
+      data: data as TeachingMaterial[],
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      },
+    };
   }
 
-  /**
-   * Lấy 1 tài liệu
-   */
   async findOne(id: string, actor: JwtPayload): Promise<TeachingMaterial> {
-    const material = await this.materialModel
-      .findById(id)
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName')
-      .lean();
+    const material = await this.findMaterialForView(id);
+    if (!material) throw new NotFoundException('Tai lieu khong ton tai');
 
-    if (!material) throw new NotFoundException('Tài liệu không tồn tại');
-
-    // TEACHER chỉ xem của mình hoặc shared
     if (actor.role === Role.TEACHER) {
-      const isOwner = (material as any).teacherId?._id?.toString() === actor.sub ||
-                      material.teacherId?.toString() === actor.sub;
-      if (!isOwner && !material.isShared) {
-        throw new NotFoundException('Tài liệu không tồn tại');
+      const isOwner =
+        (material as any).teacherId?._id?.toString() === actor.sub ||
+        (material as any).teacherId?.toString?.() === actor.sub;
+      if (!isOwner && !(material as any).isShared) {
+        throw new NotFoundException('Tai lieu khong ton tai');
       }
     }
 
-    return material;
+    return material as TeachingMaterial;
   }
 
-  /**
-   * Cập nhật thông tin tài liệu (chỉ metadata, không đổi file)
-   */
   async update(
     id: string,
     dto: UpdateTeachingMaterialDto,
     actor: JwtPayload,
   ): Promise<TeachingMaterial> {
-    const material = await this.materialModel.findById(id).lean() as any;
-    if (!material) throw new NotFoundException('Tài liệu không tồn tại');
+    const material = await this.assertMaterialAccess(id, actor);
 
-    // TEACHER chỉ sửa của mình
-    if (actor.role === Role.TEACHER) {
-      if (material.teacherId?.toString() !== actor.sub) {
-        throw new ForbiddenException('Bạn không có quyền sửa tài liệu này');
-      }
-    }
-
-    // Parse tags
     if (dto.tags && typeof dto.tags === 'string') {
-      try {
-        (dto as any).tags = JSON.parse(dto.tags as unknown as string);
-      } catch {
-        (dto as any).tags = (dto.tags as unknown as string).split(',').map(t => t.trim()).filter(Boolean);
-      }
+      (dto as any).tags = this.parseTags(dto.tags);
     }
 
     if (dto.isShared !== undefined) {
       (dto as any).isShared = dto.isShared === true || (dto.isShared as any) === 'true';
     }
 
-    const updated = await this.materialModel
-      .findByIdAndUpdate(id, dto, { new: true })
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName')
-      .lean();
+    if (dto.manualSummary !== undefined) {
+      (dto as any).manualSummary = dto.manualSummary?.trim() || undefined;
+    }
 
-    if (!updated) throw new NotFoundException('Tài liệu không tồn tại');
-    return updated;
+    const previousClassId = material.classId?.toString?.() || null;
+    const updated = await this.materialModel.findByIdAndUpdate(id, dto, { new: true }).lean<any>();
+    if (!updated) throw new NotFoundException('Tai lieu khong ton tai');
+
+    await this.processMaterialKnowledge(id);
+    this.triggerStudentSupportSnapshotRefreshForClassIds(
+      [previousClassId, updated.classId?.toString?.()],
+      'updateTeachingMaterial',
+    );
+
+    const hydrated = await this.findMaterialForView(id);
+    if (!hydrated) {
+      throw new NotFoundException('Tai lieu khong ton tai');
+    }
+    return hydrated as TeachingMaterial;
   }
 
-  /**
-   * Xóa tài liệu + file trên disk
-   */
+  async reprocess(id: string, actor: JwtPayload): Promise<TeachingMaterial> {
+    const material = await this.assertMaterialAccess(id, actor);
+    await this.processMaterialKnowledge(id);
+    this.triggerStudentSupportSnapshotRefreshForClassIds(
+      [material.classId?.toString?.()],
+      'reprocessTeachingMaterial',
+    );
+
+    const hydrated = await this.findMaterialForView(id);
+    if (!hydrated) {
+      throw new NotFoundException('Tai lieu khong ton tai');
+    }
+    return hydrated as TeachingMaterial;
+  }
+
   async remove(id: string, actor: JwtPayload): Promise<void> {
-    const material = await this.materialModel.findById(id).lean() as any;
-    if (!material) throw new NotFoundException('Tài liệu không tồn tại');
+    const material = await this.assertMaterialAccess(id, actor);
 
-    // TEACHER chỉ xóa của mình
-    if (actor.role === Role.TEACHER) {
-      if (material.teacherId?.toString() !== actor.sub) {
-        throw new ForbiddenException('Bạn không có quyền xóa tài liệu này');
-      }
-    }
-
-    // Xóa file trên disk
     if (material.fileUrl) {
-      const filePath = join(process.cwd(), material.fileUrl);
+      const filePath = this.resolveFilePath(material.fileUrl);
       if (existsSync(filePath)) {
-        try { unlinkSync(filePath); } catch { /* ignore */ }
+        await unlink(filePath).catch(() => undefined);
       }
     }
 
+    const classId = material.classId?.toString?.() || null;
+    await this.chunkModel.deleteMany({ materialId: material._id });
     await this.materialModel.findByIdAndDelete(id);
+    this.triggerStudentSupportSnapshotRefreshForClassIds(
+      [classId],
+      'removeTeachingMaterial',
+    );
   }
 
-  /**
-   * Tăng download count
-   */
-  async incrementDownload(id: string): Promise<void> {
-    await this.materialModel.findByIdAndUpdate(id, { $inc: { downloadCount: 1 } });
+  async incrementDownload(id: string, actor: JwtPayload): Promise<{ downloadCount: number }> {
+    await this.findOne(id, actor);
+    const updated = await this.materialModel.findByIdAndUpdate(
+      id,
+      { $inc: { downloadCount: 1 } },
+      { new: true, projection: { downloadCount: 1 } },
+    );
+    return { downloadCount: updated?.downloadCount || 0 };
   }
 
-  /**
-   * Thống kê tài liệu của GV
-   */
-  async getStats(teacherId: string) {
-    const [total, bySubject, totalSize] = await Promise.all([
-      this.materialModel.countDocuments({ teacherId: new Types.ObjectId(teacherId) }),
-      this.materialModel.aggregate([
-        { $match: { teacherId: new Types.ObjectId(teacherId) } },
-        { $group: { _id: '$subject', count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-      ]),
-      this.materialModel.aggregate([
-        { $match: { teacherId: new Types.ObjectId(teacherId) } },
-        { $group: { _id: null, total: { $sum: '$fileSize' } } },
-      ]),
+  async getStats(actor: JwtPayload): Promise<ScopedMaterialStats> {
+    const scopeQuery = this.buildScopedFilter(actor);
+    const aggregation = await this.materialModel.aggregate([
+      { $match: scopeQuery },
+      {
+        $facet: {
+          total: [{ $count: 'count' }],
+          readyForAI: [
+            { $match: { extractionStatus: MaterialExtractionStatus.READY } },
+            { $count: 'count' },
+          ],
+          totalChunks: [
+            { $group: { _id: null, total: { $sum: '$chunkCount' } } },
+          ],
+          totalSize: [
+            { $group: { _id: null, total: { $sum: '$fileSize' } } },
+          ],
+          bySubject: [
+            { $group: { _id: '$subject', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+          byGrade: [
+            { $group: { _id: '$grade', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+        },
+      },
     ]);
+    const summary = aggregation[0] || {};
+    const totalSizeBytes = summary.totalSize?.[0]?.total || 0;
 
     return {
-      total,
-      bySubject: bySubject.reduce((acc, s) => ({ ...acc, [s._id || 'Khác']: s.count }), {}),
-      totalSizeBytes: totalSize[0]?.total || 0,
-      totalSizeMB: Math.round((totalSize[0]?.total || 0) / 1024 / 1024 * 10) / 10,
+      total: summary.total?.[0]?.count || 0,
+      readyForAI: summary.readyForAI?.[0]?.count || 0,
+      totalChunks: summary.totalChunks?.[0]?.total || 0,
+      bySubject: (summary.bySubject || []).reduce(
+        (acc: Record<string, number>, entry: { _id?: string; count: number }) => {
+          acc[entry._id || 'Khac'] = entry.count;
+          return acc;
+        },
+        {},
+      ),
+      byGrade: (summary.byGrade || []).reduce(
+        (acc: Record<string, number>, entry: { _id?: string; count: number }) => {
+          acc[entry._id || 'Khac'] = entry.count;
+          return acc;
+        },
+        {},
+      ),
+      totalSizeBytes,
+      totalSizeMB: Math.round((totalSizeBytes / 1024 / 1024) * 10) / 10,
     };
   }
 }

@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
+import {
+  TrackingAttribution,
+  TrackingAttributionSchema,
+} from '../../marketing-attribution/schemas/tracking-attribution.schema';
 
 export type LeadDocument = HydratedDocument<Lead>;
 
@@ -156,6 +160,9 @@ export class Lead {
 
   @Prop({ type: String, trim: true })
   notes?: string;
+
+  @Prop({ type: TrackingAttributionSchema })
+  tracking?: TrackingAttribution;
 }
 
 export const LeadSchema = SchemaFactory.createForClass(Lead);

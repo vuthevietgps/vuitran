@@ -4,11 +4,14 @@ import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { PendingApprovalsService } from '../services/pending-approvals.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-pending-approvals',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink],
+  imports: [CommonModule, FormsModule, RouterLink, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="pending-approvals"></app-flow-guide>
   <div class="container">
     <h2>&#128203; Chờ duyệt</h2>
     <p class="subtitle">Tất cả hạng mục đang chờ Giám đốc xem xét và phê duyệt</p>

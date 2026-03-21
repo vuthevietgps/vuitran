@@ -4,11 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { SessionItem, SessionService, SessionQueryParams } from '../services/session.service';
 import { ClassItem, ClassService } from '../services/class.service';
 import { AuthService } from '../services/auth.service';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 @Component({
   selector: 'app-sessions',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -17,6 +18,7 @@ import { AuthService } from '../services/auth.service';
     </div>
     <button class="primary" (click)="openCreate()" *ngIf="canCreate()">+ Tạo buổi học</button>
   </header>
+  <app-flow-guide featureKey="sessions"></app-flow-guide>
 
   <!-- Stats bar -->
   <div class="stats-bar" *ngIf="stats()">
@@ -79,8 +81,16 @@ import { AuthService } from '../services/auth.service';
         <td>{{s.teacherId.fullName}}</td>
         <td>{{s.scheduledDate | date:'dd/MM/yyyy'}}</td>
         <td>{{s.scheduledStartTime}} – {{s.scheduledEndTime}}</td>
-        <td>{{formatCurrency(s.amountCharged)}}</td>
-        <td>{{formatCurrency(s.teacherPayout)}}</td>
+        <td [class.zero-finance]="s.status === 'NO_SHOW' || s.status === 'CANCELLED'">
+          {{formatCurrency(s.amountCharged)}}
+          <span *ngIf="s.status === 'NO_SHOW'" class="zero-note" title="Vắng mặt — không thu phí">⊘</span>
+          <span *ngIf="s.status === 'CANCELLED'" class="zero-note" title="Đã hủy — không thu phí">⊘</span>
+        </td>
+        <td [class.zero-finance]="s.status === 'NO_SHOW' || s.status === 'CANCELLED'">
+          {{formatCurrency(s.teacherPayout)}}
+          <span *ngIf="s.status === 'NO_SHOW'" class="zero-note" title="Vắng mặt — không tính lương GV">⊘</span>
+          <span *ngIf="s.status === 'CANCELLED'" class="zero-note" title="Đã hủy — không tính lương GV">⊘</span>
+        </td>
         <td><span class="badge" [class]="'badge-' + s.status.toLowerCase()">{{statusLabel(s.status)}}</span></td>
         <td class="actions-cell">
           <button class="ghost sm" (click)="viewDetail(s)" title="Chi tiết">👁️</button>
@@ -268,6 +278,9 @@ import { AuthService } from '../services/auth.service';
     .badge-no_show { background:#fce7f3; color:#9d174d; }
 
     .row-cancelled td { opacity:0.5; }
+    .row-no_show td { opacity:0.65; }
+    .zero-finance { color:#94a3b8; }
+    .zero-note { font-size:10px; color:#94a3b8; margin-left:3px; cursor:help; }
 
     .pagination { display:flex; align-items:center; gap:12px; justify-content:center; margin-top:16px; }
     .pagination button { background:#fff; border:1px solid #cbd5e1; padding:6px 14px; border-radius:6px; cursor:pointer; }

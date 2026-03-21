@@ -13,11 +13,14 @@ import {
 } from '../services/payroll.service';
 import { Role } from '../models/role.enum';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-payroll',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
+  <app-flow-guide featureKey="payroll"></app-flow-guide>
   <div class="payroll-page">
     <h2>Thanh toán lương giáo viên</h2>
 
@@ -240,13 +243,17 @@ import { Role } from '../models/role.enum';
                 <small *ngIf="s.teachingReport?.isLateSubmission" class="late-badge">Trễ</small>
               </td>
               <td class="reason-col">
-                <span *ngIf="s.payrollStatus === 'BLOCKED_NO_REPORT'" class="reason-text">Thiếu báo cáo giảng dạy</span>
+                <span *ngIf="s.payrollStatus === 'BLOCKED_NO_REPORT'" class="reason-text reason-blocked">
+                  ✗ Buổi {{ formatDate(s.scheduledDate) }} thiếu Báo cáo giảng dạy
+                </span>
                 <span *ngIf="s.payrollStatus === 'WAITING_PARENT'" class="reason-text">Chờ phụ huynh xác nhận</span>
-                <span *ngIf="s.payrollStatus === 'WAITING_FINALIZE'" class="reason-text">Chờ OPS xác nhận điểm danh/chốt</span>
+                <span *ngIf="s.payrollStatus === 'WAITING_FINALIZE'" class="reason-text reason-blocked">
+                  ✗ Buổi {{ formatDate(s.scheduledDate) }} chưa được OPS Duyệt chốt
+                </span>
                 <span *ngIf="s.payrollStatus === 'PAID'" class="reason-text paid-text">&#10003; Đã thanh toán</span>
                 <span *ngIf="s.payrollStatus === 'ELIGIBLE'" class="reason-text eligible-text">Sẵn sàng thanh toán</span>
-                <span *ngIf="s.payrollStatus === 'CANCELLED'" class="reason-text">Đã hủy</span>
-                <span *ngIf="s.payrollStatus === 'NO_SHOW'" class="reason-text">HS vắng mặt</span>
+                <span *ngIf="s.payrollStatus === 'CANCELLED'" class="reason-text">Đã hủy — 0đ</span>
+                <span *ngIf="s.payrollStatus === 'NO_SHOW'" class="reason-text">HS vắng mặt — 0đ</span>
               </td>
             </tr>
           </tbody>
@@ -571,6 +578,7 @@ import { Role } from '../models/role.enum';
     }
     .reason-col { font-size: 12px; }
     .reason-text { color: #64748b; }
+    .reason-blocked { color: #dc2626; font-weight: 500; }
     .paid-text { color: #0d9488; font-weight: 600; }
     .eligible-text { color: #16a34a; font-weight: 600; }
 

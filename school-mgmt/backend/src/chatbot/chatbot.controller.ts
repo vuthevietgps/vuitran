@@ -8,6 +8,8 @@ import { UpdateFanpageDto } from './dto/update-fanpage.dto';
 import { QueryFanpageDto } from './dto/query-fanpage.dto';
 import { CreateOpenAITokenDto } from './dto/create-openai-token.dto';
 import { UpdateOpenAITokenDto } from './dto/update-openai-token.dto';
+import { CreateAiAssistantProfileDto } from './dto/create-ai-assistant-profile.dto';
+import { UpdateAiAssistantProfileDto } from './dto/update-ai-assistant-profile.dto';
 import { QueryConversationDto } from './dto/query-conversation.dto';
 import { UpdateConversationDto } from './dto/update-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -28,13 +30,13 @@ export class ChatbotController {
   // ─── Fanpages ───────────────────────────────────────────────
 
   @Get('fanpages')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
   async findAllFanpages(@Query() query: QueryFanpageDto) {
     return this.chatbotService.findAllFanpages(query);
   }
 
   @Get('fanpages/:id')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
   async findOneFanpage(@Param('id') id: string) {
     return this.chatbotService.findOneFanpage(id);
   }
@@ -46,7 +48,7 @@ export class ChatbotController {
   }
 
   @Patch('fanpages/:id')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
   async updateFanpage(@Param('id') id: string, @Body() dto: UpdateFanpageDto) {
     return this.chatbotService.updateFanpage(id, dto);
   }
@@ -61,7 +63,7 @@ export class ChatbotController {
   // ─── OpenAI Tokens ──────────────────────────────────────────
 
   @Get('openai-tokens')
-  @Roles(Role.DIRECTOR, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
   async findAllOpenAITokens() {
     return this.chatbotService.findAllOpenAITokens();
   }
@@ -86,6 +88,37 @@ export class ChatbotController {
   }
 
   // ─── Conversations ──────────────────────────────────────────
+
+  @Get('ai-assistant-profiles')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
+  async findAllAiAssistantProfiles() {
+    return this.chatbotService.findAllAiAssistantProfiles();
+  }
+
+  @Post('ai-assistant-profiles')
+  @Roles(Role.DIRECTOR)
+  async createAiAssistantProfile(
+    @Body() dto: CreateAiAssistantProfileDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.chatbotService.createAiAssistantProfile(dto, req.user);
+  }
+
+  @Patch('ai-assistant-profiles/:id')
+  @Roles(Role.DIRECTOR)
+  async updateAiAssistantProfile(
+    @Param('id') id: string,
+    @Body() dto: UpdateAiAssistantProfileDto,
+  ) {
+    return this.chatbotService.updateAiAssistantProfile(id, dto);
+  }
+
+  @Delete('ai-assistant-profiles/:id')
+  @Roles(Role.DIRECTOR)
+  async deleteAiAssistantProfile(@Param('id') id: string) {
+    await this.chatbotService.deleteAiAssistantProfile(id);
+    return { message: 'Da xoa AI assistant profile' };
+  }
 
   @Get('conversations')
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)

@@ -7,6 +7,8 @@ import { WalletItem, LedgerItem, WalletService } from '../services/wallet.servic
 import { AuthService } from '../services/auth.service';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface BankAccountOption {
   _id: string;
   bankName: string;
@@ -17,7 +19,7 @@ interface BankAccountOption {
 @Component({
   selector: 'app-wallets',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -26,10 +28,12 @@ interface BankAccountOption {
     </div>
     <div class="header-actions">
       <button class="primary" (click)="openTopUp()" *ngIf="canManage()">+ Nạp tiền</button>
-      <button class="secondary" (click)="openTransfer()" *ngIf="canManage()">↔ Chuyển tiền</button>
+      <button class="secondary" (click)="openTransfer()" *ngIf="canTransfer()">↔ Chuyển tiền</button>
       <button class="ghost" (click)="openPending()" *ngIf="canApprove()">⏳ Chờ duyệt ({{pendingCount()}})</button>
     </div>
   </header>
+
+  <app-flow-guide featureKey="wallets"></app-flow-guide>
 
   <!-- Tab bar -->
   <div class="tab-bar">
@@ -46,6 +50,7 @@ interface BankAccountOption {
           <th>Người dùng</th>
           <th>Email</th>
           <th>Vai trò</th>
+          <th>Nhom ads</th>
           <th>Số dư</th>
           <th>Tổng nạp</th>
           <th>Tổng trừ</th>
@@ -58,6 +63,10 @@ interface BankAccountOption {
           <td>{{w.userId.fullName || '—'}}</td>
           <td>{{w.userId.email || '—'}}</td>
           <td><span class="chip">{{w.userId.role || '—'}}</span></td>
+          <td class="ads-cell">
+            <strong>{{walletAdsTitle(w)}}</strong>
+            <div class="muted-inline" *ngIf="walletAdsHint(w)">{{walletAdsHint(w)}}</div>
+          </td>
           <td class="number" [class.negative]="w.balance < 0">{{formatCurrency(w.balance)}}</td>
           <td class="number positive">{{formatCurrency(w.totalTopUp)}}</td>
           <td class="number negative">{{formatCurrency(w.totalDeducted)}}</td>
@@ -365,6 +374,8 @@ interface BankAccountOption {
 
     .actions-cell { white-space:nowrap; }
     .actions-cell button { margin-right:4px; }
+    .ads-cell strong { display:block; color:#1e293b; }
+    .muted-inline { color:#64748b; font-size:12px; margin-top:2px; }
 
     .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
     .badge-active { background:#dcfce7; color:#166534; }
@@ -563,11 +574,13 @@ export class WalletsComponent implements OnInit {
 
   // Transfer
   openTransfer(): void {
+    if (!this.canTransfer()) return;
     this.transferForm = { fromUserId: '', toUserId: '', amount: 0, description: '' };
     this.showTransferModal.set(true);
   }
 
   async submitTransfer(): Promise<void> {
+    if (!this.canTransfer()) return;
     const ok = await this.walletSvc.transfer(
       this.transferForm.fromUserId,
       this.transferForm.toUserId,
@@ -751,12 +764,54 @@ export class WalletsComponent implements OnInit {
     return ['TOP_UP', 'REFUND', 'TRANSFER_IN', 'ADJUSTMENT_CREDIT'].includes(type);
   }
 
+  walletAdsTitle(wallet: WalletItem): string {
+    if (wallet.adGroupName?.trim()) return wallet.adGroupName;
+    if (wallet.adGroupId?.trim()) return wallet.adGroupId;
+    return this.isParentWallet(wallet) ? 'Chua gan adGroup' : 'Khong ap dung';
+  }
+
+  walletAdsHint(wallet: WalletItem): string {
+    const parts: string[] = [];
+    if (wallet.adPlatform?.trim()) parts.push(wallet.adPlatform);
+
+    const source = this.walletAdsSourceLabel(wallet.adAttributionSource);
+    if (source) parts.push(source);
+
+    if (!parts.length && wallet.adGroupId?.trim()) {
+      parts.push(wallet.adGroupId);
+    }
+
+    return parts.join(' | ');
+  }
+
+  walletAdsSourceLabel(source?: WalletItem['adAttributionSource']): string {
+    switch (source) {
+      case 'PARENT_ATTRIBUTION':
+        return 'Attribution';
+      case 'STUDENT_FALLBACK':
+        return 'Fallback tu hoc sinh';
+      case 'UNATTRIBUTED':
+        return 'Chua co attribution';
+      default:
+        return '';
+    }
+  }
+
+  isParentWallet(wallet: WalletItem): boolean {
+    return wallet.userId?.role === 'PARENT';
+  }
+
   canManage(): boolean {
     const r = this.auth.userSignal()?.role;
     return r === 'DIRECTOR' || r === 'ACCOUNTING' || r === 'OPS';
   }
 
   canApprove(): boolean {
+    const r = this.auth.userSignal()?.role;
+    return r === 'DIRECTOR' || r === 'ACCOUNTING';
+  }
+
+  canTransfer(): boolean {
     const r = this.auth.userSignal()?.role;
     return r === 'DIRECTOR' || r === 'ACCOUNTING';
   }

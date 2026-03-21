@@ -10,6 +10,9 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { WalletsModule } from '../wallets/wallets.module';
 import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
 import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
+import { PayrollTransactionModule } from '../payroll/payroll-transaction.module';
+import { TicketsModule } from '../tickets/tickets.module';
+import { MessagesModule } from '../messages/messages.module';
 
 @Module({
   imports: [
@@ -22,6 +25,9 @@ import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.s
       { name: Attendance.name, schema: AttendanceSchema },
     ]),
     forwardRef(() => WalletsModule),
+    PayrollTransactionModule,
+    TicketsModule,
+    MessagesModule,
   ],
   controllers: [SessionsController],
   providers: [SessionsService],

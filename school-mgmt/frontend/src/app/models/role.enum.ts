@@ -7,6 +7,7 @@ export enum Role {
   TEACHER = 'TEACHER',
   PARENT = 'PARENT',
   SALE = 'SALE',
+  ADSMANAGER = 'ADSMANAGER',
   
   // Legacy roles (deprecated)
   MANAGER = 'MANAGER',
@@ -22,6 +23,7 @@ export const ROLE_LABELS: Record<string, string> = {
   [Role.TEACHER]: 'Giáo viên',
   [Role.PARENT]: 'Phụ huynh',
   [Role.SALE]: 'Sale',
+  [Role.ADSMANAGER]: 'Ads manager',
   // Legacy
   [Role.MANAGER]: 'Quản lý',
   [Role.HCNS]: 'Hành chính',

@@ -34,6 +34,7 @@ export enum AuditModule {
   TEACHING_MATERIALS = 'TEACHING_MATERIALS',
   LEADS = 'LEADS',
   ORDERS = 'ORDERS',
+  ADS = 'ADS',
 }
 
 @Schema({ timestamps: true })

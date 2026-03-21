@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, Min, IsEnum, IsOptional, IsDateString, IsMongoId } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, Min, IsEnum, IsOptional, IsDateString, IsMongoId, IsArray } from 'class-validator';
 import { AdPlatform } from '../schemas/ad-account.schema';
 
 export class CreateAdGroupDto {
@@ -38,4 +38,9 @@ export class CreateAdGroupDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  trackingKeys?: string[];
 }

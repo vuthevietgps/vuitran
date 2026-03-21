@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
-import { Component, signal, computed } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import {
   TicketService,
   TicketItem,
@@ -17,10 +18,12 @@ import {
 import { AuthService } from '../services/auth.service';
 import { Role, ROLE_LABELS } from '../models/role.enum';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 @Component({
   selector: 'app-tickets',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <!-- ═══════════ LIST VIEW ═══════════ -->
   <div *ngIf="!selectedTicket()" class="tickets-page">
@@ -31,6 +34,8 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
       </div>
       <button class="primary" (click)="openCreateModal()">+ Tạo Ticket</button>
     </header>
+
+  <app-flow-guide featureKey="tickets"></app-flow-guide>
 
     <!-- Stats -->
     <div class="stats-bar" *ngIf="isOpsOrDirector() && serverStats()">
@@ -274,6 +279,13 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
           <select [(ngModel)]="editPriority" (change)="updatePriority()">
             <option *ngFor="let p of priorityOptions" [value]="p.value">{{ p.label }}</option>
           </select>
+        </div>
+
+        <div class="action-group" *ngIf="canOpenSourceConversation()">
+          <h5>Chat h\u1ED7 tr\u1EE3</h5>
+          <button class="action-btn chat-link" (click)="openSourceConversation()">
+            M\u1EDF h\u1ED9i tho\u1EA1i g\u1ED1c
+          </button>
         </div>
 
         <!-- Info -->
@@ -644,6 +656,8 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
     .action-btn.reopen:hover { background: #fde68a; }
     .action-btn.cancel { background: #fecaca; color: #991b1b; }
     .action-btn.cancel:hover { background: #fca5a5; }
+    .action-btn.chat-link { background: #ccfbf1; color: #0f766e; }
+    .action-btn.chat-link:hover { background: #99f6e4; }
 
     .sidebar-info { border-top: 1px solid #e2e8f0; padding-top: 16px; }
     .info-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 13px; }
@@ -695,6 +709,8 @@ import { Role, ROLE_LABELS } from '../models/role.enum';
   `],
 })
 export class TicketsComponent {
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   // ─── Options ───
   typeOptions = Object.entries(TICKET_TYPE_LABELS).map(([value, label]) => ({ value, label }));
   statusOptions = Object.entries(TICKET_STATUS_LABELS).map(([value, label]) => ({ value, label }));
@@ -743,6 +759,11 @@ export class TicketsComponent {
     }
     this.load();
     if (this.isOpsOrDirector()) this.loadStats();
+
+    const requestedTicketId = this.route.snapshot.queryParamMap.get('ticketId');
+    if (requestedTicketId) {
+      void this.openTicketById(requestedTicketId, true);
+    }
   }
 
   // ─── Helpers ───
@@ -750,6 +771,7 @@ export class TicketsComponent {
   isStaff(): boolean { return this.auth.hasRole([Role.OPS, Role.DIRECTOR, Role.ACCOUNTING]); }
   isOpsOrDirector(): boolean { return this.auth.hasRole([Role.OPS, Role.DIRECTOR]); }
   isOps(): boolean { return this.auth.hasRole([Role.OPS]); }
+  isParent(): boolean { return this.auth.hasRole([Role.PARENT]); }
   isCreator(): boolean {
     const t = this.selectedTicket();
     return !!t && t.createdBy?._id === this.currentUserId();
@@ -795,11 +817,22 @@ export class TicketsComponent {
     return url.split('/').pop() || url;
   }
 
+  private getSourceConversationId(ticket = this.selectedTicket()): string {
+    if (!ticket?.sourceConversationId) return '';
+    return typeof ticket.sourceConversationId === 'string'
+      ? ticket.sourceConversationId
+      : ticket.sourceConversationId._id || '';
+  }
+
   getStatCount(status: string): number {
     const stats = this.serverStats();
     if (!stats) return 0;
     const entry = stats.byStatus.find((s: any) => s._id === status);
     return entry ? entry.count : 0;
+  }
+
+  canOpenSourceConversation(): boolean {
+    return (this.isParent() || this.isOpsOrDirector()) && !!this.getSourceConversationId();
   }
 
   filteredTickets = computed(() => {
@@ -857,15 +890,45 @@ export class TicketsComponent {
   goPage(p: number) { this.load(p); }
 
   // ─── View detail ───
-  async viewTicket(ticket: TicketItem) {
+  private async openTicketById(ticketId: string, syncRoute = false) {
     try {
-      const full = await this.ticketService.findById(ticket._id);
+      const full = await this.ticketService.findById(ticketId);
       this.selectedTicket.set(full);
       this.editPriority = full.priority;
       await this.loadComments(full._id);
+      if (syncRoute) {
+        void this.syncTicketQueryParam(full._id);
+      }
     } catch (e) {
       console.error('Failed to load ticket', e);
+      if (syncRoute) {
+        void this.syncTicketQueryParam(null);
+      }
     }
+  }
+
+  async viewTicket(ticket: TicketItem) {
+    await this.openTicketById(ticket._id, true);
+  }
+
+  openSourceConversation() {
+    const conversationId = this.getSourceConversationId();
+    if (!conversationId) return;
+
+    const targetRoute = this.isParent() ? '/app/parent-chat' : '/app/messages';
+
+    void this.router.navigate([targetRoute], {
+      queryParams: { conversationId },
+    });
+  }
+
+  private syncTicketQueryParam(ticketId: string | null) {
+    return this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { ticketId: ticketId || null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
   async loadComments(ticketId: string) {
@@ -882,6 +945,7 @@ export class TicketsComponent {
     this.comments.set([]);
     this.newComment = '';
     this.newCommentInternal = false;
+    void this.syncTicketQueryParam(null);
     this.load(this.currentPage());
   }
 

@@ -72,6 +72,9 @@ export class TeacherProfile {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, unique: true })
   userId!: Types.ObjectId;
 
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
+  managedSales!: Types.ObjectId[];
+
   // Teaching info
   @Prop({ type: [String], default: [], trim: true })
   subjects!: string[]; // Môn dạy: ["Toán", "Lý", "Hóa"]
@@ -154,4 +157,5 @@ TeacherProfileSchema.index({ status: 1 });
 TeacherProfileSchema.index({ subjects: 1 });
 TeacherProfileSchema.index({ grades: 1 });
 TeacherProfileSchema.index({ rating: -1 });
+TeacherProfileSchema.index({ managedSales: 1 });
 

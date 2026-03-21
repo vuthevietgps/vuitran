@@ -1,11 +1,12 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { DashboardService } from '../../services/dashboard.service';
 
 @Component({
   selector: 'app-teacher-dashboard',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterLink],
   template: `
   <div class="dashboard">
     <h2>Dashboard Giáo viên</h2>
@@ -14,6 +15,19 @@ import { DashboardService } from '../../services/dashboard.service';
     <div *ngIf="error()" class="error">{{ error() }}</div>
 
     <div *ngIf="data()" class="grid">
+      <div class="card full handbook-card">
+        <div class="handbook-copy">
+          <p class="eyebrow">Internal Teacher Hub</p>
+          <h3>Cẩm nang giáo viên nội bộ</h3>
+          <p>
+            Mở landing page tổng hợp toàn bộ hướng dẫn sử dụng, checklist theo ngày, scenario kiểm tra, ảnh minh họa và video thao tác dành cho giáo viên.
+          </p>
+        </div>
+        <div class="handbook-actions">
+          <a class="handbook-link" routerLink="/app/internal-handbook">Mở cẩm nang GV</a>
+        </div>
+      </div>
+
       <!-- Quick stats -->
       <div class="card highlight blue">
         <h4>Buổi học sắp tới</h4>
@@ -121,6 +135,51 @@ import { DashboardService } from '../../services/dashboard.service';
     .card h4 { margin:0 0 12px; color:#475569; font-size:14px; text-transform:uppercase; letter-spacing:0.5px; }
     .card.wide { grid-column: span 2; }
     .card.full { grid-column: 1 / -1; }
+    .handbook-card {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:16px;
+      border:1px solid rgba(15,118,110,0.14);
+      background:
+        radial-gradient(circle at top right, rgba(251,191,36,0.18), transparent 24%),
+        linear-gradient(135deg, #f0fdfa 0%, #fffaf0 100%);
+    }
+    .handbook-copy { max-width:860px; }
+    .eyebrow {
+      margin:0 0 8px;
+      color:#0f766e;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:0.14em;
+      text-transform:uppercase;
+    }
+    .handbook-card h3 {
+      margin:0 0 10px;
+      color:#0f172a;
+      font-size:26px;
+      letter-spacing:-0.03em;
+    }
+    .handbook-card p {
+      margin:0;
+      color:#475569;
+      line-height:1.6;
+      font-size:14px;
+    }
+    .handbook-actions { display:flex; align-items:center; }
+    .handbook-link {
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      min-height:44px;
+      padding:0 18px;
+      border-radius:999px;
+      text-decoration:none;
+      background:linear-gradient(135deg, #0f766e 0%, #115e59 100%);
+      color:#fff;
+      font-weight:700;
+      box-shadow:0 12px 26px rgba(15,118,110,0.2);
+    }
     .card.highlight { border-top:4px solid; }
     .card.highlight.blue { border-color:#3b82f6; }
     .card.highlight.green { border-color:#22c55e; }
@@ -146,7 +205,12 @@ import { DashboardService } from '../../services/dashboard.service';
     .data-table td { padding:8px; border-bottom:1px solid #f1f5f9; }
     .empty { color:#94a3b8; font-style:italic; padding:12px 0; }
     p { margin:4px 0; color:#475569; font-size:14px; }
-    @media (max-width:768px) { .card.wide { grid-column: span 1; } .profile-grid { grid-template-columns:1fr; } }
+    @media (max-width:768px) {
+      .card.wide { grid-column: span 1; }
+      .profile-grid { grid-template-columns:1fr; }
+      .handbook-card { flex-direction:column; align-items:flex-start; }
+      .handbook-card h3 { font-size:22px; }
+    }
   `]
 })
 export class TeacherDashboardComponent implements OnInit {

@@ -7,5 +7,12 @@
   },
   "testEnvironment": "node",
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
-  "testTimeout": 120000
+  "testTimeout": 120000,
+  "reporters": [
+    "default",
+    ["jest-junit", {
+      "outputDirectory": "../test-results/e2e",
+      "outputName": "junit.xml"
+    }]
+  ]
 }

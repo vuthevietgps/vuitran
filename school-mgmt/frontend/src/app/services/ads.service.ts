@@ -31,6 +31,7 @@ export interface AdGroupItem {
   adAccountName?: string;
   platform: string;
   platformCampaignId: string;
+  trackingKeys?: string[];
   status: string;
   dailyBudget?: number;
   startDate?: string;
@@ -76,6 +77,19 @@ export interface AdCostItem {
   createdAt: string;
 }
 
+export interface ParentAttributionBackfillResult {
+  conversations: number;
+  leads: number;
+  orders: number;
+  students: number;
+  upserted: number;
+}
+
+export interface AdGroupBackfillResult {
+  studentsUpdated: number;
+  sessionsUpdated: number;
+}
+
 export interface PaginatedResponse<T> {
   data: T[];
   total: number;
@@ -116,6 +130,150 @@ export interface AdAnalyticsResponse {
   summary: AdAnalyticsSummary;
 }
 
+export interface ParentProfitabilityRow {
+  parentKey: string;
+  parentUserId?: string;
+  parentPhone?: string;
+  normalizedParentPhone?: string;
+  parentName?: string;
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  attributedAt?: string;
+  sessionCount: number;
+  studentCount: number;
+  revenue: number;
+  teacherCost: number;
+  directParentExpense: number;
+  allocatedGroupExpense: number;
+  allocatedGlobalOverhead: number;
+  allocatedAdSpend: number;
+  netProfit: number;
+  netMargin: number;
+}
+
+export interface ParentProfitabilityGroupSummary {
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  parentCount: number;
+  totalSessions: number;
+  totalStudents: number;
+  totalRevenue: number;
+  totalTeacherCost: number;
+  totalDirectParentExpense: number;
+  totalAllocatedGroupExpense: number;
+  totalAllocatedGlobalOverhead: number;
+  totalAdSpend: number;
+  totalNetProfit: number;
+  netMargin: number;
+}
+
+export interface ParentProfitabilityOverall {
+  parentCount: number;
+  totalSessions: number;
+  totalStudents: number;
+  totalRevenue: number;
+  totalTeacherCost: number;
+  totalDirectParentExpense: number;
+  totalAllocatedGroupExpense: number;
+  totalAllocatedGlobalOverhead: number;
+  totalAdSpend: number;
+  totalNetProfit: number;
+  netMargin: number;
+}
+
+export interface ParentProfitabilityResponse {
+  rows: ParentProfitabilityRow[];
+  summaryByGroup: ParentProfitabilityGroupSummary[];
+  overall: ParentProfitabilityOverall;
+}
+
+export interface RealizedCohortRow {
+  date: string;
+  realizedThrough: string;
+  maturityDays: number;
+  cohortAgeDays: number;
+  isMatured: boolean;
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  ctr: number;
+  cpc: number | null;
+  cpm: number | null;
+  costPerConversion: number | null;
+  leadCount: number;
+  orderCount: number;
+  newParentCount: number;
+  realizedParentCount: number;
+  realizedSessionCount: number;
+  adSpend: number;
+  collectedRevenue: number;
+  remainingSessionUnits: number;
+  scheduledRemainingSessionCount: number;
+  scheduledRemainingTeacherCost: number;
+  realizedRevenue: number;
+  refundAmount: number;
+  netRealizedRevenue: number;
+  estimatedRemainingRefund: number;
+  estimatedRemainingTeacherCost: number;
+  estimatedRemainingOtherCost: number;
+  projectedRevenue: number;
+  projectedNetProfit: number;
+  effectiveNetProfit: number;
+  projectionBasis: string;
+  teacherCost: number;
+  directParentExpense: number;
+  allocatedGroupExpense: number;
+  allocatedGlobalOverhead: number;
+  netProfit: number;
+  roi: number;
+  costPerLead: number | null;
+  costPerNewParent: number | null;
+  profitPerLead: number | null;
+  profitPerNewParent: number | null;
+}
+
+export interface RealizedCohortSummary {
+  totalSpend: number;
+  totalImpressions: number;
+  totalClicks: number;
+  totalConversions: number;
+  totalLeads: number;
+  totalOrders: number;
+  totalNewParents: number;
+  totalCollectedRevenue: number;
+  totalRemainingSessionUnits: number;
+  totalRealizedParents: number;
+  totalRealizedSessions: number;
+  totalRealizedRevenue: number;
+  totalRefundAmount: number;
+  totalNetRealizedRevenue: number;
+  totalProjectedRevenue: number;
+  totalTeacherCost: number;
+  totalDirectParentExpense: number;
+  totalAllocatedGroupExpense: number;
+  totalAllocatedGlobalOverhead: number;
+  totalNetProfit: number;
+  totalProjectedNetProfit: number;
+  totalRoi: number;
+  matureRowCount: number;
+  immatureRowCount: number;
+}
+
+export interface RealizedCohortResponse {
+  basis: string;
+  maturityDays: number;
+  realizedThrough: string;
+  refundRatePercentX: number | null;
+  rows: RealizedCohortRow[];
+  matureRows: RealizedCohortRow[];
+  summary: RealizedCohortSummary;
+}
+
 export interface AdSuggestionRow {
   adGroupId: string;
   adGroupName: string;
@@ -127,6 +285,13 @@ export interface AdSuggestionRow {
   changePercent: number | null;
   confidence: string;
   dataPoints: number;
+  maturityDays: number;
+  averageCtr: number;
+  averageLeadRate: number;
+  averageProfitPerLead: number | null;
+  observedAverageNetProfit: number;
+  recommendation: string;
+  recommendationReasons: string[];
 }
 
 export interface AdSuggestionSummaryRow {
@@ -134,9 +299,38 @@ export interface AdSuggestionSummaryRow {
   adGroupId: string;
   adGroupName: string;
   platform: string;
+  maturityDays: number;
+  cohortAgeDays: number;
+  isMatured: boolean;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+  leadCount: number;
+  orderCount: number;
+  newParentCount: number;
+  collectedRevenue: number;
+  remainingSessionUnits: number;
+  scheduledRemainingSessionCount: number;
+  realizedRevenue: number;
+  netRealizedRevenue: number;
+  projectedRevenue: number;
+  estimatedRemainingRefund: number;
+  estimatedRemainingTeacherCost: number;
+  estimatedRemainingOtherCost: number;
+  teacherCost: number;
+  directParentExpense: number;
+  allocatedGroupExpense: number;
+  allocatedGlobalOverhead: number;
   netProfit: number;
+  projectedNetProfit: number;
+  effectiveNetProfit: number;
+  projectionBasis: string;
   actualAdSpend: number;
+  rawSuggestedAdSpend: number;
   suggestedAdSpend: number;
+  previousDayAdSpend: number | null;
+  capByPreviousDay: number | null;
+  cappedByDailyGuard: boolean;
 }
 
 export interface AdSuggestionDailyTotalRow {
@@ -153,6 +347,10 @@ export interface AdSuggestionMonthlyProjectionRow {
 }
 
 export interface AdSuggestionResponse {
+  basis: string;
+  maturityDays: number;
+  realizedThrough: string;
+  refundRatePercentX: number | null;
   totalBudget: number;
   allocated: number;
   unallocated: number;
@@ -164,6 +362,39 @@ export interface AdSuggestionResponse {
   monthlyProjection: AdSuggestionMonthlyProjectionRow[];
   summaryTable: AdSuggestionSummaryRow[];
   suggestions: AdSuggestionRow[];
+}
+
+export interface ActionableSuggestion {
+  type: 'PAUSE_GROUP' | 'ADJUST_BUDGET' | 'CREATE_GROUP' | 'OPTIMIZE_FUNNEL_FIRST';
+  subType?: 'INCREASE' | 'DECREASE';
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  title: string;
+  description: string;
+  reasons: string[];
+  details: Record<string, any>;
+  relatedEntity?: {
+    type: 'AdGroup';
+    id: string;
+    name: string;
+  };
+  estimatedImpact?: {
+    dailyProfitChange: number;
+    monthlyProfitChange: number;
+  };
+}
+
+export interface ActionsRequiredResponse {
+  actions: ActionableSuggestion[];
+  summary: {
+    totalActiveGroups: number;
+    profitableGroups: number;
+    unprofitableGroups: number;
+    totalDailySpend: number;
+    totalOptimalDailySpend: number;
+    overallNetProfit7d: number;
+    overallEffectiveNetProfit: number;
+    generatedAt: string;
+  };
 }
 
 @Injectable({
@@ -225,6 +456,10 @@ export class AdsService {
     return this.http.get<PaginatedResponse<AdGroupItem>>(
       `${this.apiUrl}/groups`, { params: this.buildParams(params) },
     ).toPromise() as Promise<PaginatedResponse<AdGroupItem>>;
+  }
+
+  async listAllGroups(): Promise<AdGroupItem[]> {
+    return this.http.get<AdGroupItem[]>(`${this.apiUrl}/groups/all`).toPromise() as Promise<AdGroupItem[]>;
   }
 
   async getAllGroups(): Promise<AdGroupItem[]> {
@@ -316,6 +551,36 @@ export class AdsService {
     }
   }
 
+  async syncGoogleMccToken(tokenId: string, date?: string): Promise<{ ok: boolean; message?: string; data?: any }> {
+    try {
+      let params = new HttpParams();
+      if (date) params = params.set('date', date);
+      const result = await this.http.post<any>(
+        `${this.apiUrl}/tokens/${tokenId}/sync-google-mcc`,
+        {},
+        { params },
+      ).toPromise();
+      return { ok: true, data: result };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Đồng bộ Google MCC thất bại' };
+    }
+  }
+
+  async syncTikTokBusinessCenterToken(tokenId: string, date?: string): Promise<{ ok: boolean; message?: string; data?: any }> {
+    try {
+      let params = new HttpParams();
+      if (date) params = params.set('date', date);
+      const result = await this.http.post<any>(
+        `${this.apiUrl}/tokens/${tokenId}/sync-tiktok-business-center`,
+        {},
+        { params },
+      ).toPromise();
+      return { ok: true, data: result };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Đồng bộ TikTok Business Center thất bại' };
+    }
+  }
+
   // â”€â”€â”€ Ad Costs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async listCosts(params?: Record<string, string>): Promise<PaginatedResponse<AdCostItem>> {
@@ -352,6 +617,38 @@ export class AdsService {
     }
   }
 
+  async backfillParentAttribution(): Promise<{
+    ok: boolean;
+    message?: string;
+    data?: ParentAttributionBackfillResult;
+  }> {
+    try {
+      const result = await this.http.post<ParentAttributionBackfillResult>(
+        `${this.apiUrl}/backfill-parent-attribution`,
+        {},
+      ).toPromise();
+      return { ok: true, data: result || undefined };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Backfill parent attribution that bai' };
+    }
+  }
+
+  async backfillAdGroupIds(): Promise<{
+    ok: boolean;
+    message?: string;
+    data?: AdGroupBackfillResult;
+  }> {
+    try {
+      const result = await this.http.post<AdGroupBackfillResult>(
+        `${this.apiUrl}/backfill-adgroup`,
+        {},
+      ).toPromise();
+      return { ok: true, data: result || undefined };
+    } catch (err: any) {
+      return { ok: false, message: err.error?.message || 'Backfill adGroup that bai' };
+    }
+  }
+
   // â”€â”€â”€ Analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   async getAnalytics(startDate: string, endDate: string, adGroupId?: string, platform?: string): Promise<AdAnalyticsResponse> {
@@ -363,13 +660,76 @@ export class AdsService {
     ).toPromise() as Promise<AdAnalyticsResponse>;
   }
 
-  async getSuggestions(startDate: string, endDate: string, totalBudget: number): Promise<AdSuggestionResponse> {
-    const params = new HttpParams()
+  async getParentProfitability(
+    startDate: string,
+    endDate: string,
+    adGroupId?: string,
+    platform?: string,
+  ): Promise<ParentProfitabilityResponse> {
+    let params = new HttpParams().set('startDate', startDate).set('endDate', endDate);
+    if (adGroupId) params = params.set('adGroupId', adGroupId);
+    if (platform) params = params.set('platform', platform);
+    return this.http.get<ParentProfitabilityResponse>(
+      `${this.apiUrl}/analytics/parents-profit`,
+      { params },
+    ).toPromise() as Promise<ParentProfitabilityResponse>;
+  }
+
+  async getRealizedCohortAnalytics(
+    startDate: string,
+    endDate: string,
+    maturityDays: number,
+    adGroupId?: string,
+    platform?: string,
+    refundRatePercentX?: number,
+  ): Promise<RealizedCohortResponse> {
+    let params = new HttpParams()
       .set('startDate', startDate)
       .set('endDate', endDate)
-      .set('totalBudget', String(totalBudget));
+      .set('maturityDays', String(maturityDays));
+    if (adGroupId) params = params.set('adGroupId', adGroupId);
+    if (platform) params = params.set('platform', platform);
+    if (refundRatePercentX !== undefined) params = params.set('refundRatePercentX', String(refundRatePercentX));
+    return this.http.get<RealizedCohortResponse>(
+      `${this.apiUrl}/analytics/realized-cohort`, { params },
+    ).toPromise() as Promise<RealizedCohortResponse>;
+  }
+
+  async getSuggestions(
+    startDate: string,
+    endDate: string,
+    totalBudget: number,
+    maturityDays: number,
+    refundRatePercentX?: number,
+  ): Promise<AdSuggestionResponse> {
+    let params = new HttpParams()
+      .set('startDate', startDate)
+      .set('endDate', endDate)
+      .set('totalBudget', String(totalBudget))
+      .set('maturityDays', String(maturityDays));
+    if (refundRatePercentX !== undefined) params = params.set('refundRatePercentX', String(refundRatePercentX));
     return this.http.get<AdSuggestionResponse>(
       `${this.apiUrl}/suggestions`, { params },
     ).toPromise() as Promise<AdSuggestionResponse>;
+  }
+
+  async getActionsRequired(params?: {
+    refundRatePercentX?: number;
+    lookbackDays?: number;
+    targetProfitableRatio?: number;
+    totalBudget?: number;
+  }): Promise<ActionsRequiredResponse> {
+    let httpParams = new HttpParams();
+    if (params?.refundRatePercentX !== undefined)
+      httpParams = httpParams.set('refundRatePercentX', String(params.refundRatePercentX));
+    if (params?.lookbackDays !== undefined)
+      httpParams = httpParams.set('lookbackDays', String(params.lookbackDays));
+    if (params?.targetProfitableRatio !== undefined)
+      httpParams = httpParams.set('targetProfitableRatio', String(params.targetProfitableRatio));
+    if (params?.totalBudget !== undefined)
+      httpParams = httpParams.set('totalBudget', String(params.totalBudget));
+    return this.http.get<ActionsRequiredResponse>(
+      `${this.apiUrl}/actions-required`, { params: httpParams },
+    ).toPromise() as Promise<ActionsRequiredResponse>;
   }
 }

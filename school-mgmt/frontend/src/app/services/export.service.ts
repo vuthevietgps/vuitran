@@ -27,6 +27,26 @@ export class ExportService {
     return this.downloadCsv(`${this.base}/attendance`, params, 'diem-danh');
   }
 
+  exportAdsParentProfit(params: {
+    startDate?: string;
+    endDate?: string;
+    adGroupId?: string;
+    platform?: string;
+  } = {}) {
+    return this.downloadCsv(`${this.base}/ads-parent-profit`, params, 'ads-parent-profit');
+  }
+
+  exportAdsRealizedCohort(params: {
+    startDate?: string;
+    endDate?: string;
+    maturityDays?: number;
+    adGroupId?: string;
+    platform?: string;
+    refundRatePercentX?: number;
+  } = {}) {
+    return this.downloadCsv(`${this.base}/ads-realized-cohort`, params, 'ads-realized-cohort');
+  }
+
   private async downloadCsv(url: string, params: Record<string, any>, filename: string) {
     const q: any = {};
     Object.entries(params).forEach(([k, v]) => { if (v) q[k] = v; });

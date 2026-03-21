@@ -6,11 +6,14 @@
   <p class="error-banner" *ngIf="error()">{{ error() }}</p>
 </header>
 
+<app-flow-guide featureKey="ads-management"></app-flow-guide>
+
 <nav class="tabs">
   <button [class.active]="activeTab === 'accounts'" (click)="switchTab('accounts')">Tai khoan QC</button>
   <button [class.active]="activeTab === 'groups'" (click)="switchTab('groups')">Nhom QC</button>
   <button *ngIf="canManageTokens()" [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">API Token</button>
   <button [class.active]="activeTab === 'costs'" (click)="switchTab('costs')">Chi phi Ads</button>
+  <button *ngIf="canViewActions()" [class.active]="activeTab === 'actions'" (click)="switchTab('actions')">Viec can lam</button>
 </nav>
 
 <section *ngIf="activeTab === 'accounts'">
@@ -40,7 +43,7 @@
         <th>Ten tai khoan</th>
         <th>Nen tang</th>
         <th>Platform ID</th>
-        <th>BM</th>
+        <th>BM / MCC / BC</th>
         <th>Ngan sach thang</th>
         <th>Nguon</th>
         <th>Dong bo cuoi</th>
@@ -112,7 +115,10 @@
     <tbody>
       <tr *ngFor="let group of groups()">
         <td><strong>{{ group.groupCode }}</strong></td>
-        <td>{{ group.name }}</td>
+        <td>
+          <div>{{ group.name }}</div>
+          <div class="mono" *ngIf="group.trackingKeys?.length">keys: {{ group.trackingKeys?.join(', ') }}</div>
+        </td>
         <td>{{ group.adAccountName || '-' }}</td>
         <td><span class="badge platform">{{ platformLabel(group.platform) }}</span></td>
         <td class="mono">{{ group.platformCampaignId }}</td>
@@ -133,9 +139,11 @@
 
 <section *ngIf="activeTab === 'tokens' && canManageTokens()">
   <div class="token-intro">
-    <strong>Luong BM Facebook:</strong>
-    Nhap user system token vao day, bam dong bo de lay ad accounts, fanpages, page access token va ads insight theo ngay.
-    Sau khi dong bo xong, vao <strong>Chatbot &gt; Cai dat Chatbot</strong> de sua mo ta fanpage, gan OpenAI token va bat AI auto-reply.
+    <strong>Luong token quan tri ads:</strong>
+    Nhap token BM Facebook, MCC Google hoac Business Center TikTok vao day, bam dong bo de lay tai khoan ads,
+    campaign/nhom quang cao va chi phi theo ngay. Rieng BM Facebook se dong bo them fanpage va page access token.
+    Sau khi dong bo BM Facebook xong, vao <strong>Chatbot &gt; Cai dat Chatbot</strong> de sua mo ta fanpage,
+    gan OpenAI token va bat AI auto-reply.
   </div>
 
   <div class="toolbar">
@@ -143,6 +151,8 @@
       <select [(ngModel)]="tokenFilterType" (ngModelChange)="loadTokens()">
         <option value="">Tat ca loai token</option>
         <option value="FACEBOOK_SYSTEM_USER">Facebook BM / System User</option>
+        <option value="GOOGLE_MCC">Google MCC</option>
+        <option value="TIKTOK_BUSINESS_CENTER">TikTok Business Center</option>
         <option value="ACCOUNT">Token tai khoan quang cao</option>
       </select>
       <select [(ngModel)]="tokenFilterPlatform" (ngModelChange)="loadTokens()">
@@ -226,6 +236,51 @@
     </div>
   </div>
 
+  <div class="maintenance-tools" *ngIf="canRunBackfill()">
+    <div class="maintenance-copy">
+      <strong>Cong cu bo du lieu tracking</strong>
+      <p>
+        Chay lai attribution cho parent cu va bo sung adGroup cho student/session cu truoc khi doi soat doanh thu,
+        loi nhuan va chi phi theo nhom quang cao.
+      </p>
+    </div>
+    <div class="maintenance-history">
+      <div class="maintenance-history-head">
+        <strong>Lan chay gan nhat</strong>
+        <button class="link-btn" [disabled]="maintenanceHistoryLoading()" (click)="loadMaintenanceHistory()">
+          {{ maintenanceHistoryLoading() ? 'Dang tai...' : 'Tai lai' }}
+        </button>
+      </div>
+
+      <div class="maintenance-history-list" *ngIf="maintenanceHistory().length; else emptyMaintenanceHistory">
+        <article class="history-item" *ngFor="let item of maintenanceHistory()">
+          <div class="history-item-head">
+            <strong>{{ item.title }}</strong>
+            <span>{{ item.createdAt | date:'dd/MM/yyyy HH:mm' }}</span>
+          </div>
+          <div class="history-meta">
+            {{ item.actor }}<span *ngIf="item.actorEmail"> · {{ item.actorEmail }}</span>
+          </div>
+          <p>{{ item.summary }}</p>
+        </article>
+      </div>
+
+      <ng-template #emptyMaintenanceHistory>
+        <div class="history-empty">
+          {{ maintenanceHistoryLoading() ? 'Dang tai lich su...' : 'Chua co lich su backfill.' }}
+        </div>
+      </ng-template>
+    </div>
+    <div class="stack-actions">
+      <button class="secondary" [disabled]="maintenanceRunning() || syncing()" (click)="runParentAttributionBackfill()">
+        {{ maintenanceRunning() ? 'Dang xu ly...' : 'Backfill parent attribution' }}
+      </button>
+      <button class="secondary" [disabled]="maintenanceRunning() || syncing()" (click)="runAdGroupBackfill()">
+        {{ maintenanceRunning() ? 'Dang xu ly...' : 'Backfill adGroup' }}
+      </button>
+    </div>
+  </div>
+
   <table class="data-table" *ngIf="costs().length; else emptyCosts">
     <thead>
       <tr>
@@ -260,6 +315,10 @@
   <ng-template #emptyCosts>
     <div class="empty-state">Chua co du lieu chi phi.</div>
   </ng-template>
+</section>
+
+<section *ngIf="activeTab === 'actions' && canViewActions()">
+  <app-ads-actions></app-ads-actions>
 </section>
 
 <div class="modal-backdrop" *ngIf="showAccountModal()">
@@ -309,6 +368,7 @@
     <label>Ngay bat dau <input type="date" [(ngModel)]="grpForm.startDate" /></label>
     <label>Ngay ket thuc <input type="date" [(ngModel)]="grpForm.endDate" /></label>
     <label>Doi tuong muc tieu <input [(ngModel)]="grpForm.targetAudience" /></label>
+    <label>Tracking keys / ad_id / ref <textarea rows="3" [(ngModel)]="grpForm.trackingKeysInput" placeholder="Nhap ad_id, ref, utm_id... tach boi dau phay hoac xuong dong"></textarea></label>
     <label *ngIf="editingGroup">
       Trang thai
       <select [(ngModel)]="grpForm.status">
@@ -332,18 +392,20 @@
       Loai token
       <select [(ngModel)]="tokenForm.tokenType" [disabled]="!!editingToken" (ngModelChange)="onTokenTypeChange()">
         <option value="FACEBOOK_SYSTEM_USER">Facebook BM / System User</option>
+        <option value="GOOGLE_MCC">Google MCC</option>
+        <option value="TIKTOK_BUSINESS_CENTER">TikTok Business Center</option>
         <option value="ACCOUNT">Token tai khoan quang cao</option>
       </select>
     </label>
-    <label *ngIf="!isBusinessTokenForm()">
+    <label *ngIf="!isManagerTokenForm()">
       Tai khoan quang cao
       <select [(ngModel)]="tokenForm.adAccountId" [disabled]="!!editingToken" (ngModelChange)="onTokenAccountChange()">
         <option value="">-- Chon --</option>
         <option *ngFor="let account of allAccounts()" [value]="account._id">{{ account.name }} ({{ platformLabel(account.platform) }})</option>
       </select>
     </label>
-    <label *ngIf="isBusinessTokenForm()">Business ID <input [(ngModel)]="tokenForm.businessId" placeholder="Co the de trong neu token truy cap nhieu BM" /></label>
-    <label *ngIf="isBusinessTokenForm()">Business name <input [(ngModel)]="tokenForm.businessName" placeholder="Ten Business Manager" /></label>
+    <label *ngIf="isManagerTokenForm()">{{ tokenBusinessIdLabel() }} <input [(ngModel)]="tokenForm.businessId" [placeholder]="tokenForm.tokenType === 'FACEBOOK_SYSTEM_USER' ? 'Co the de trong neu token truy cap nhieu BM' : ''" /></label>
+    <label *ngIf="isManagerTokenForm()">{{ tokenBusinessNameLabel() }} <input [(ngModel)]="tokenForm.businessName" [placeholder]="'Ten ' + tokenBusinessTargetLabel(tokenForm.tokenType)" /></label>
     <label>Nen tang <input [value]="platformLabel(tokenForm.platform)" disabled /></label>
     <label>Label <input [(ngModel)]="tokenForm.label" placeholder="VD: BM chinh" /></label>
     <label>Access token <input type="password" [(ngModel)]="tokenForm.accessToken" /></label>
@@ -357,9 +419,8 @@
         <option value="REVOKED">Da thu hoi</option>
       </select>
     </label>
-    <div class="helper-box" *ngIf="isBusinessTokenForm()">
-      Sau khi luu token BM, bam <strong>Dong bo</strong> o danh sach de keo:
-      danh sach ad account, fanpage, page access token va chi phi ads theo ad set tung ngay.
+    <div class="helper-box" *ngIf="isManagerTokenForm()">
+      {{ tokenHelperText() }}
     </div>
     <div class="modal-actions">
       <button class="secondary" (click)="showTokenModal.set(false)">Huy</button>
@@ -422,6 +483,24 @@
     <div class="modal-actions">
       <button *ngIf="syncCount('fanpagesSynced')" class="secondary" (click)="openFanpageSettings()">Mo cai dat fanpage</button>
       <button class="primary" (click)="closeSyncResult()">Dong</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="maintenanceResult() as result">
+  <div class="modal">
+    <h3>{{ result.title }}</h3>
+    <p class="modal-subtext">{{ result.description }}</p>
+
+    <div class="summary-grid">
+      <div class="summary-card" *ngFor="let item of result.items">
+        <span>{{ item.label }}</span>
+        <strong>{{ item.value }}</strong>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="primary" (click)="closeMaintenanceResult()">Dong</button>
     </div>
   </div>
 </div>

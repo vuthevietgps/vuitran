@@ -52,6 +52,11 @@ const evalExpr = (expr: any, doc: Doc): any => {
     if (expr.startsWith('$')) return getByPath(doc, expr.slice(1));
     return expr;
   }
+  if (expr && expr.$dateToString) {
+    const format = expr.$dateToString.format || '%Y-%m-%d';
+    const dateExpr = expr.$dateToString.date;
+    return formatDate(evalExpr(dateExpr, doc), format);
+  }
   if (expr && typeof expr === 'object' && Array.isArray(expr.$ifNull)) {
     for (const candidate of expr.$ifNull) {
       const value = evalExpr(candidate, doc);
@@ -246,6 +251,10 @@ const runPipeline = (input: Doc[], pipeline: PipelineStage[]): Doc[] => {
 class QueryArrayMock {
   constructor(private readonly docs: Doc[]) {}
 
+  select(): this {
+    return this;
+  }
+
   sort(): this {
     return this;
   }
@@ -273,6 +282,10 @@ class QueryArrayMock {
 
 class QueryOneMock {
   constructor(private readonly runner: () => Doc | null | Promise<Doc | null>) {}
+
+  select(): this {
+    return this;
+  }
 
   async lean(): Promise<Doc | null> {
     return this.runner();
@@ -422,6 +435,8 @@ async function main() {
     orders: [] as Doc[],
     leads: [] as Doc[],
     students: [] as Doc[],
+    conversations: [] as Doc[],
+    parentAttributions: [] as Doc[],
     payrolls: [] as Doc[],
     staffPayrolls: [] as Doc[],
     loans: [] as Doc[],
@@ -446,6 +461,125 @@ async function main() {
     finalAmount: 2_500_000,
     status: 'APPROVED',
     createdAt: new Date('2026-02-11T11:00:00.000Z'),
+  });
+
+  state.adCosts.push({
+    _id: 'adc-jan-1',
+    adGroupId: 'group-1',
+    adGroupName: 'Facebook Group 1',
+    adAccountId: 'acc-1',
+    platform: 'FACEBOOK',
+    date: new Date('2026-01-01T00:00:00.000Z'),
+    spend: 200_000,
+    impressions: 5_000,
+    clicks: 120,
+    conversions: 8,
+    source: AdCostSource.MANUAL,
+    syncedAt: new Date('2026-01-01T01:00:00.000Z'),
+  });
+
+  state.parentAttributions.push(
+    {
+      _id: 'attr-1',
+      parentKey: 'parent-1',
+      parentUserId: '507f1f77bcf86cd799439011',
+      parentPhone: '0901000001',
+      normalizedParentPhone: '0901000001',
+      adGroupId: 'group-1',
+      adGroupName: 'Facebook Group 1',
+      platform: 'FACEBOOK',
+      firstAttributedAt: new Date('2026-01-01T00:00:00.000Z'),
+    },
+    {
+      _id: 'attr-2',
+      parentKey: 'parent-2',
+      parentUserId: '507f1f77bcf86cd799439021',
+      parentPhone: '0901000002',
+      normalizedParentPhone: '0901000002',
+      adGroupId: 'group-1',
+      adGroupName: 'Facebook Group 1',
+      platform: 'FACEBOOK',
+      firstAttributedAt: new Date('2026-02-10T00:00:00.000Z'),
+    },
+  );
+
+  state.students.push(
+    {
+      _id: '507f1f77bcf86cd799439012',
+      parentUserId: '507f1f77bcf86cd799439011',
+      parentPhone: '0901000001',
+      parentName: 'Parent One',
+      adGroupId: 'group-1',
+      adGroupName: 'Facebook Group 1',
+    },
+    {
+      _id: '507f1f77bcf86cd799439022',
+      parentUserId: '507f1f77bcf86cd799439021',
+      parentPhone: '0901000002',
+      parentName: 'Parent Two',
+      adGroupId: 'group-1',
+      adGroupName: 'Facebook Group 1',
+    },
+  );
+
+  state.invoices.push(
+    {
+      _id: '507f1f77bcf86cd799439013',
+      invoiceType: 'TUITION',
+      status: 'APPROVED',
+      studentId: '507f1f77bcf86cd799439012',
+      sessions: 1,
+      sessionsRemaining: 0,
+      pricePerSession: 4_000_000,
+      amount: 4_000_000,
+      paymentDate: new Date('2026-01-02T00:00:00.000Z'),
+    },
+    {
+      _id: '507f1f77bcf86cd799439023',
+      invoiceType: 'TUITION',
+      status: 'APPROVED',
+      studentId: '507f1f77bcf86cd799439022',
+      sessions: 1,
+      sessionsRemaining: 1,
+      pricePerSession: 3_000_000,
+      amount: 3_000_000,
+      paymentDate: new Date('2026-02-15T00:00:00.000Z'),
+    },
+  );
+
+  state.sessions.push({
+    _id: '507f1f77bcf86cd799439014',
+    studentId: '507f1f77bcf86cd799439012',
+    parentUserId: '507f1f77bcf86cd799439011',
+    adGroupId: 'group-1',
+    adGroupName: 'Facebook Group 1',
+    status: 'FINALIZED',
+    scheduledDate: new Date('2026-01-20T00:00:00.000Z'),
+    amountCharged: 4_000_000,
+    teacherPayout: 1_000_000,
+  });
+
+  state.sessions.push({
+    _id: '507f1f77bcf86cd799439024',
+    studentId: '507f1f77bcf86cd799439022',
+    parentUserId: '507f1f77bcf86cd799439021',
+    adGroupId: 'group-1',
+    adGroupName: 'Facebook Group 1',
+    status: 'SCHEDULED',
+    scheduledDate: new Date('2099-01-15T00:00:00.000Z'),
+    amountCharged: 3_000_000,
+    teacherPayout: 900_000,
+  });
+
+  state.ledgers.push({
+    _id: 'led-1',
+    userId: '507f1f77bcf86cd799439011',
+    studentId: '507f1f77bcf86cd799439012',
+    sessionId: '507f1f77bcf86cd799439014',
+    type: 'SESSION_DEDUCT',
+    status: 'COMPLETED',
+    amount: 4_000_000,
+    createdAt: new Date('2026-01-20T00:00:00.000Z'),
   });
 
   const empty = createModel(() => []);
@@ -500,12 +634,17 @@ async function main() {
     empty as any,
     adCostModel as any,
     createModel(() => state.orders) as any,
+    createModel(() => state.invoices) as any,
     createModel(() => state.leads) as any,
     createModel(() => state.sessions) as any,
+    createModel(() => state.ledgers) as any,
     createModel(() => state.expenses) as any,
     createModel(() => state.students) as any,
     empty as any,
+    createModel(() => state.conversations) as any,
+    createModel(() => state.parentAttributions) as any,
     { get: (_key: string, fallback?: string) => fallback } as any,
+    { upsertParentAttribution: async () => null } as any,
   );
 
   const pnlBefore = await financialControlService.getProfitAndLoss('2026-02-01', '2026-02-28');
@@ -542,7 +681,9 @@ async function main() {
     source: AdCostSource.MANUAL,
   } as any);
 
-  assert.equal(state.adCosts.length, 1, 'Update same group+day must not create duplicate rows');
+  const feb10CostsAfterUpdate = state.adCosts.filter((row) =>
+    sameValue(row.adGroupId, 'group-1') && sameValue(row.date, new Date('2026-02-10T00:00:00.000Z')));
+  assert.equal(feb10CostsAfterUpdate.length, 1, 'Update same group+day must not create duplicate rows');
 
   const pnlAfterUpdate = await financialControlService.getProfitAndLoss('2026-02-01', '2026-02-28');
   assert.equal(
@@ -581,12 +722,15 @@ async function main() {
   } as any);
 
   assert.equal(
-    state.adCosts.length,
+    state.adCosts.filter((row) =>
+      sameValue(row.adGroupId, 'group-1') && sameValue(row.date, new Date('2026-02-10T00:00:00.000Z'))).length,
     1,
     'Race duplicate-key handling must keep one canonical ad cost row',
   );
+  const feb10Canonical = state.adCosts.find((row) =>
+    sameValue(row.adGroupId, 'group-1') && sameValue(row.date, new Date('2026-02-10T00:00:00.000Z')));
   assert.equal(
-    state.adCosts[0].spend,
+    feb10Canonical?.spend,
     1_800_000,
     'Race duplicate-key handling must still persist latest spend value',
   );
@@ -644,11 +788,161 @@ async function main() {
     'Ads analytics must count orders for groups without ad cost records',
   );
 
+  const parentProfitability = await adsService.getParentProfitability('2026-01-01', '2026-02-28');
+  const parentOneRow = parentProfitability.rows.find((row: any) => row.parentKey === 'parent-1');
+  assert.ok(
+    parentOneRow,
+    'Parent-profit analytics must surface the attributed parent row',
+  );
+  assert.equal(
+    parentOneRow.revenue,
+    4_000_000,
+    'Parent-profit analytics must attribute realized session revenue back to the parent row',
+  );
+  assert.equal(
+    parentOneRow.teacherCost,
+    1_000_000,
+    'Parent-profit analytics must include teacher cost for the parent row',
+  );
+  assert.equal(
+    parentOneRow.allocatedAdSpend,
+    2_000_000,
+    'Parent-profit analytics must allocate ad spend back to the revenue-driving parent',
+  );
+  assert.equal(
+    parentOneRow.netProfit,
+    1_000_000,
+    'Parent-profit analytics must compute parent-level net profit after allocated ad spend',
+  );
+
+  const groupOneSummary = parentProfitability.summaryByGroup.find((row: any) => row.adGroupId === 'group-1');
+  assert.ok(
+    groupOneSummary,
+    'Parent-profit analytics must return group summary rows',
+  );
+  assert.equal(
+    groupOneSummary.parentCount,
+    2,
+    'Parent-profit group summary must count all attributed parents in the group',
+  );
+  assert.equal(
+    groupOneSummary.totalAdSpend,
+    2_000_000,
+    'Parent-profit group summary must preserve full ad spend allocation at group level',
+  );
+  assert.equal(
+    parentProfitability.overall.totalNetProfit,
+    1_000_000,
+    'Parent-profit overall summary must roll up parent-level profit correctly',
+  );
+
+  const projectedCohort = await adsService.getRealizedCohortAnalytics(
+    '2026-01-01',
+    '2026-02-28',
+    undefined,
+    undefined,
+    45,
+  );
+  const febProjectedRow = projectedCohort.rows.find((row: any) => row.date === '2026-02-10');
+  assert.ok(
+    febProjectedRow,
+    'Cohort analytics must include the active acquisition cohort',
+  );
+  assert.equal(
+    febProjectedRow.collectedRevenue,
+    3_000_000,
+    'Projected cohort analytics must surface approved tuition cash already collected',
+  );
+  assert.equal(
+    febProjectedRow.remainingSessionUnits,
+    1,
+    'Projected cohort analytics must surface remaining session units from approved invoices',
+  );
+  assert.equal(
+    febProjectedRow.isMatured,
+    false,
+    'Active cohort should remain immature so projected profit is used before full realization',
+  );
+  assert.equal(
+    febProjectedRow.projectedRevenue,
+    3_000_000,
+    'Projected revenue should use collected tuition cash when there is no refund yet',
+  );
+  assert.equal(
+    febProjectedRow.projectedNetProfit,
+    300_000,
+    'Projected net profit should subtract teacher cost from the actual scheduled remaining session and keep actual ad spend',
+  );
+  assert.equal(
+    projectedCohort.summary.totalProjectedNetProfit,
+    3_100_000,
+    'Projected cohort summary must aggregate actual mature profit with session-based remaining service costs',
+  );
+
+  const projectedCohortWithRefundX = await adsService.getRealizedCohortAnalytics(
+    '2026-01-01',
+    '2026-02-28',
+    undefined,
+    undefined,
+    45,
+    10,
+  );
+  const febProjectedRowWithRefundX = projectedCohortWithRefundX.rows.find((row: any) => row.date === '2026-02-10');
+  assert.ok(
+    febProjectedRowWithRefundX,
+    'Cohort analytics with refund X must keep the active acquisition cohort',
+  );
+  assert.equal(
+    projectedCohortWithRefundX.refundRatePercentX,
+    10,
+    'Cohort analytics must surface the configured refund X override',
+  );
+  assert.equal(
+    febProjectedRowWithRefundX.projectedRevenue,
+    2_700_000,
+    'Refund X must reduce projected revenue for the remaining undelivered service',
+  );
+  assert.equal(
+    febProjectedRowWithRefundX.projectedNetProfit,
+    0,
+    'Refund X must reduce projected net profit while preserving the session-based teacher cost profile',
+  );
+  assert.equal(
+    projectedCohortWithRefundX.summary.totalProjectedNetProfit,
+    2_800_000,
+    'Projected cohort summary must respect the configured refund X override',
+  );
+
+  const suggestionsWithRefundX = await adsService.getSuggestions(
+    '2026-01-01',
+    '2026-02-28',
+    1_000_000,
+    45,
+    10,
+  );
+  const febSuggestionRow = suggestionsWithRefundX.summaryTable.find((row: any) => row.date === '2026-02-10');
+  assert.ok(
+    febSuggestionRow,
+    'Suggestion summary must include the active acquisition cohort when refund X is used',
+  );
+  assert.equal(
+    suggestionsWithRefundX.refundRatePercentX,
+    10,
+    'Suggestions API must surface the configured refund X override',
+  );
+  assert.equal(
+    febSuggestionRow.effectiveNetProfit,
+    0,
+    'Suggestions must fit on the projected net profit after applying refund X to the remaining cohort',
+  );
+
   let capturedGoogleQuery = '';
+  let capturedGoogleHeaders: any = {};
   (adsService as any).fetchWithRetry = async (_url: string, options?: any) => {
     if (options?.body) {
       capturedGoogleQuery = JSON.parse(options.body).query || '';
     }
+    capturedGoogleHeaders = options?.headers || {};
     return [{ results: [] }];
   };
   await (adsService as any).syncGoogleCosts(
@@ -656,6 +950,7 @@ async function main() {
     { _id: 'acc-google', platformAccountId: '123456' } as any,
     [{ _id: 'group-2', platformCampaignId: 'cmp-2' }] as any,
     new Date('2026-02-11T00:00:00.000Z'),
+    '999888777',
   );
   assert.ok(
     capturedGoogleQuery.includes("segments.date = '2026-02-11'"),
@@ -664,6 +959,71 @@ async function main() {
   assert.ok(
     !capturedGoogleQuery.includes("segments.date = '20260211'"),
     'Google sync query must not use YYYYMMDD date format',
+  );
+  assert.equal(
+    capturedGoogleHeaders['login-customer-id'],
+    '999888777',
+    'Google MCC sync must pass login-customer-id when syncing child accounts through a manager token',
+  );
+
+  let googleManagerRunCalled = false;
+  (adsService as any).getTokenByIdForUse = async () => ({
+    _id: 'tok-google-mcc',
+    platform: 'GOOGLE',
+    tokenType: 'GOOGLE_MCC',
+    accessToken: 'enc-google',
+    save: async () => null,
+  });
+  (adsService as any).decrypt = (_value: string) => 'google-access-token';
+  (adsService as any).runGoogleMccTokenSync = async (_tokenDoc: any, accessToken: string, syncDates: Date[]) => {
+    googleManagerRunCalled = accessToken === 'google-access-token' && syncDates.length === 1;
+    return {
+      synced: 2,
+      adAccountsSynced: 1,
+      adGroupsSynced: 1,
+      fanpagesSynced: 0,
+      errors: [],
+    };
+  };
+  const googleManagerSyncResult = await adsService.syncGoogleMccToken('tok-google-mcc', '2026-02-11');
+  assert.ok(
+    googleManagerRunCalled,
+    'Google MCC token sync must dispatch to the manager-level sync pipeline',
+  );
+  assert.equal(
+    googleManagerSyncResult.adAccountsSynced,
+    1,
+    'Google MCC token sync must return manager-level account discovery counts',
+  );
+
+  let tiktokBusinessCenterRunCalled = false;
+  (adsService as any).getTokenByIdForUse = async () => ({
+    _id: 'tok-tiktok-bc',
+    platform: 'TIKTOK',
+    tokenType: 'TIKTOK_BUSINESS_CENTER',
+    accessToken: 'enc-tiktok',
+    save: async () => null,
+  });
+  (adsService as any).decrypt = (_value: string) => 'tiktok-access-token';
+  (adsService as any).runTikTokBusinessCenterTokenSync = async (_tokenDoc: any, accessToken: string, syncDates: Date[]) => {
+    tiktokBusinessCenterRunCalled = accessToken === 'tiktok-access-token' && syncDates.length === 1;
+    return {
+      synced: 3,
+      adAccountsSynced: 2,
+      adGroupsSynced: 2,
+      fanpagesSynced: 0,
+      errors: [],
+    };
+  };
+  const tiktokBusinessCenterSyncResult = await adsService.syncTikTokBusinessCenterToken('tok-tiktok-bc', '2026-02-11');
+  assert.ok(
+    tiktokBusinessCenterRunCalled,
+    'TikTok Business Center token sync must dispatch to the manager-level sync pipeline',
+  );
+  assert.equal(
+    tiktokBusinessCenterSyncResult.adGroupsSynced,
+    2,
+    'TikTok Business Center token sync must return manager-level campaign discovery counts',
   );
 
   console.log('PASS: update ads cost -> financial control recalculation checks');

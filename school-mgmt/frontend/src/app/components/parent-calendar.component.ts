@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 interface SessionItem {
   _id: string;
@@ -47,7 +48,7 @@ const STUDENT_COLORS = [
 @Component({
   selector: 'app-parent-calendar',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -55,6 +56,7 @@ const STUDENT_COLORS = [
       <p>Xem lịch các buổi học theo tháng.</p>
     </div>
   </header>
+  <app-flow-guide featureKey="parent-calendar"></app-flow-guide>
 
   <!-- Student Legend -->
   <section class="legend" *ngIf="studentList().length > 0">

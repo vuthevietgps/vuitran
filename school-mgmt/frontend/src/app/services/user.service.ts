@@ -11,8 +11,30 @@ export interface UserItem {
   role: string;
   status?: string;
   phone?: string;
+  saleOwnerId?: string | null;
+  saleOwnerName?: string;
   facebookLink?: string;
   address?: string;
+  adGroupId?: string | null;
+  adGroupName?: string;
+  adPlatform?: string;
+  adAttributionSource?: string | null;
+}
+
+export interface ParentAdsAttributionItem {
+  parentUserId: string;
+  parentName?: string;
+  parentPhone?: string;
+  parentKey?: string | null;
+  adGroupId?: string | null;
+  adGroupName?: string;
+  platform?: string;
+  attributionModel?: string | null;
+  sourceType?: string | null;
+  firstAttributedAt?: string | null;
+  lastConfirmedAt?: string | null;
+  notes?: string;
+  matchedBy?: 'PARENT_USER' | 'PHONE_FALLBACK' | 'UNASSIGNED';
 }
 
 export interface CreateUserPayload {
@@ -21,8 +43,11 @@ export interface CreateUserPayload {
   password: string;
   fullName: string;
   role: string;
+  phone?: string;
   facebookLink?: string;
   address?: string;
+  saleOwnerId?: string;
+  managedSales?: string[];
 }
 
 export type UpdateUserPayload = Partial<CreateUserPayload>;
@@ -35,6 +60,18 @@ export class UserService {
     try {
       return await firstValueFrom(
         this.http.get<UserItem[]>(`${environment.apiBase}/users`, { withCredentials: true }),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async listDirectory(): Promise<UserItem[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<UserItem[]>(`${environment.apiBase}/users/directory`, {
+          withCredentials: true,
+        }),
       );
     } catch {
       return [];
@@ -71,18 +108,16 @@ export class UserService {
     }
   }
 
-  async create(payload: CreateUserPayload): Promise<boolean> {
-    await firstValueFrom(
-      this.http.post(`${environment.apiBase}/users`, payload, { withCredentials: true }),
+  async create(payload: CreateUserPayload): Promise<UserItem> {
+    return firstValueFrom(
+      this.http.post<UserItem>(`${environment.apiBase}/users`, payload, { withCredentials: true }),
     );
-    return true;
   }
 
-  async update(id: string, payload: UpdateUserPayload): Promise<boolean> {
-    await firstValueFrom(
-      this.http.patch(`${environment.apiBase}/users/${id}`, payload, { withCredentials: true }),
+  async update(id: string, payload: UpdateUserPayload): Promise<UserItem> {
+    return firstValueFrom(
+      this.http.patch<UserItem>(`${environment.apiBase}/users/${id}`, payload, { withCredentials: true }),
     );
-    return true;
   }
 
   async remove(id: string): Promise<boolean> {
@@ -90,5 +125,31 @@ export class UserService {
       this.http.delete(`${environment.apiBase}/users/${id}`, { withCredentials: true }),
     );
     return true;
+  }
+
+  async getParentAdsAttribution(id: string): Promise<ParentAdsAttributionItem> {
+    return firstValueFrom(
+      this.http.get<ParentAdsAttributionItem>(`${environment.apiBase}/users/${id}/ads-attribution`, {
+        withCredentials: true,
+      }),
+    );
+  }
+
+  async updateParentAdsAttribution(id: string, payload: { adGroupId: string }): Promise<ParentAdsAttributionItem> {
+    return firstValueFrom(
+      this.http.patch<ParentAdsAttributionItem>(
+        `${environment.apiBase}/users/${id}/ads-attribution`,
+        payload,
+        { withCredentials: true },
+      ),
+    );
+  }
+
+  async clearParentAdsAttribution(id: string): Promise<ParentAdsAttributionItem> {
+    return firstValueFrom(
+      this.http.delete<ParentAdsAttributionItem>(`${environment.apiBase}/users/${id}/ads-attribution`, {
+        withCredentials: true,
+      }),
+    );
   }
 }

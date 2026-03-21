@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { WorkSessionService } from '../services/work-session.service';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE: 'Đang online',
   COMPLETED: 'Hoàn thành',
@@ -19,7 +21,7 @@ const STATUS_COLORS: Record<string, string> = {
 @Component({
   selector: 'app-work-sessions',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -30,6 +32,8 @@ const STATUS_COLORS: Record<string, string> = {
       {{ viewMode() === 'list' ? '📊 Xem tổng hợp tháng' : '📋 Xem danh sách' }}
     </button>
   </header>
+
+  <app-flow-guide featureKey="work-sessions"></app-flow-guide>
 
   <!-- Summary stats bar -->
   <section class="stats" *ngIf="viewMode() === 'list'">

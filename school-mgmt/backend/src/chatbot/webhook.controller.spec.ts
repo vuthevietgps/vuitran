@@ -16,11 +16,13 @@ describe('WebhookController', () => {
     parseTikTokWebhookPayload: jest.fn(),
   };
 
+  const webhookQueue = { add: jest.fn().mockResolvedValue({}) };
+
   let controller: WebhookController;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    controller = new WebhookController(chatbotService as any, webhookService as any);
+    controller = new WebhookController(chatbotService as any, webhookService as any, webhookQueue as any);
   });
 
   it('does not process Facebook message when appSecret is set but signature is missing', async () => {
@@ -52,10 +54,10 @@ describe('WebhookController', () => {
     expect(status).toHaveBeenCalledWith(HttpStatus.OK);
     expect(send).toHaveBeenCalledWith('EVENT_RECEIVED');
     expect(webhookService.parseFacebookWebhookPayload).not.toHaveBeenCalled();
-    expect(chatbotService.handleIncomingCustomerMessage).not.toHaveBeenCalled();
+    expect(webhookQueue.add).not.toHaveBeenCalled();
   });
 
-  it('processes Facebook message when signature is present and valid', async () => {
+  it('enqueues a job when Facebook signature is present and valid', async () => {
     chatbotService.findFanpageByPageId.mockResolvedValue({
       _id: { toString: () => 'fanpage-2' },
       appSecret: 'encrypted-secret',
@@ -85,6 +87,73 @@ describe('WebhookController', () => {
 
     expect(webhookService.verifyFacebookSignature).toHaveBeenCalled();
     expect(webhookService.parseFacebookWebhookPayload).toHaveBeenCalled();
-    expect(chatbotService.handleIncomingCustomerMessage).toHaveBeenCalledTimes(1);
+    expect(webhookQueue.add).toHaveBeenCalledTimes(1);
+    expect(webhookQueue.add).toHaveBeenCalledWith(
+      'process-message',
+      expect.objectContaining({ fanpageId: 'fanpage-2', platformUserId: 'sender-2' }),
+      expect.any(Object),
+    );
+  });
+
+  it('does not process TikTok message when appSecret is set but signature is missing', async () => {
+    chatbotService.findFanpageByPageId.mockResolvedValue({
+      _id: { toString: () => 'fanpage-3' },
+      appSecret: 'encrypted-secret',
+    });
+
+    const req: any = {
+      headers: {},
+      body: {},
+      rawBody: Buffer.from('{}'),
+    };
+    const status = jest.fn().mockReturnThis();
+    const send = jest.fn().mockReturnThis();
+    const res: any = { status, send };
+
+    await controller.handleTikTok('page-3', req, res);
+
+    expect(status).toHaveBeenCalledWith(HttpStatus.OK);
+    expect(send).toHaveBeenCalledWith('OK');
+    expect(webhookService.parseTikTokWebhookPayload).not.toHaveBeenCalled();
+    expect(webhookQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('enqueues a job when TikTok signature is present and valid', async () => {
+    chatbotService.findFanpageByPageId.mockResolvedValue({
+      _id: { toString: () => 'fanpage-4' },
+      appSecret: 'encrypted-secret',
+    });
+    chatbotService.getDecryptedAppSecret.mockReturnValue('plain-secret');
+    webhookService.verifyTikTokSignature.mockReturnValue(true);
+    webhookService.parseTikTokWebhookPayload.mockReturnValue([
+      {
+        senderId: 'sender-4',
+        messageText: '',
+        senderName: 'User 4',
+        adRefParam: 'tt-ad-99',
+        messageId: 'msg-4',
+      },
+    ]);
+
+    const req: any = {
+      headers: { 'tiktok-signature': 't=1710000000,s=dummy' },
+      body: { data: [] },
+      rawBody: Buffer.from('{"data":[]}'),
+    };
+    const status = jest.fn().mockReturnThis();
+    const send = jest.fn().mockReturnThis();
+    const res: any = { status, send };
+
+    await controller.handleTikTok('page-4', req, res);
+
+    expect(webhookService.verifyTikTokSignature).toHaveBeenCalled();
+    expect(webhookService.parseTikTokWebhookPayload).toHaveBeenCalled();
+    expect(webhookQueue.add).toHaveBeenCalledTimes(1);
+    expect(webhookQueue.add).toHaveBeenCalledWith(
+      'process-message',
+      expect.objectContaining({ fanpageId: 'fanpage-4', platformUserId: 'sender-4' }),
+      expect.any(Object),
+    );
   });
 });
+

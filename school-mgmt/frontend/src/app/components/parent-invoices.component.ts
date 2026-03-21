@@ -4,6 +4,8 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface StudentInvoice {
   _id: string;
   invoiceNumber: string;
@@ -41,7 +43,7 @@ const STATUS_COLORS: Record<string, string> = {
 @Component({
   selector: 'app-parent-invoices',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -49,6 +51,8 @@ const STATUS_COLORS: Record<string, string> = {
       <p>Theo dõi hóa đơn và buổi học còn lại của con.</p>
     </div>
   </header>
+
+  <app-flow-guide featureKey="parent-invoices"></app-flow-guide>
 
   <!-- Summary cards -->
   <section class="stats" *ngIf="summary()">

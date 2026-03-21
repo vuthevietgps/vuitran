@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { TeacherService, TeacherProfile, TeacherFullProfile, Qualification, AvailabilitySlot, BankInfo } from '../services/teacher.service';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface ProfileForm {
   subjects: string;
   grades: string;
@@ -36,7 +38,7 @@ interface AvailabilityForm {
 @Component({
   selector: 'app-teacher-profile',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <div class="profile-page">
     <header class="page-header">
@@ -51,6 +53,8 @@ interface AvailabilityForm {
         <button class="btn primary" (click)="startEdit()">✏️ Chỉnh sửa hồ sơ</button>
       </div>
     </header>
+
+  <app-flow-guide featureKey="teacher-profile"></app-flow-guide>
 
     <div *ngIf="loading()" class="loading-state">
       <div class="spinner"></div>

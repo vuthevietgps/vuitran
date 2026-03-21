@@ -72,6 +72,42 @@ export class ExportController {
     this.sendCsv(res, csv, 'diem-danh');
   }
 
+  @Get('ads-parent-profit')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  async exportAdsParentProfit(
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('adGroupId') adGroupId: string,
+    @Query('platform') platform: string,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const csv = await this.exportService.exportAdsParentProfitCsv(
+      { startDate, endDate, adGroupId, platform },
+      req.user,
+    );
+    this.sendCsv(res, csv, 'ads-parent-profit');
+  }
+
+  @Get('ads-realized-cohort')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
+  async exportAdsRealizedCohort(
+    @Query('startDate') startDate: string,
+    @Query('endDate') endDate: string,
+    @Query('maturityDays') maturityDays: string,
+    @Query('adGroupId') adGroupId: string,
+    @Query('platform') platform: string,
+    @Query('refundRatePercentX') refundRatePercentX: string,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const csv = await this.exportService.exportAdsRealizedCohortCsv(
+      { startDate, endDate, maturityDays, adGroupId, platform, refundRatePercentX },
+      req.user,
+    );
+    this.sendCsv(res, csv, 'ads-realized-cohort');
+  }
+
   private sendCsv(res: Response, csv: string, filename: string) {
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');

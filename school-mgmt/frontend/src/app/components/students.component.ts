@@ -5,6 +5,8 @@ import { StudentItem, StudentService } from '../services/student.service';
 import { UserItem, UserService } from '../services/user.service';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 interface StudentForm {
   studentCode: string;
   fullName: string;
@@ -20,15 +22,17 @@ interface StudentForm {
 @Component({
   selector: 'app-students',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
     <header class="page-header">
       <div>
         <h2>Quan ly hoc sinh</h2>
         <p>Theo doi thong tin phu huynh va anh nhan dien.</p>
       </div>
-      <button class="primary" (click)="openModal()">+ Them hoc sinh</button>
+      <button class="primary" (click)="openModal()" *ngIf="canMutateStudents">+ Them hoc sinh</button>
     </header>
+
+  <app-flow-guide featureKey="students"></app-flow-guide>
 
     <section class="filters">
       <input placeholder="Tim theo ten hoac ma hoc sinh" [(ngModel)]="keyword" />
@@ -61,7 +65,7 @@ interface StudentForm {
             <td>{{ s.parentBirthMonth ? 'T' + s.parentBirthMonth : '-' }}</td>
             <td>{{s.parentPhone}}</td>
             <td class="actions-cell">
-              <button class="ghost" (click)="edit(s)">Sua</button>
+              <button class="ghost" (click)="edit(s)" *ngIf="canMutateStudents">Sua</button>
               <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xoa</button>
             </td>
           </tr>
@@ -169,6 +173,7 @@ export class StudentsComponent {
   uploadError = signal('');
   uploading = signal(false);
   form: StudentForm = this.blankForm();
+  canMutateStudents = false;
   canDeleteStudents = false;
   editingStudent: StudentItem | null = null;
   monthOptions = [1,2,3,4,5,6,7,8,9,10,11,12];
@@ -180,7 +185,9 @@ export class StudentsComponent {
   ) {
     this.reload();
     this.loadParents();
-    this.canDeleteStudents = this.auth.userSignal()?.role === 'DIRECTOR';
+    const role = this.auth.userSignal()?.role;
+    this.canMutateStudents = role === 'DIRECTOR' || role === 'SALE' || role === 'OPS';
+    this.canDeleteStudents = role === 'DIRECTOR';
   }
 
   filtered = computed(() => {
@@ -225,6 +232,7 @@ export class StudentsComponent {
   }
 
   openModal() {
+    if (!this.canMutateStudents) return;
     this.editingStudent = null;
     this.form = this.blankForm();
     this.error.set('');
@@ -234,6 +242,7 @@ export class StudentsComponent {
   }
 
   edit(student: StudentItem) {
+    if (!this.canMutateStudents) return;
     this.editingStudent = student;
     this.form = {
       studentCode: student.studentCode || '',

@@ -10,6 +10,7 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { MarketingAttributionModule } from '../marketing-attribution/marketing-attribution.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { User, UserSchema } from '../users/schemas/user.schema';
       { name: User.name, schema: UserSchema },
     ]),
     AuditLogModule,
+    MarketingAttributionModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, EnrollmentService],

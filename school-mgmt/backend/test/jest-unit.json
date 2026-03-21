@@ -1,11 +1,20 @@
 {
   "moduleFileExtensions": ["js", "json", "ts"],
-  "rootDir": "..",
-  "testRegex": "src/.*\\.spec\\.ts$",
+  "rootDir": "../src",
+  "testRegex": ".*\\.spec\\.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "collectCoverageFrom": [
+    "**/*.(t|j)s",
+    "!**/main.ts",
+    "!**/*.module.ts",
+    "!**/*.dto.ts",
+    "!**/*.schema.ts"
+  ],
+  "coverageDirectory": "../coverage/unit",
+  "coverageReporters": ["text", "lcov", "html", "json-summary"],
   "testEnvironment": "node",
-  "setupFiles": ["<rootDir>/test/setup-env.ts"],
+  "setupFiles": ["<rootDir>/../test/setup-env.ts"],
   "passWithNoTests": true
 }

@@ -10,6 +10,8 @@ import {
 } from '../services/salary-config.service';
 import { AuthService } from '../services/auth.service';
 
+import { FlowGuideComponent } from './shared/flow-guide.component';
+
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: '#10b981',
   INACTIVE: '#6b7280',
@@ -28,7 +30,7 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-salary-config',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -37,6 +39,8 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
     </div>
     <button class="primary" (click)="openCreate()" *ngIf="isManager()">+ Tạo cấu hình</button>
   </header>
+
+  <app-flow-guide featureKey="salary-config"></app-flow-guide>
 
   <!-- Manager view: list all configs -->
   <ng-container *ngIf="isManager(); else myView">

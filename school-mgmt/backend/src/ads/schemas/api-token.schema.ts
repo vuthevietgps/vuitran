@@ -13,6 +13,8 @@ export enum ApiTokenStatus {
 export enum ApiTokenType {
   ACCOUNT = 'ACCOUNT',
   FACEBOOK_SYSTEM_USER = 'FACEBOOK_SYSTEM_USER',
+  GOOGLE_MCC = 'GOOGLE_MCC',
+  TIKTOK_BUSINESS_CENTER = 'TIKTOK_BUSINESS_CENTER',
 }
 
 @Schema({ timestamps: true })

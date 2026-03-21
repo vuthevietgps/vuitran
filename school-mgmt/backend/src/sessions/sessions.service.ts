@@ -17,7 +17,12 @@ import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
 import { TeacherProfile, TeacherProfileDocument } from '../teachers/schemas/teacher-profile.schema';
-import { Attendance, AttendanceDocument, AttendanceStatus } from '../attendance/schemas/attendance.schema';
+import {
+  Attendance,
+  AttendanceDocument,
+  AttendanceStatus,
+  COUNTED_ATTENDANCE_STATUSES,
+} from '../attendance/schemas/attendance.schema';
 
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
@@ -37,6 +42,11 @@ import {
   NotificationPriority,
   NotificationType,
 } from '../notifications/schemas/notification.schema';
+import { PayrollTransactionService } from '../payroll/payroll-transaction.service';
+import { HoldReason } from '../payroll/schemas/payroll-transaction.schema';
+import { TicketsService } from '../tickets/tickets.service';
+import { TicketType, TicketPriority } from '../tickets/schemas/ticket.schema';
+import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
 
 // ─── Constants ───────────────────────────────────────────────────────
 const TEACHING_REPORT_DEADLINE_HOURS = 24; // Deadline nộp báo cáo: 24h sau buổi học
@@ -56,6 +66,9 @@ export class SessionsService {
     @Inject(forwardRef(() => WalletsService))
     private walletsService: WalletsService,
     private notificationsService: NotificationsService,
+    private payrollTxService: PayrollTransactionService,
+    private ticketsService: TicketsService,
+    private studentSupportSnapshotService: StudentSupportSnapshotService,
   ) {}
 
   private objectIdToString(value: any): string | null {
@@ -110,6 +123,82 @@ export class SessionsService {
       .select('parentUserId')
       .lean();
     return this.objectIdToString((student as any)?.parentUserId);
+  }
+
+  private triggerStudentSupportSnapshotRefreshForSession(
+    session: { parentUserId?: any; studentId?: any },
+    reason: string,
+  ) {
+    void this.refreshStudentSupportSnapshotForSession(session, reason);
+  }
+
+  private triggerStudentSupportSnapshotRefreshForSessions(
+    sessions: Array<{ parentUserId?: any; studentId?: any }>,
+    reason: string,
+  ) {
+    void this.refreshStudentSupportSnapshotsForSessions(sessions, reason);
+  }
+
+  private async refreshStudentSupportSnapshotForSession(
+    session: { parentUserId?: any; studentId?: any },
+    reason: string,
+  ): Promise<void> {
+    const studentId = this.objectIdToString(session.studentId);
+    if (!studentId) return;
+
+    const parentUserId = await this.resolveParentUserIdForSession({
+      parentUserId: session.parentUserId,
+      studentId: session.studentId,
+    });
+    if (!parentUserId) return;
+
+    try {
+      await this.studentSupportSnapshotService.rebuild(parentUserId, studentId);
+    } catch (err) {
+      this.logger.warn(
+        `[StudentSupportSnapshot] Failed to refresh for student ${studentId} (${reason}): ${this.extractErrorMessage(err)}`,
+      );
+    }
+  }
+
+  private async refreshStudentSupportSnapshotsForSessions(
+    sessions: Array<{ parentUserId?: any; studentId?: any }>,
+    reason: string,
+  ): Promise<void> {
+    const resolvedParents = new Map<string, string | null>();
+    const refreshedKeys = new Set<string>();
+
+    for (const session of sessions) {
+      const studentId = this.objectIdToString(session.studentId);
+      if (!studentId) continue;
+
+      let parentUserId = this.objectIdToString(session.parentUserId);
+      if (!parentUserId) {
+        if (resolvedParents.has(studentId)) {
+          parentUserId = resolvedParents.get(studentId) || null;
+        } else {
+          parentUserId = await this.resolveParentUserIdForSession({
+            parentUserId: session.parentUserId,
+            studentId: session.studentId,
+          });
+          resolvedParents.set(studentId, parentUserId);
+        }
+      }
+
+      if (!parentUserId) continue;
+
+      const refreshKey = `${parentUserId}:${studentId}`;
+      if (refreshedKeys.has(refreshKey)) continue;
+      refreshedKeys.add(refreshKey);
+
+      try {
+        await this.studentSupportSnapshotService.rebuild(parentUserId, studentId);
+      } catch (err) {
+        this.logger.warn(
+          `[StudentSupportSnapshot] Failed to refresh for student ${studentId} (${reason}): ${this.extractErrorMessage(err)}`,
+        );
+      }
+    }
   }
 
   private toSafeNumber(value: unknown, fallback = 0): number {
@@ -301,6 +390,7 @@ export class SessionsService {
     dto: CreateSessionDto,
     createdBy: string,
     actor?: JwtPayload,
+    options?: { skipSnapshotRefresh?: boolean },
   ): Promise<SessionDocument> {
     // Validate class exists
     const classroom = await this.classModel.findById(dto.classId).lean();
@@ -426,7 +516,11 @@ export class SessionsService {
       createdBy: new Types.ObjectId(createdBy),
     });
 
-    return session.save();
+    const savedSession = await session.save();
+    if (!options?.skipSnapshotRefresh) {
+      this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'createSession');
+    }
+    return savedSession;
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -570,7 +664,9 @@ export class SessionsService {
 
     Object.assign(session, dto);
     if (dto.scheduledDate) session.scheduledDate = new Date(dto.scheduledDate);
-    return session.save();
+    const savedSession = await session.save();
+    this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'updateSession');
+    return savedSession;
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -629,7 +725,9 @@ export class SessionsService {
     session.status = SessionStatus.TEACHER_COMPLETED;
     session.confirmation.teacherCompletedAt = new Date();
 
-    return session.save();
+    const savedSession = await session.save();
+    this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'teacherComplete');
+    return savedSession;
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -641,6 +739,9 @@ export class SessionsService {
    * Deadline: trong vòng 24h sau buổi học.
    * Nộp muộn sẽ bị đánh dấu và cảnh báo.
    * Chỉ sessions có teachingReport mới được tính lương.
+   *
+   * FIX FREEZE: Không cho phép sửa báo cáo nếu PayrollTransaction đã APPROVED/PAID.
+   * Điều này đảm bảo tính toàn vẹn dữ liệu cho kiểm toán sau khi kế toán đã chốt sổ.
    */
   async submitTeachingReport(
     sessionId: string,
@@ -661,6 +762,20 @@ export class SessionsService {
       throw new BadRequestException(
         'Chỉ nộp báo cáo cho buổi học đã hoàn thành',
       );
+    }
+
+    // ─── FIX FREEZE: Check PayrollTransaction status ─────────────────────
+    // Không cho phép sửa báo cáo nếu lương đã được duyệt/chi trả
+    const existingPayrollTx = await this.payrollTxService.getBySessionId(sessionId);
+    if (existingPayrollTx) {
+      const lockedStatuses = ['APPROVED', 'PAID'];
+      if (lockedStatuses.includes(existingPayrollTx.status)) {
+        throw new BadRequestException(
+          `Không thể sửa báo cáo - Lương buổi học này đã được ${
+            existingPayrollTx.status === 'PAID' ? 'thanh toán' : 'duyệt'
+          }. Vui lòng liên hệ kế toán nếu cần điều chỉnh.`,
+        );
+      }
     }
 
     // Tính deadline (TEACHING_REPORT_DEADLINE_HOURS sau scheduledDate) — dùng UTC để tránh lệch timezone
@@ -704,12 +819,43 @@ export class SessionsService {
       `Teaching report ${isUpdate ? 'updated' : 'submitted'} for session ${sessionId} by teacher ${teacherUserId} (version ${currentVersion + 1})`,
     );
 
-    return session.save();
+    const savedSession = await session.save();
+
+    // ─── Tạo PayrollTransaction khi lần đầu nộp báo cáo ───────────────
+    // Chỉ tạo khi submit lần đầu (không phải update)
+    // PayrollTransaction sẽ tự động tính penalty nếu nộp trễ
+    if (!isUpdate && savedSession.teacherPayout && savedSession.teacherPayout > 0) {
+      try {
+        await this.payrollTxService.createFromSession({
+          teacherId: savedSession.teacherId.toString(),
+          sessionId: savedSession._id.toString(),
+          classId: savedSession.classId.toString(),
+          studentId: savedSession.studentId.toString(),
+          sessionDate: savedSession.scheduledDate,
+          baseSalary: savedSession.teacherPayout,
+          isLateReport: isLate,
+          lateHours,
+          reportDeadline: deadline,
+          reportSubmittedAt: now,
+          createdBy: teacherUserId,
+        });
+      } catch (err) {
+        // Log error but don't fail the teaching report submission
+        this.logger.error(
+          `Failed to create PayrollTransaction for session ${sessionId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'submitTeachingReport');
+    return savedSession;
   }
 
   /**
    * Nộp báo cáo giảng dạy cho TẤT CẢ sessions của lớp OFFLINE trong 1 ngày.
    * Dùng cho lớp nhóm để GV không phải nộp từng báo cáo riêng lẻ.
+   *
+   * FIX FREEZE: Skip các session có PayrollTransaction đã APPROVED/PAID.
    */
   async bulkSubmitTeachingReport(
     classId: string,
@@ -739,15 +885,35 @@ export class SessionsService {
       );
     }
 
+    // ─── FIX FREEZE: Batch check PayrollTransaction status ─────────────
+    // Lấy tất cả sessions đã có PayrollTransaction APPROVED/PAID để skip
+    const sessionIds = sessions.map((s) => s._id.toString());
+    const lockedSessionIds = new Set<string>();
+    for (const sid of sessionIds) {
+      const payrollTx = await this.payrollTxService.getBySessionId(sid);
+      if (payrollTx && ['APPROVED', 'PAID'].includes(payrollTx.status)) {
+        lockedSessionIds.add(sid);
+      }
+    }
+
     const now = new Date();
     const results: { sessionId: string; status: string; action: string }[] = [];
     let updatedCount = 0;
     let skippedCount = 0;
 
     for (const sess of sessions) {
+      const sessionIdStr = sess._id.toString();
+
+      // FIX FREEZE: Skip sessions có PayrollTransaction đã APPROVED/PAID
+      if (lockedSessionIds.has(sessionIdStr)) {
+        results.push({ sessionId: sessionIdStr, status: sess.status, action: 'SKIPPED_LOCKED' });
+        skippedCount++;
+        continue;
+      }
+
       // Skip sessions đã bị thanh toán (isTeacherPaid=true) để tránh ghi đè sau khi lương đã khóa
       if ((sess as any).isTeacherPaid) {
-        results.push({ sessionId: sess._id.toString(), status: sess.status, action: 'SKIPPED_PAID' });
+        results.push({ sessionId: sessionIdStr, status: sess.status, action: 'SKIPPED_PAID' });
         skippedCount++;
         continue;
       }
@@ -789,6 +955,16 @@ export class SessionsService {
     this.logger.log(
       `Bulk teaching report by teacher ${teacherUserId} for class ${classId} on ${date}: updated=${updatedCount}, skipped=${skippedCount}`,
     );
+
+    if (updatedCount > 0) {
+      this.triggerStudentSupportSnapshotRefreshForSessions(
+        sessions.filter(
+          (session) =>
+            !lockedSessionIds.has(session._id.toString()) && !(session as any).isTeacherPaid,
+        ),
+        'bulkSubmitTeachingReport',
+      );
+    }
 
     return { updatedCount, skippedCount, results };
   }
@@ -833,29 +1009,87 @@ export class SessionsService {
     if (dto.isSatisfied !== undefined) feedback.isSatisfied = dto.isSatisfied;
     session.parentFeedback = feedback;
 
-    // Auto-finalize on parent confirm — use atomic transition to prevent race with autoConfirm cron
+    // ─── Đánh giá & Phân luồng xử lý ─────────────────────────────
+    const shouldHoldSalary =
+      dto.isSatisfied === false ||
+      (dto.overallRating && dto.overallRating <= 2);
+
+    // Xác định trạng thái tiếp theo: bị khiếu nại -> giữ nguyên PARENT_CONFIRMED
+    const nextStatus = shouldHoldSalary ? SessionStatus.PARENT_CONFIRMED : SessionStatus.FINALIZED;
+
+    const updatePayload: any = {
+      status: nextStatus,
+      parentNotes: dto.parentNotes || session.parentNotes,
+      parentRating: dto.parentRating || session.parentRating,
+      parentFeedback: session.parentFeedback,
+      'confirmation.parentConfirmedAt': new Date(),
+    };
+
+    // Chỉ ghi nhận finalizedAt nếu chuyển sang trạng thái FINALIZED
+    if (!shouldHoldSalary) {
+      updatePayload['confirmation.finalizedAt'] = new Date();
+    }
+
+    // Dùng atomic transition để tránh race condition với autoConfirm cron
     const updated = await this.sessionModel.findOneAndUpdate(
       { _id: sessionId, status: SessionStatus.TEACHER_COMPLETED },
-      {
-        $set: {
-          status: SessionStatus.FINALIZED,
-          parentNotes: dto.parentNotes || session.parentNotes,
-          parentRating: dto.parentRating || session.parentRating,
-          parentFeedback: session.parentFeedback,
-          'confirmation.parentConfirmedAt': new Date(),
-          'confirmation.finalizedAt': new Date(),
-        },
-      },
+      { $set: updatePayload },
       { new: true },
     );
     if (!updated) {
       throw new BadRequestException('Buổi học đã được chốt bởi hệ thống');
     }
 
-    // Trừ ví PH
-    await this.deductWalletForSession(updated);
-    await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
+    // CHỈ TRỪ VÍ NẾU PHỤ HUYNH HÀI LÒNG VÀ BUỔI HỌC ĐÃ ĐƯỢC FINALIZED
+    if (!shouldHoldSalary) {
+      await this.deductWalletForSession(updated);
+      await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
+    }
 
+    // ─── Khiếu nại: tạo Ticket cho OPS và đóng băng lương GV ──────
+    if (shouldHoldSalary) {
+      try {
+        const holdDescription = dto.isSatisfied === false
+          ? `Phụ huynh không hài lòng: ${dto.concerns || 'Không có lý do cụ thể'}`
+          : `Đánh giá tổng quan thấp: ${dto.overallRating}/5 sao`;
+
+        // 1. Tự động sinh Ticket ưu tiên cao cho OPS
+        const ticket = await this.ticketsService.create(
+          {
+            type: TicketType.PARENT_COMPLAINT,
+            priority: TicketPriority.HIGH,
+            subject: `[Tự động] Khiếu nại lớp ${(updated.classId as any)?.code || 'N/A'} - Đánh giá kém`,
+            description: `Phụ huynh đánh giá thấp buổi học ngày ${updated.scheduledDate.toLocaleDateString('vi-VN')}.\nLý do hệ thống ghi nhận: ${holdDescription}\n\nGhi chú của phụ huynh: ${dto.parentNotes || 'Không có'}\n\nĐề nghị OPS liên hệ phụ huynh để tìm hiểu nguyên nhân, sau đó chốt buổi học hoặc hủy/hoàn tiền.`,
+            sessionId: updated._id.toString(),
+            classId: updated.classId.toString(),
+            studentId: updated.studentId.toString(),
+            teacherId: updated.teacherId.toString(),
+          },
+          parentUserId,
+          Role.PARENT,
+        );
+
+        // 2. Đóng băng lương và gắn vào Ticket để Kế toán nắm thông tin
+        await this.payrollTxService.holdSalary(
+          updated._id.toString(),
+          HoldReason.PARENT_REJECTED,
+          holdDescription,
+          parentUserId,
+          ticket._id.toString(),
+        );
+
+        this.logger.warn(
+          `Ticket ${ticket.ticketCode} created and PayrollTransaction HELD for session ${sessionId}: ${holdDescription}`,
+        );
+      } catch (err) {
+        // Log error but don't fail the confirmation
+        this.logger.error(
+          `Failed to create complaint ticket or hold salary for session ${sessionId}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    this.triggerStudentSupportSnapshotRefreshForSession(updated, 'parentConfirm');
     return updated;
   }
 
@@ -938,6 +1172,7 @@ export class SessionsService {
     await this.deductWalletForSession(updated);
     await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
 
+    this.triggerStudentSupportSnapshotRefreshForSession(updated, 'manualFinalize');
     return updated;
   }
 
@@ -1000,26 +1235,27 @@ export class SessionsService {
     const hoursBeforeSession = this.calcHoursBefore(session.scheduledDate, session.scheduledStartTime);
     const isLate = policy ? hoursBeforeSession < policy.hoursBeforeSession : false;
 
-    let refundPercent = 100; // Full refund by default
-    if (isLate && policy) {
-      refundPercent = 100 - policy.lateChargePercent;
-    }
-    const refundAmount = Math.round(session.amountCharged * refundPercent / 100);
+    // Zero-Sum Cancel: luôn hoàn 100%, không phạt hủy muộn
+    const originalAmountCharged = session.amountCharged; // Lưu lại số tiền gốc trước khi về 0
+    const refundPercent = 100;
+    const refundAmount = originalAmountCharged; // Hoàn toàn bộ số tiền đã charge
 
     session.status = SessionStatus.CANCELLED;
+    session.amountCharged = 0; // KHÔNG THU TIỀN PH: hủy buổi không tính doanh thu
+    session.teacherPayout = 0; // KHÔNG TRẢ LƯƠNG GV: hủy buổi không tính lương
     session.cancellation = {
       cancelledBy: cancelledByRole,
       cancelledByUserId: new Types.ObjectId(userId),
       cancelReason: dto.cancelReason,
       cancelledAt: new Date(),
-      refundPercent,
+      refundPercent: 100,
       refundAmount,
       isLateCancellation: isLate,
     };
 
     const saved = await session.save();
 
-    // Hoàn tiền vào ví PH - CHIỄ KHI đã trừ tiền trước đó (isPaid = true)
+    // Hoàn tiền vào ví PH - CHỈ KHI đã trừ tiền trước đó (isPaid = true)
     if (refundAmount > 0 && session.parentUserId && session.isPaid) {
       try {
         await this.walletsService.refundForSession({
@@ -1034,6 +1270,7 @@ export class SessionsService {
       }
     }
 
+    this.triggerStudentSupportSnapshotRefreshForSession(saved, 'cancelSession');
     return saved;
   }
 
@@ -1083,6 +1320,7 @@ export class SessionsService {
       },
       actorId,
       actor,
+      { skipSnapshotRefresh: true },
     );
 
     // Link old ↔ new
@@ -1093,6 +1331,7 @@ export class SessionsService {
     oldSession.rescheduledToId = newSession._id as Types.ObjectId;
     await oldSession.save();
 
+    await this.refreshStudentSupportSnapshotForSession(oldSession, 'rescheduleSession');
     return { oldSession, newSession };
   }
 
@@ -1114,16 +1353,9 @@ export class SessionsService {
       throw new ForbiddenException('Ban khong phai giao vien cua buoi hoc nay');
     }
     session.status = SessionStatus.NO_SHOW;
+    session.amountCharged = 0; // KHÔNG THU TIỀN PH: vắng mặt không tính phí
+    session.teacherPayout = 0; // KHÔNG TRẢ LƯƠNG GV: vắng mặt không tính lương
     const saved = await session.save();
-
-    // NO_SHOW: deduct wallet if not already paid (student is charged for no-shows)
-    if (!saved.isPaid && saved.parentUserId) {
-      try {
-        await this.deductWalletForSession(saved);
-      } catch (err) {
-        this.logger.warn(`NO_SHOW deduct failed for session ${saved._id}: ${(err as Error).message}`);
-      }
-    }
 
     return saved;
   }
@@ -1204,6 +1436,7 @@ export class SessionsService {
     });
 
     let confirmed = 0;
+    const autoConfirmedSessions: Array<{ parentUserId?: any; studentId?: any }> = [];
     for (const session of sessions) {
       if (!session.confirmation?.teacherCompletedAt) continue;
 
@@ -1228,9 +1461,17 @@ export class SessionsService {
         // Trừ ví PH
         await this.deductWalletForSession(updated);
         await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
+        autoConfirmedSessions.push(updated);
 
         confirmed++;
       }
+    }
+
+    if (autoConfirmedSessions.length) {
+      this.triggerStudentSupportSnapshotRefreshForSessions(
+        autoConfirmedSessions,
+        'autoConfirmSessions',
+      );
     }
 
     if (confirmed > 0) {
@@ -1333,6 +1574,52 @@ export class SessionsService {
       this.logger.log(
         `Auto-decided ${result.modifiedCount} orphan trial sessions (teacher-paid-only after ${TRIAL_AUTO_DECIDE_DAYS} days)`,
       );
+    }
+  }
+
+  // ──────────────────────────────────────────────────────────────────
+  //  CRON: NHẮC NHỞ BÁO CÁO GIẢNG DẠY TRỄ HẠN
+  //  Chạy mỗi giờ, tìm sessions đã dạy xong quá 24h nhưng chưa nộp báo cáo
+  // ──────────────────────────────────────────────────────────────────
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async checkLateTeachingReports() {
+    const now = new Date();
+    // Tìm các buổi học đã dạy xong quá 24h nhưng chưa nộp báo cáo
+    const deadlineThreshold = new Date(now.getTime() - TEACHING_REPORT_DEADLINE_HOURS * 60 * 60 * 1000);
+
+    const lateSessions = await this.sessionModel
+      .find({
+        status: { $in: [SessionStatus.TEACHER_COMPLETED, SessionStatus.FINALIZED] },
+        hasTeachingReport: false,
+        scheduledDate: { $lte: deadlineThreshold },
+        isTeacherPaid: false, // Chưa tính lương → còn có thể cứu
+      })
+      .select('_id teacherId scheduledDate')
+      .limit(100); // Xử lý theo batch để tránh quá tải
+
+    if (lateSessions.length === 0) return;
+
+    let notified = 0;
+    for (const session of lateSessions) {
+      try {
+        await this.notificationsService.create({
+          recipientId: session.teacherId.toString(),
+          type: NotificationType.SYSTEM,
+          priority: NotificationPriority.HIGH,
+          title: 'Báo cáo giảng dạy trễ hạn',
+          message: `Buổi học ngày ${session.scheduledDate.toLocaleDateString('vi-VN')} chưa được nộp báo cáo. Vui lòng nộp để được tính lương.`,
+          targetId: (session._id as Types.ObjectId).toString(),
+          targetModule: 'Session',
+        });
+        notified++;
+      } catch (err) {
+        this.logger.warn(`Failed to send late-report notification for session ${session._id}: ${err}`);
+      }
+    }
+
+    if (notified > 0) {
+      this.logger.warn(`Sent ${notified} late teaching report reminder notifications`);
     }
   }
 
@@ -1955,7 +2242,8 @@ export class SessionsService {
       status: SessionStatus.FINALIZED,
       'confirmation.finalizedAt': { $lt: cutoffExclusive },
       isTeacherPaid: false,
-      hasTeachingReport: true, // Chỉ tính lương buổi có báo cáo giảng dạy
+      hasTeachingReport: true, // Điều kiện 1: Đã nộp báo cáo giảng dạy
+      'teachingReport.lessonContent': { $exists: true, $ne: '' }, // Double-check: lessonContent phải có nội dung
     });
     if (mongoSession) query = query.session(mongoSession);
     const candidateSessions = await query;
@@ -1968,7 +2256,7 @@ export class SessionsService {
     let attendanceQuery = this.attendanceModel
       .find({
         sessionId: { $in: candidateIds },
-        status: AttendanceStatus.PRESENT,
+        status: { $in: [...COUNTED_ATTENDANCE_STATUSES] },
       })
       .select('sessionId checkedBy');
     if (mongoSession) attendanceQuery = attendanceQuery.session(mongoSession);

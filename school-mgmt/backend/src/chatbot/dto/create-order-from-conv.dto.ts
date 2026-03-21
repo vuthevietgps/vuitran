@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsArray, ValidateNested, IsNumber, Min } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsArray, ValidateNested, IsNumber, Min, IsMongoId } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class OrderItemDto {
@@ -57,4 +57,8 @@ export class CreateOrderFromConvDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  saleId?: string;
 }

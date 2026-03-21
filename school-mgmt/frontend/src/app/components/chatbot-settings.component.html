@@ -5,9 +5,12 @@
   </div>
 </header>
 
+<app-flow-guide featureKey="chatbot-settings"></app-flow-guide>
+
 <div class="tabs">
   <button [class.active]="activeTab === 'fanpages'" (click)="switchTab('fanpages')">Fanpages</button>
   <button *ngIf="canManageTokenLibrary()" [class.active]="activeTab === 'tokens'" (click)="switchTab('tokens')">OpenAI Tokens</button>
+  <button *ngIf="canViewAiAssistantProfiles()" [class.active]="activeTab === 'profiles'" (click)="switchTab('profiles')">AI Profiles</button>
 </div>
 
 <section *ngIf="activeTab === 'fanpages'">
@@ -133,6 +136,48 @@
   </ng-template>
 </section>
 
+<section *ngIf="activeTab === 'profiles' && canViewAiAssistantProfiles()">
+  <div class="toolbar">
+    <div class="helper-inline">
+      Cau hinh rules, pham vi tra loi va token mac dinh cho tung loai AI trong he thong.
+    </div>
+    <button *ngIf="canManageAiAssistantProfiles()" class="primary" (click)="openAiProfileModal()">+ Them AI profile</button>
+  </div>
+
+  <table class="data-table" *ngIf="aiAssistantProfiles().length; else emptyProfiles">
+    <thead>
+      <tr>
+        <th>Loai AI</th>
+        <th>Label</th>
+        <th>Mo ta</th>
+        <th>Rules</th>
+        <th>Token mac dinh</th>
+        <th>Trang thai</th>
+        <th>Hanh dong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let profile of aiAssistantProfiles()">
+        <td><strong>{{ aiAssistantTypeLabel(profile.assistantType) }}</strong></td>
+        <td>{{ profile.label }}</td>
+        <td>{{ profile.description || '-' }}</td>
+        <td class="description-cell" [title]="profile.rulesPrompt || ''">{{ rulesPreview(profile.rulesPrompt) }}</td>
+        <td>{{ aiProfileTokenLabel(profile) }}</td>
+        <td><span class="badge" [style.background]="statusColor(profile.status)">{{ statusLabel(profile.status) }}</span></td>
+        <td class="actions">
+          <button *ngIf="canManageAiAssistantProfiles()" class="link-btn" (click)="editAiProfile(profile)">Sua</button>
+          <button *ngIf="canManageAiAssistantProfiles()" class="link-btn danger" (click)="removeAiProfile(profile)">Xoa</button>
+          <span *ngIf="!canManageAiAssistantProfiles()">-</span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <ng-template #emptyProfiles>
+    <div class="empty-state">Chua co AI profile nao.</div>
+  </ng-template>
+</section>
+
 <div class="modal-backdrop" *ngIf="showFpModal()">
   <div class="modal">
     <h3>{{ editingFanpage ? 'Sua fanpage' : 'Them fanpage' }}</h3>
@@ -240,5 +285,50 @@
       </button>
     </div>
     <p class="error" *ngIf="tokenError()">{{ tokenError() }}</p>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showAiProfileModal()">
+  <div class="modal">
+    <h3>{{ editingAiProfile ? 'Sua AI profile' : 'Them AI profile' }}</h3>
+
+    <label>
+      Loai AI
+      <select [(ngModel)]="aiProfileForm.assistantType" [disabled]="!!editingAiProfile">
+        <option value="PARENT_SUPPORT">Cham soc phu huynh</option>
+        <option value="INTERNAL_SUPPORT">Ho tro noi bo</option>
+        <option value="TEACHER_SUPPORT">Tro ly giao vien</option>
+        <option value="LEAD_CARE">Cham soc lead</option>
+      </select>
+    </label>
+    <label>Label <input [(ngModel)]="aiProfileForm.label" /></label>
+    <label>Mo ta ngan <input [(ngModel)]="aiProfileForm.description" /></label>
+    <label>
+      OpenAI token mac dinh
+      <select [(ngModel)]="aiProfileForm.defaultOpenAITokenId">
+        <option value="">-- Fallback theo cau hinh he thong --</option>
+        <option *ngFor="let token of tokens()" [value]="token._id">{{ token.label }} ({{ token.model }})</option>
+      </select>
+    </label>
+    <label>
+      Rules cho AI
+      <textarea rows="8" [(ngModel)]="aiProfileForm.rulesPrompt" placeholder="Vi du: chi duoc tra loi dua tren du lieu noi bo da xac thuc; neu gap doi lich, hoan tien, khiu nai nghiem trong thi phai handoff..."></textarea>
+    </label>
+
+    <label *ngIf="editingAiProfile">
+      Trang thai
+      <select [(ngModel)]="aiProfileForm.status">
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="INACTIVE">Ngung</option>
+      </select>
+    </label>
+
+    <div class="modal-actions">
+      <button class="secondary" (click)="closeAiProfileModal()">Huy</button>
+      <button class="primary" [disabled]="saving()" (click)="saveAiProfile()">
+        {{ saving() ? 'Dang luu...' : 'Luu' }}
+      </button>
+    </div>
+    <p class="error" *ngIf="aiProfileError()">{{ aiProfileError() }}</p>
   </div>
 </div>

@@ -7,6 +7,7 @@ import { AuthService } from '../services/auth.service';
 import { UserService } from '../services/user.service';
 import { AdsService, AdGroupItem } from '../services/ads.service';
 import { Role } from '../models/role.enum';
+import { FlowGuideComponent } from './shared/flow-guide.component';
 
 const STATUS_LABELS: Record<string, string> = {
   NEW: 'Mới', CONTACTED: 'Đã liên hệ', CONSULTING: 'Đang tư vấn',
@@ -33,7 +34,7 @@ const LOST_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-leads',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, FlowGuideComponent],
   template: `
   <header class="page-header">
     <div>
@@ -42,6 +43,8 @@ const LOST_LABELS: Record<string, string> = {
     </div>
     <button class="primary" (click)="openCreate()">+ Thêm Lead</button>
   </header>
+
+  <app-flow-guide featureKey="leads"></app-flow-guide>
 
   <!-- Pipeline summary -->
   <section class="pipeline" *ngIf="pipeline()">

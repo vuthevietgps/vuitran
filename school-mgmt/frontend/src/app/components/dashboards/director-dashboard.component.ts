@@ -615,7 +615,7 @@ export class DirectorDashboardComponent implements OnInit {
 
   roleLabel(role: string): string {
     const map: Record<string, string> = {
-      DIRECTOR: 'Giám đốc', ACCOUNTING: 'Kế toán', OPS: 'Vận hành',
+      DIRECTOR: 'Giám đốc', ACCOUNTING: 'Kế toán', OPS: 'Vận hành', ADSMANAGER: 'Ads manager',
       TEACHER: 'Giáo viên', SALE: 'Sale', HCNS: 'HC-NS',
       MANAGER: 'Quản lý', STAFF: 'Nhân viên', PARTIME: 'Part-time',
       PARENT: 'Phụ huynh',

@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ClassesService } from './classes.service';
 import { ClassesController } from './classes.controller';
@@ -7,6 +7,7 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
 import { UsersModule } from '../users/users.module';
 import { StudentsModule } from '../students/students.module';
+import { MessagesModule } from '../messages/messages.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { StudentsModule } from '../students/students.module';
     ]),
     UsersModule,
     StudentsModule,
+    forwardRef(() => MessagesModule),
   ],
   controllers: [ClassesController],
   providers: [ClassesService],

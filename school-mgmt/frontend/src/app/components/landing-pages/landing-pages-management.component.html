@@ -1,0 +1,208 @@
+<div class="page-shell">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Landing Pages</p>
+      <h2>Quan ly landing page va tracking</h2>
+      <p class="subtext">Nhap pixel/tag ID, publish trang public va xem submission da dinh danh phu huynh, vi va ad group ra sao.</p>
+    </div>
+    <button class="primary" *ngIf="canEdit()" (click)="openCreate()">Tao landing page</button>
+  </div>
+
+  <app-flow-guide featureKey="landing-pages"></app-flow-guide>
+
+  <div class="error-banner" *ngIf="error()">{{ error() }}</div>
+
+  <div class="tabs">
+    <button [class.active]="activeTab() === 'pages'" (click)="activeTab.set('pages')">Landing pages</button>
+    <button [class.active]="activeTab() === 'submissions'" (click)="activeTab.set('submissions')">Submissions</button>
+  </div>
+
+  <ng-container *ngIf="activeTab() === 'pages'">
+    <div class="toolbar">
+      <div class="filters">
+        <input [(ngModel)]="pageSearch" placeholder="Tim theo ten, slug, code" />
+        <select [(ngModel)]="pageStatus">
+          <option value="">Tat ca trang thai</option>
+          <option value="DRAFT">Nhap</option>
+          <option value="ACTIVE">Hoat dong</option>
+          <option value="ARCHIVED">Luu tru</option>
+        </select>
+      </div>
+    </div>
+
+    <table class="data-table" *ngIf="filteredPages().length > 0; else emptyPages">
+      <thead>
+        <tr>
+          <th>Trang</th>
+          <th>Public URL</th>
+          <th>Tracking</th>
+          <th>Mac dinh</th>
+          <th>Trang thai</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let page of filteredPages()">
+          <td>
+            <div class="title">{{ page.name }}</div>
+            <div class="mono">{{ page.pageCode }} | /lp/{{ page.slug }}</div>
+          </td>
+          <td>
+            <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
+          </td>
+          <td>{{ trackingSummary(page) }}</td>
+          <td>
+            <div>{{ page.defaultAdGroupName || 'Khong gan ad group' }}</div>
+            <div class="mono">{{ platformLabel(page.defaultPlatform) }}</div>
+          </td>
+          <td><span class="badge" [class.active]="page.status === 'ACTIVE'">{{ statusLabel(page.status) }}</span></td>
+          <td class="actions">
+            <button class="link-btn" (click)="copyPublicUrl(page)">Copy link</button>
+            <button class="link-btn" *ngIf="canEdit()" (click)="editPage(page)">Sua</button>
+            <button class="link-btn danger" *ngIf="canDelete()" (click)="removePage(page)">Xoa</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <ng-template #emptyPages>
+      <div class="empty-state">Chua co landing page nao.</div>
+    </ng-template>
+  </ng-container>
+
+  <ng-container *ngIf="activeTab() === 'submissions'">
+    <div class="toolbar">
+      <div class="filters">
+        <input [(ngModel)]="submissionSearch" placeholder="Tim theo phu huynh, hoc sinh, lead code" />
+        <select [(ngModel)]="submissionLandingPageId">
+          <option value="">Tat ca landing page</option>
+          <option *ngFor="let page of pages()" [value]="page._id">{{ page.name }}</option>
+        </select>
+      </div>
+    </div>
+
+    <table class="data-table" *ngIf="filteredSubmissions().length > 0; else emptySubmissions">
+      <thead>
+        <tr>
+          <th>Submission</th>
+          <th>Phu huynh</th>
+          <th>Ad attribution</th>
+          <th>Match he thong</th>
+          <th>Lead</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let submission of filteredSubmissions()">
+          <td>
+            <div class="title">{{ submission.landingPageName }}</div>
+            <div class="mono">{{ submission.submissionCode }}</div>
+            <div class="time">{{ formatDate(submission.createdAt) }}</div>
+          </td>
+          <td>
+            <div>{{ submission.parentName }}</div>
+            <div class="mono">{{ submission.parentPhone }}</div>
+            <div>{{ submission.studentName || '-' }}</div>
+          </td>
+          <td>
+            <div>{{ submission.adGroupName || 'Chua map ad group' }}</div>
+            <div class="mono">{{ platformLabel(submission.platform) }}</div>
+            <div class="mono" *ngIf="submission.adRefParam">ref: {{ submission.adRefParam }}</div>
+          </td>
+          <td>
+            <div>{{ matchLabel(submission.matchSource) }}</div>
+            <div class="mono">parent: {{ submission.matchedParentUserId || '-' }}</div>
+            <div class="mono">wallet: {{ submission.matchedWalletId || '-' }}</div>
+          </td>
+          <td>
+            <div>{{ submission.leadCode || 'Khong tao lead' }}</div>
+            <div class="mono" *ngIf="submission.tracking?.gclid">gclid</div>
+            <div class="mono" *ngIf="submission.tracking?.fbclid">fbclid</div>
+            <div class="mono" *ngIf="submission.tracking?.ttclid">ttclid</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <ng-template #emptySubmissions>
+      <div class="empty-state">Chua co submission nao.</div>
+    </ng-template>
+  </ng-container>
+</div>
+
+<div class="modal-backdrop" *ngIf="showModal()">
+  <div class="modal">
+    <h3>{{ editingPage ? 'Sua landing page' : 'Tao landing page' }}</h3>
+
+    <label>Ten landing page <input [(ngModel)]="form.name" /></label>
+    <label>Slug public <input [(ngModel)]="form.slug" placeholder="toan-12-chuyen-de" /></label>
+    <label>
+      Trang thai
+      <select [(ngModel)]="form.status">
+        <option value="DRAFT">Nhap</option>
+        <option value="ACTIVE">Hoat dong</option>
+        <option value="ARCHIVED">Luu tru</option>
+      </select>
+    </label>
+
+    <div class="grid two">
+      <label>Tieu de hero <input [(ngModel)]="form.heroTitle" /></label>
+      <label>Subtitle hero <input [(ngModel)]="form.heroSubtitle" /></label>
+    </div>
+
+    <div class="grid two">
+      <label>Tieu de form <input [(ngModel)]="form.formTitle" /></label>
+      <label>Nut submit <input [(ngModel)]="form.submitButtonText" /></label>
+    </div>
+
+    <label>Mo ta form <textarea rows="2" [(ngModel)]="form.formDescription"></textarea></label>
+    <label>Thong diep bao mat <textarea rows="2" [(ngModel)]="form.privacyNotice"></textarea></label>
+    <label>Noi dung HTML <textarea rows="8" [(ngModel)]="form.bodyHtml"></textarea></label>
+
+    <div class="grid two">
+      <label>
+        Platform mac dinh
+        <select [(ngModel)]="form.defaultPlatform">
+          <option value="">Khong set</option>
+          <option value="FACEBOOK">Facebook</option>
+          <option value="GOOGLE">Google</option>
+          <option value="TIKTOK">TikTok</option>
+        </select>
+      </label>
+      <label>
+        Ad group mac dinh
+        <select [(ngModel)]="form.defaultAdGroupId" (ngModelChange)="onDefaultGroupChange()">
+          <option value="">Khong gan</option>
+          <option *ngFor="let group of allGroups()" [value]="group._id">{{ group.name }} ({{ platformLabel(group.platform) }})</option>
+        </select>
+      </label>
+    </div>
+
+    <label class="checkbox">
+      <input type="checkbox" [(ngModel)]="form.autoCreateLead" />
+      <span>Tu dong tao lead khi co submit</span>
+    </label>
+
+    <div class="section-title">Tracking IDs</div>
+    <div class="grid two">
+      <label>Meta Pixel ID <input [(ngModel)]="form.metaPixelId" /></label>
+      <label>Google Tag ID <input [(ngModel)]="form.googleTagId" placeholder="G-xxxx hoac GTM-xxxx" /></label>
+      <label>Google Ads Conversion ID <input [(ngModel)]="form.googleAdsConversionId" placeholder="123456789" /></label>
+      <label>Google Ads Conversion Label <input [(ngModel)]="form.googleAdsConversionLabel" /></label>
+      <label>TikTok Pixel ID <input [(ngModel)]="form.tiktokPixelId" /></label>
+    </div>
+
+    <div class="section-title">Custom Codes</div>
+    <label>Custom head HTML <textarea rows="4" [(ngModel)]="form.customHeadHtml"></textarea></label>
+    <label>Custom body HTML <textarea rows="4" [(ngModel)]="form.customBodyHtml"></textarea></label>
+
+    <div class="grid two">
+      <label>Tieu de thanh cong <input [(ngModel)]="form.successTitle" /></label>
+      <label>Thong diep thanh cong <input [(ngModel)]="form.successMessage" /></label>
+    </div>
+
+    <label>Ghi chu van hanh <textarea rows="3" [(ngModel)]="form.notes"></textarea></label>
+
+    <div class="modal-actions">
+      <button class="secondary" (click)="showModal.set(false)">Huy</button>
+      <button class="primary" [disabled]="loading()" (click)="savePage()">Luu</button>
+    </div>
+  </div>
+</div>

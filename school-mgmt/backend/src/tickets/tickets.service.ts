@@ -30,6 +30,17 @@ import { AddCommentDto } from './dto/add-comment.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { ResolveTicketDto } from './dto/resolve-ticket.dto';
 
+type ParentSupportHandoffParams = {
+  conversationId: string;
+  parentId: string;
+  studentId?: string;
+  supportUserId?: string;
+  type: TicketType;
+  priority: TicketPriority;
+  subject: string;
+  description: string;
+};
+
 @Injectable()
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name);
@@ -215,6 +226,114 @@ export class TicketsService {
     });
   }
 
+  private async findPreferredSessionContext(parentId: string, studentId?: string) {
+    if (!studentId) return null;
+
+    const parentObjectId = new Types.ObjectId(parentId);
+    const studentObjectId = new Types.ObjectId(studentId);
+    const now = new Date();
+
+    const upcoming = await this.ticketModel.db.collection('sessions').findOne(
+      {
+        parentUserId: parentObjectId,
+        studentId: studentObjectId,
+        status: 'SCHEDULED',
+        scheduledDate: { $gte: now },
+      },
+      {
+        sort: { scheduledDate: 1 },
+        projection: {
+          _id: 1,
+          classId: 1,
+          teacherId: 1,
+          studentId: 1,
+          parentUserId: 1,
+        },
+      },
+    );
+
+    if (upcoming) return upcoming as any;
+
+    const latest = await this.ticketModel.db.collection('sessions').findOne(
+      {
+        parentUserId: parentObjectId,
+        studentId: studentObjectId,
+      },
+      {
+        sort: { scheduledDate: -1 },
+        projection: {
+          _id: 1,
+          classId: 1,
+          teacherId: 1,
+          studentId: 1,
+          parentUserId: 1,
+        },
+      },
+    );
+
+    return (latest as any) || null;
+  }
+
+  async createOrFindParentSupportHandoff(params: ParentSupportHandoffParams) {
+    const conversationObjectId = new Types.ObjectId(params.conversationId);
+    const activeStatuses = [
+      TicketStatus.OPEN,
+      TicketStatus.IN_PROGRESS,
+      TicketStatus.WAITING_INFO,
+      TicketStatus.WAITING_REFUND,
+    ];
+
+    const existing = await this.ticketModel
+      .findOne({
+        sourceConversationId: conversationObjectId,
+        type: params.type,
+        status: { $in: activeStatuses },
+      })
+      .sort({ createdAt: -1 });
+
+    if (existing) {
+      return { ticket: existing, created: false };
+    }
+
+    const sessionContext = await this.findPreferredSessionContext(
+      params.parentId,
+      params.studentId,
+    );
+
+    const ticket = await this.create(
+      {
+        type: params.type,
+        priority: params.priority,
+        subject: params.subject,
+        description: params.description,
+        parentId: params.parentId,
+        studentId: params.studentId,
+        sourceConversationId: params.conversationId,
+        sessionId: sessionContext?._id?.toString?.(),
+        classId: sessionContext?.classId?.toString?.(),
+        teacherId: sessionContext?.teacherId?.toString?.(),
+      },
+      params.parentId,
+      Role.PARENT,
+    );
+
+    if (params.supportUserId && Types.ObjectId.isValid(params.supportUserId)) {
+      const assignedUser = await this.ticketModel.db.collection('users').findOne(
+        { _id: new Types.ObjectId(params.supportUserId) },
+        { projection: { _id: 1, role: 1 } },
+      ) as { _id: Types.ObjectId; role: Role } | null;
+
+      if (assignedUser && [Role.OPS, Role.DIRECTOR].includes(assignedUser.role)) {
+        ticket.assignedTo = assignedUser._id;
+        ticket.assignedAt = new Date();
+        ticket.status = TicketStatus.IN_PROGRESS;
+        await ticket.save();
+      }
+    }
+
+    return { ticket, created: true };
+  }
+
   // ══════════════════════════════════════════════════════════════════
   //  CREATE
   // ══════════════════════════════════════════════════════════════════
@@ -310,6 +429,9 @@ export class TicketsService {
       studentId,
       teacherId,
       parentId,
+      sourceConversationId: dto.sourceConversationId
+        ? new Types.ObjectId(dto.sourceConversationId)
+        : undefined,
       payrollId: dto.payrollId ? new Types.ObjectId(dto.payrollId) : undefined,
       ledgerEntryId: dto.ledgerEntryId ? new Types.ObjectId(dto.ledgerEntryId) : undefined,
       substituteTeacherId: dto.substituteTeacherId ? new Types.ObjectId(dto.substituteTeacherId) : undefined,

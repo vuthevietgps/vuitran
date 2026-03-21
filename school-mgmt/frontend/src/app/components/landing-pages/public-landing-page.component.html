@@ -1,0 +1,60 @@
+<div class="landing-shell" *ngIf="!loading(); else loadingTpl">
+  <ng-container *ngIf="!error(); else errorTpl">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Tu van hoc tap</p>
+        <h1>{{ page()?.heroTitle || page()?.name }}</h1>
+        <p class="lead">{{ page()?.heroSubtitle || 'De lai thong tin de nhan lo trinh hoc phu hop va duoc doi ngu tu van lien he nhanh.' }}</p>
+
+        <div class="content-card" *ngIf="page()?.bodyHtml" [innerHTML]="page()?.bodyHtml || ''"></div>
+      </div>
+
+      <div class="form-card" *ngIf="!submitted(); else successTpl">
+        <div class="form-head">
+          <h2>{{ page()?.formTitle || 'Nhan tu van va hoc thu' }}</h2>
+          <p>{{ page()?.formDescription || 'He thong se luu dung ma tracking, landing page va dinh danh phu huynh neu da co tai khoan/vi.' }}</p>
+        </div>
+
+        <label>Ho ten phu huynh <input [(ngModel)]="form.parentName" /></label>
+        <label>So dien thoai <input [(ngModel)]="form.parentPhone" /></label>
+        <label>Email <input [(ngModel)]="form.parentEmail" /></label>
+        <label>Ten hoc sinh <input [(ngModel)]="form.studentName" /></label>
+        <label>Lop / khoi <input [(ngModel)]="form.studentGrade" /></label>
+        <label>Nhu cau <textarea rows="3" [(ngModel)]="form.notes"></textarea></label>
+
+        <div class="privacy">{{ page()?.privacyNotice || 'Thong tin nay duoc dung de lien he tu van va doi soat attribution quang cao.' }}</div>
+        <div class="submit-error" *ngIf="submitError()">{{ submitError() }}</div>
+
+        <button class="submit-btn" [disabled]="submitting()" (click)="submitForm()">
+          {{ submitting() ? 'Dang gui...' : (page()?.submitButtonText || 'Nhan tu van ngay') }}
+        </button>
+      </div>
+    </section>
+  </ng-container>
+</div>
+
+<ng-template #loadingTpl>
+  <div class="state-shell">
+    <div class="spinner"></div>
+    <p>Dang tai landing page...</p>
+  </div>
+</ng-template>
+
+<ng-template #errorTpl>
+  <div class="state-shell error">
+    <h2>{{ error() }}</h2>
+    <p>Vui long kiem tra lai link hoac lien he bo phan van hanh.</p>
+  </div>
+</ng-template>
+
+<ng-template #successTpl>
+  <div class="success-card">
+    <p class="eyebrow">Da ghi nhan</p>
+    <h2>{{ page()?.successTitle || 'Cam on phu huynh' }}</h2>
+    <p>{{ page()?.successMessage || 'He thong da luu dung tracking, landing page va thong tin dinh danh de doi ngu lien he.' }}</p>
+    <div class="success-meta" *ngIf="submitResult()">
+      <div>Submission: {{ submitResult()?.submissionCode }}</div>
+      <div *ngIf="submitResult()?.leadCode">Lead: {{ submitResult()?.leadCode }}</div>
+    </div>
+  </div>
+</ng-template>
