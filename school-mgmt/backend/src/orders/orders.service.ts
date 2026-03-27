@@ -56,10 +56,159 @@ export class OrdersService {
     return sale;
   }
 
+  private async getParentOwnershipContext(parentUserId: string): Promise<{
+    parentUser: any;
+    ownerId: string | null;
+    ownerName: string | null;
+    ownershipSource: 'EXPLICIT' | 'INFERRED' | 'UNASSIGNED' | 'CONFLICT';
+  }> {
+    if (!Types.ObjectId.isValid(parentUserId)) {
+      throw new BadRequestException('Tai khoan phu huynh khong hop le');
+    }
+
+    const parentUser = await this.userModel
+      .findById(parentUserId)
+      .select('_id fullName email role phone saleOwnerId saleOwnerName')
+      .lean();
+
+    if (!parentUser || (parentUser as any).role !== Role.PARENT) {
+      throw new BadRequestException('Tai khoan phu huynh khong hop le');
+    }
+
+    const explicitOwnerId = (parentUser as any).saleOwnerId?.toString?.() || null;
+    if (explicitOwnerId) {
+      return {
+        parentUser,
+        ownerId: explicitOwnerId,
+        ownerName: (parentUser as any).saleOwnerName || null,
+        ownershipSource: 'EXPLICIT',
+      };
+    }
+
+    const linkedStudents = await this.studentModel
+      .find({
+        parentUserId: new Types.ObjectId(parentUserId),
+        saleId: { $exists: true, $ne: null },
+      })
+      .select('saleId saleName')
+      .lean<Array<{ saleId?: Types.ObjectId; saleName?: string }>>();
+
+    const owners = Array.from(
+      new Map(
+        linkedStudents
+          .map((student) => {
+            const saleId = student.saleId?.toString?.();
+            return saleId ? [saleId, student.saleName || ''] : null;
+          })
+          .filter((entry): entry is [string, string] => !!entry),
+      ).entries(),
+    );
+
+    if (owners.length === 1) {
+      const [ownerId, ownerName] = owners[0];
+      return {
+        parentUser,
+        ownerId,
+        ownerName: ownerName || null,
+        ownershipSource: 'INFERRED',
+      };
+    }
+
+    if (owners.length > 1) {
+      return {
+        parentUser,
+        ownerId: null,
+        ownerName: null,
+        ownershipSource: 'CONFLICT',
+      };
+    }
+
+    return {
+      parentUser,
+      ownerId: null,
+      ownerName: null,
+      ownershipSource: 'UNASSIGNED',
+    };
+  }
+
+  private async resolveLinkedOrderContext(
+    dto: Pick<CreateOrderDto | UpdateOrderDto, 'parentUserId' | 'existingStudentId'>,
+    user: JwtPayload,
+  ): Promise<{
+    linkedStudent: any | null;
+    normalizedParentUserId?: Types.ObjectId;
+    normalizedExistingStudentId?: Types.ObjectId;
+    parentOwnerId: string | null;
+    parentOwnerName: string | null;
+  }> {
+    const actorId = this.getActorId(user);
+    let parentContext: Awaited<ReturnType<typeof this.getParentOwnershipContext>> | null = null;
+    const explicitParentSelected = !!dto.parentUserId;
+
+    if (dto.parentUserId) {
+      parentContext = await this.getParentOwnershipContext(String(dto.parentUserId));
+      if (user.role === Role.SALE && parentContext.ownerId !== actorId) {
+        throw new NotFoundException('Phu huynh khong ton tai');
+      }
+    }
+
+    let linkedStudent: any | null = null;
+    if (dto.existingStudentId) {
+      const studentId = String(dto.existingStudentId);
+      if (!Types.ObjectId.isValid(studentId)) {
+        throw new BadRequestException('Hoc sinh khong hop le');
+      }
+
+      linkedStudent = await this.studentModel
+        .findById(studentId)
+        .select('_id fullName parentUserId parentName parentPhone grade saleId saleName')
+        .lean();
+
+      if (!linkedStudent) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
+      }
+
+      if (user.role === Role.SALE && linkedStudent.saleId?.toString?.() !== actorId) {
+        throw new NotFoundException('Hoc sinh khong ton tai');
+      }
+
+      const studentParentUserId = linkedStudent.parentUserId?.toString?.() || null;
+      if (
+        parentContext?.parentUser?._id
+        && studentParentUserId
+        && studentParentUserId !== parentContext.parentUser._id.toString()
+      ) {
+        throw new BadRequestException('Hoc sinh da duoc gan voi phu huynh khac');
+      }
+
+      if (!parentContext && studentParentUserId) {
+        parentContext = await this.getParentOwnershipContext(studentParentUserId);
+        if (explicitParentSelected && user.role === Role.SALE && parentContext.ownerId !== actorId) {
+          throw new NotFoundException('Phu huynh khong ton tai');
+        }
+      }
+    }
+
+    return {
+      linkedStudent,
+      normalizedParentUserId: parentContext?.parentUser?._id
+        ? new Types.ObjectId(parentContext.parentUser._id)
+        : undefined,
+      normalizedExistingStudentId: linkedStudent?._id
+        ? new Types.ObjectId(linkedStudent._id)
+        : undefined,
+      parentOwnerId: parentContext?.ownerId || null,
+      parentOwnerName: parentContext?.ownerName || null,
+    };
+  }
+
   private async resolveOrderSaleOwner(
-    dto: Pick<CreateOrderDto, 'leadId' | 'existingStudentId' | 'saleId'>,
+    dto: Pick<CreateOrderDto, 'leadId' | 'existingStudentId' | 'parentUserId' | 'saleId'>,
     user: JwtPayload,
     leadForConversion?: LeadDocument | null,
+    linkedStudent?: any | null,
+    parentOwnerId?: string | null,
+    parentOwnerName?: string | null,
   ): Promise<{ saleId: Types.ObjectId; saleName: string }> {
     const actorId = this.getActorId(user);
 
@@ -72,7 +221,8 @@ export class OrdersService {
     }
 
     const student = dto.existingStudentId
-      ? await this.studentModel.findById(dto.existingStudentId).select('saleId saleName').lean()
+      ? (linkedStudent
+        ?? await this.studentModel.findById(dto.existingStudentId).select('saleId saleName').lean())
       : null;
     if (dto.existingStudentId && !student) {
       throw new NotFoundException('Hoc sinh khong ton tai');
@@ -80,11 +230,19 @@ export class OrdersService {
 
     const leadSaleId = lead?.saleId?.toString?.() || null;
     const studentSaleId = student?.saleId?.toString?.() || null;
+    const parentSaleId = parentOwnerId || null;
     const leadSaleName = (lead as any)?.saleName || null;
     const studentSaleName = (student as any)?.saleName || null;
+    const parentSaleName = parentOwnerName || null;
 
     if (leadSaleId && studentSaleId && leadSaleId !== studentSaleId) {
       throw new BadRequestException('Lead va hoc sinh dang thuoc 2 sale khac nhau');
+    }
+    if (leadSaleId && parentSaleId && leadSaleId !== parentSaleId) {
+      throw new BadRequestException('Lead va phu huynh dang thuoc 2 sale khac nhau');
+    }
+    if (studentSaleId && parentSaleId && studentSaleId !== parentSaleId) {
+      throw new BadRequestException('Hoc sinh va phu huynh dang thuoc 2 sale khac nhau');
     }
 
     if (user.role === Role.SALE) {
@@ -100,8 +258,8 @@ export class OrdersService {
       };
     }
 
-    const lockedOwnerId = leadSaleId || studentSaleId;
-    const lockedOwnerName = leadSaleName || studentSaleName;
+    const lockedOwnerId = leadSaleId || studentSaleId || parentSaleId;
+    const lockedOwnerName = leadSaleName || studentSaleName || parentSaleName;
 
     if (dto.saleId) {
       const requestedSale = await this.findSaleUser(dto.saleId);
@@ -109,7 +267,9 @@ export class OrdersService {
         throw new BadRequestException(
           leadSaleId
             ? 'Lead da co sale phu trach. Hay chuyen lead truoc khi tao don'
-            : 'Hoc sinh da co sale phu trach. Hay cap nhat owner truoc khi tao don',
+            : studentSaleId
+              ? 'Hoc sinh da co sale phu trach. Hay cap nhat owner truoc khi tao don'
+              : 'Phu huynh da co sale phu trach. Hay cap nhat owner truoc khi tao don',
         );
       }
       return {
@@ -183,12 +343,27 @@ export class OrdersService {
       tracking = mergeTrackingAttribution((leadForConversion as any).tracking, dto.tracking, true) as any;
     }
 
-    const saleOwner = await this.resolveOrderSaleOwner(dto, user, leadForConversion);
+    const relationContext = await this.resolveLinkedOrderContext(dto, user);
+    const saleOwner = await this.resolveOrderSaleOwner(
+      {
+        leadId: dto.leadId,
+        existingStudentId: relationContext.normalizedExistingStudentId?.toString?.() || dto.existingStudentId,
+        parentUserId: relationContext.normalizedParentUserId?.toString?.() || dto.parentUserId,
+        saleId: dto.saleId,
+      },
+      user,
+      leadForConversion,
+      relationContext.linkedStudent,
+      relationContext.parentOwnerId,
+      relationContext.parentOwnerName,
+    );
 
     const order = new this.orderModel({
       ...dto,
       orderCode,
       status: OrderStatus.DRAFT,
+      parentUserId: relationContext.normalizedParentUserId,
+      existingStudentId: relationContext.normalizedExistingStudentId,
       saleId: saleOwner.saleId,
       saleName: saleOwner.saleName,
       adGroupId,
@@ -205,6 +380,7 @@ export class OrdersService {
 
     await this.marketingAttributionService.upsertParentAttribution({
       parentUserId: (saved as any).parentUserId,
+      referredByUserId: dto.referredByUserId,
       parentPhone: saved.parentPhone,
       parentEmail: saved.parentEmail,
       adGroupId: saved.adGroupId,
@@ -285,32 +461,74 @@ export class OrdersService {
     }
 
     const updateData: any = { ...dto };
+    const unsetData: Record<string, 1> = {};
     if (user.role === Role.SALE) {
       delete updateData.saleId;
     }
 
+    const relationContext = await this.resolveLinkedOrderContext(
+      {
+        parentUserId: updateData.parentUserId ?? o.parentUserId?.toString?.(),
+        existingStudentId: updateData.existingStudentId ?? o.existingStudentId?.toString?.(),
+      },
+      user,
+    );
+
     const shouldResolveOwner =
       updateData.saleId !== undefined ||
       updateData.leadId !== undefined ||
-      updateData.existingStudentId !== undefined;
+      updateData.existingStudentId !== undefined ||
+      updateData.parentUserId !== undefined;
 
     if (shouldResolveOwner) {
       const saleOwner = await this.resolveOrderSaleOwner(
         {
           leadId: updateData.leadId ?? o.leadId?.toString?.(),
-          existingStudentId: updateData.existingStudentId ?? o.existingStudentId?.toString?.(),
+          existingStudentId:
+            relationContext.normalizedExistingStudentId?.toString?.()
+            || updateData.existingStudentId
+            || o.existingStudentId?.toString?.(),
+          parentUserId:
+            relationContext.normalizedParentUserId?.toString?.()
+            || updateData.parentUserId
+            || o.parentUserId?.toString?.(),
           saleId: updateData.saleId,
         },
         user,
+        undefined,
+        relationContext.linkedStudent,
+        relationContext.parentOwnerId,
+        relationContext.parentOwnerName,
       );
       updateData.saleId = saleOwner.saleId;
       updateData.saleName = saleOwner.saleName;
     }
 
-    const updated = await this.orderModel.findByIdAndUpdate(id, updateData, { new: true }).lean();
+    if (relationContext.normalizedParentUserId) {
+      updateData.parentUserId = relationContext.normalizedParentUserId;
+    } else if (updateData.parentUserId !== undefined) {
+      delete updateData.parentUserId;
+      unsetData.parentUserId = 1;
+    }
+    if (relationContext.normalizedExistingStudentId) {
+      updateData.existingStudentId = relationContext.normalizedExistingStudentId;
+    } else if (updateData.existingStudentId !== undefined) {
+      delete updateData.existingStudentId;
+      unsetData.existingStudentId = 1;
+    }
+
+    const updateOperation = Object.keys(unsetData).length
+      ? {
+          ...(Object.keys(updateData).length ? { $set: updateData } : {}),
+          $unset: unsetData,
+        }
+      : updateData;
+
+    const updated = await this.orderModel.findByIdAndUpdate(id, updateOperation, { new: true }).lean();
     if (updated) {
       await this.marketingAttributionService.upsertParentAttribution({
         parentUserId: (updated as any).parentUserId,
+        referredByUserId: updateData.referredByUserId,
         parentPhone: updated.parentPhone,
         parentEmail: updated.parentEmail,
         adGroupId: (updated as any).adGroupId,

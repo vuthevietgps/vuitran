@@ -21,6 +21,12 @@ export class ConfirmSessionDto {
   @Min(1)
   @Max(5)
   @IsOptional()
+  rating?: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  @IsOptional()
   parentRating?: number;
 
   // ── Phản hồi chi tiết ──

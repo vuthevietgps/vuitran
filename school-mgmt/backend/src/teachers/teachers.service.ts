@@ -96,6 +96,113 @@ export class TeachersService {
     return normalized || undefined;
   }
 
+  private getActorObjectId(actor?: JwtPayload): Types.ObjectId | null {
+    const actorId = this.getActorId(actor);
+    if (!actorId || !Types.ObjectId.isValid(actorId)) {
+      return null;
+    }
+    return new Types.ObjectId(actorId);
+  }
+
+  private buildTeacherProfileSeed(
+    userId: Types.ObjectId,
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      userId,
+      managedSales: [],
+      subjects: [],
+      grades: [],
+      teachingMode: 'BOTH',
+      locations: [],
+      qualifications: [],
+      yearsOfExperience: 0,
+      availability: [],
+      pricePerSession: 0,
+      ...overrides,
+    };
+  }
+
+  private async backfillMissingTeacherProfiles(): Promise<void> {
+    const teacherUsers = await this.userModel
+      .find({ role: Role.TEACHER })
+      .select('_id createdAt')
+      .lean();
+
+    if (!teacherUsers.length) {
+      return;
+    }
+
+    const teacherIds = teacherUsers.map((user: any) => user._id);
+    const existingProfiles = await this.teacherProfileModel
+      .find({ userId: { $in: teacherIds } })
+      .select('userId')
+      .lean();
+
+    const existingUserIds = new Set(
+      existingProfiles
+        .map((profile: any) => profile?.userId?.toString?.())
+        .filter((value: string | undefined): value is string => !!value),
+    );
+
+    const operations = teacherUsers
+      .filter((user: any) => !existingUserIds.has(user?._id?.toString?.()))
+      .map((user: any) => ({
+        updateOne: {
+          filter: { userId: user._id },
+          update: {
+            $setOnInsert: this.buildTeacherProfileSeed(user._id as Types.ObjectId, {
+              status: TeacherStatus.APPROVED,
+              approvedAt: user.createdAt ?? new Date(),
+            }),
+          },
+          upsert: true,
+        },
+      }));
+
+    if (!operations.length) {
+      return;
+    }
+
+    await this.teacherProfileModel.bulkWrite(operations, { ordered: false });
+  }
+
+  private async ensureTeacherProfileExistsForUser(userId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(userId)) {
+      return;
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const existing = await this.teacherProfileModel
+      .findOne({ userId: userObjectId })
+      .select('_id')
+      .lean();
+
+    if (existing) {
+      return;
+    }
+
+    const teacherUser = await this.userModel
+      .findOne({ _id: userObjectId, role: Role.TEACHER })
+      .select('_id createdAt')
+      .lean();
+
+    if (!teacherUser) {
+      return;
+    }
+
+    await this.teacherProfileModel.updateOne(
+      { userId: teacherUser._id },
+      {
+        $setOnInsert: this.buildTeacherProfileSeed(teacherUser._id as Types.ObjectId, {
+          status: TeacherStatus.APPROVED,
+          approvedAt: (teacherUser as any).createdAt ?? new Date(),
+        }),
+      },
+      { upsert: true },
+    );
+  }
+
   private async ensureUserEmailUnique(email: string, excludeUserId?: string): Promise<void> {
     const query: any = { email };
     if (excludeUserId) {
@@ -298,10 +405,14 @@ export class TeachersService {
     }
 
     const { user: _user, managedSales: _managedSales, ...profileData } = dto as any;
+    const approvedBy = actor.role === Role.DIRECTOR ? this.getActorObjectId(actor) : null;
     const profile = new this.teacherProfileModel({
       ...profileData,
       userId: new Types.ObjectId(dto.userId),
       managedSales,
+      status: actor.role === Role.DIRECTOR ? TeacherStatus.APPROVED : TeacherStatus.PENDING,
+      approvedBy: approvedBy || undefined,
+      approvedAt: actor.role === Role.DIRECTOR ? new Date() : undefined,
     });
     return profile.save();
   }
@@ -310,6 +421,10 @@ export class TeachersService {
     filters?: { status?: TeacherStatus; subjects?: string[]; grades?: string[] },
     actor?: JwtPayload,
   ): Promise<any[]> {
+    if (actor?.role && actor.role !== Role.SALE) {
+      await this.backfillMissingTeacherProfiles();
+    }
+
     const query: any = {};
     if (actor?.role === Role.SALE) {
       const actorId = this.getActorId(actor);
@@ -379,6 +494,7 @@ export class TeachersService {
   }
 
   async findByUserId(userId: string): Promise<TeacherProfile | null> {
+    await this.ensureTeacherProfileExistsForUser(userId);
     return this.teacherProfileModel
       .findOne({ userId: new Types.ObjectId(userId) })
       .populate('userId', 'userCode fullName email phone')

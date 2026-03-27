@@ -7,6 +7,7 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.schema';
 import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
 import { Ticket, TicketSchema } from '../tickets/schemas/ticket.schema';
+import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { Ticket, TicketSchema } from '../tickets/schemas/ticket.schema';
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: TeacherProfile.name, schema: TeacherProfileSchema },
       { name: Ticket.name, schema: TicketSchema },
+      { name: Classroom.name, schema: ClassroomSchema },
     ]),
   ],
   controllers: [PendingApprovalsController],

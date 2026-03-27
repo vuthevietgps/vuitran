@@ -11,38 +11,44 @@ export class PendingApprovalsController {
   constructor(private readonly service: PendingApprovalsService) {}
 
   @Get()
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   getAll() {
     return this.service.getAll();
   }
 
   @Get('summary')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   getSummary() {
     return this.service.getSummary();
   }
 
   @Get('payrolls')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   getPendingPayrolls() {
     return this.service.getPendingPayrolls();
   }
 
   @Get('invoices')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   getPendingInvoices() {
     return this.service.getPendingInvoices();
   }
 
   @Get('topups')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   getPendingTopUps() {
     return this.service.getPendingTopUps();
   }
 
   @Get('teachers')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.OPS)
   getPendingTeachers() {
     return this.service.getPendingTeachers();
+  }
+
+  @Get('classes')
+  @Roles(Role.DIRECTOR, Role.OPS)
+  getPendingClassUpdates() {
+    return this.service.getPendingClassUpdates();
   }
 }

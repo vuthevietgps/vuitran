@@ -558,29 +558,29 @@ async function main() {
     ensure(Array.isArray(res.data), 'Work-session summary must return an array');
   });
 
-  await runner.test('PARENT sends direct message to TEACHER', async () => {
-    const teacherId = normalizeId(auth.teacher.user && auth.teacher.user._id);
-    ensure(teacherId, 'Teacher user id is missing');
+  await runner.test('PARENT sends direct message to SALE support contact', async () => {
+    const saleId = normalizeId(auth.sale.user && auth.sale.user._id);
+    ensure(saleId, 'Sale user id is missing');
     const res = await request({
       method: 'POST',
       reqPath: '/messages/send',
       token: auth.parent.token,
       expectedStatus: [200, 201],
       body: {
-        receiverId: teacherId,
-        content: `E2E parent->teacher message ${Date.now()}`,
+        receiverId: saleId,
+        content: `E2E parent->sale message ${Date.now()}`,
       },
     });
     ensure(normalizeId(res.data && res.data._id), 'Send message should create a message document');
   });
 
-  await runner.test('TEACHER can list conversations and find parent chat', async () => {
+  await runner.test('SALE can list conversations and find parent chat', async () => {
     const parentId = normalizeId(auth.parent.user && auth.parent.user._id);
     ensure(parentId, 'Parent user id is missing');
     const res = await request({
       method: 'GET',
       reqPath: '/messages/conversations',
-      token: auth.teacher.token,
+      token: auth.sale.token,
       expectedStatus: [200],
     });
     ensure(Array.isArray(res.data), 'Conversations endpoint must return an array');
@@ -589,28 +589,28 @@ async function main() {
       const participants = Array.isArray(c.participants) ? c.participants : [];
       return participants.some((p) => normalizeId(p && p._id) === parentId);
     });
-    ensure(convo, 'Could not find teacher-parent conversation');
+    ensure(convo, 'Could not find sale-parent conversation');
     messageConversationId = normalizeId(convo._id);
     ensure(messageConversationId, 'Conversation id is missing');
   });
 
-  await runner.test('TEACHER can read conversation messages', async () => {
+  await runner.test('SALE can read conversation messages', async () => {
     ensure(messageConversationId, 'Conversation id is missing');
     const res = await request({
       method: 'GET',
       reqPath: `/messages/conversations/${messageConversationId}/messages?page=1&limit=20`,
-      token: auth.teacher.token,
+      token: auth.sale.token,
       expectedStatus: [200],
     });
     ensure(res.data && Array.isArray(res.data.messages), 'Messages payload must include messages array');
   });
 
-  await runner.test('TEACHER can mark conversation as read', async () => {
+  await runner.test('SALE can mark conversation as read', async () => {
     ensure(messageConversationId, 'Conversation id is missing');
     const res = await request({
       method: 'POST',
       reqPath: `/messages/conversations/${messageConversationId}/read`,
-      token: auth.teacher.token,
+      token: auth.sale.token,
       expectedStatus: [200, 201],
     });
     ensure(typeof (res.data && res.data.marked) === 'number', 'Mark read must return marked count');
@@ -628,11 +628,11 @@ async function main() {
     ensure(normalizeId(res.data && res.data._id), 'Follow-up send should create message');
   });
 
-  await runner.test('TEACHER unread-count endpoint returns numeric count', async () => {
+  await runner.test('SALE unread-count endpoint returns numeric count', async () => {
     const res = await request({
       method: 'GET',
       reqPath: '/messages/unread-count',
-      token: auth.teacher.token,
+      token: auth.sale.token,
       expectedStatus: [200],
     });
     ensure(typeof (res.data && res.data.count) === 'number', 'Unread count payload must include count');

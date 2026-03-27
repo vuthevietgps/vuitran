@@ -2,12 +2,18 @@ import { Component, computed, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
-import { OrderService, OrderData, OrderPipeline } from '../services/order.service';
+import {
+  OrderCommunicationSummary,
+  OrderData,
+  OrderPipeline,
+  OrderService,
+} from '../services/order.service';
 import { ProductService, ProductItem } from '../services/product.service';
 import { LeadService, LeadItem } from '../services/lead.service';
 import { AdsService, AdGroupItem } from '../services/ads.service';
 import { AuthService } from '../services/auth.service';
 import { UserService, UserItem } from '../services/user.service';
+import { StudentService, StudentItem } from '../services/student.service';
 import { Role } from '../models/role.enum';
 import { FlowGuideComponent } from './shared/flow-guide.component';
 
@@ -88,6 +94,7 @@ const SOURCE_LABELS: Record<string, string> = {
         <td class="actions-cell" (click)="$event.stopPropagation()">
           <button class="btn-sm" *ngIf="o.status === 'DRAFT' || o.status === 'NEEDS_INFO'" (click)="submitOrder(o)">Gửi duyệt</button>
           <button class="btn-sm success" *ngIf="o.status === 'SUBMITTED' && canApprove" (click)="approveOrder(o)">Duyệt</button>
+          <button class="btn-sm" *ngIf="o.status === 'SUBMITTED' && canApprove" (click)="requestMoreInfo(o)">Can bo sung</button>
           <button class="btn-sm danger" *ngIf="o.status === 'SUBMITTED' && canApprove" (click)="rejectOrder(o)">Từ chối</button>
         </td>
       </tr>
@@ -120,38 +127,77 @@ const SOURCE_LABELS: Record<string, string> = {
             </select>
             <small *ngIf="form.adGroupFromLead" style="color:#64748b;">Từ Lead</small>
           </label>
-          <label *ngIf="!isSaleRole">Sale phá»¥ trÃ¡ch
+          <label *ngIf="!isSaleRole">Sale phụ trách
             <select name="saleId" [(ngModel)]="form.saleId">
-              <option value="">-- Tá»± suy tá»« lead/há»c viÃªn --</option>
+              <option value="">-- Tự suy từ lead/học viên --</option>
               <option *ngFor="let sale of sales()" [value]="sale._id">{{sale.fullName}}</option>
             </select>
-            <small style="color:#64748b;">Náº¿u lead/há»c viÃªn Ä‘Ã£ cÃ³ owner, há»‡ thá»‘ng sáº½ tá»± khÃ³a theo owner Ä‘Ã³.</small>
+            <small style="color:#64748b;">Nếu lead/học viên đã có owner, hệ thống sẽ tự khóa theo owner đó.</small>
           </label>
-          <label *ngIf="isSaleRole">Sale phá»¥ trÃ¡ch
+          <label *ngIf="isSaleRole">Sale phụ trách
             <input [value]="currentUserName" disabled />
           </label>
         </div>
 
+        <h4>Lien ket he thong</h4>
+        <div class="lookup-grid">
+          <label>Phu huynh da co
+            <input
+              name="parentLookup"
+              [(ngModel)]="parentLookup"
+              placeholder="Tim ten, SDT, email..." />
+            <select
+              name="parentUserId"
+              [ngModel]="form.parentUserId || ''"
+              (ngModelChange)="onParentSelected($event)">
+              <option value="">-- Khong lien ket --</option>
+              <option *ngFor="let parent of filteredParents()" [value]="parent._id">
+                {{ formatParentOption(parent) }}
+              </option>
+            </select>
+            <small class="field-hint">Chon de dung lai tai khoan phu huynh hien co va tranh tao trung.</small>
+          </label>
+          <label>Hoc sinh da co
+            <input
+              name="studentLookup"
+              [(ngModel)]="studentLookup"
+              placeholder="Tim ma HS, ten, SDT PH..." />
+            <select
+              name="existingStudentId"
+              [ngModel]="form.existingStudentId || ''"
+              (ngModelChange)="onExistingStudentSelected($event)">
+              <option value="">-- Khong lien ket --</option>
+              <option *ngFor="let student of filteredStudents()" [value]="student._id">
+                {{ formatStudentOption(student) }}
+              </option>
+            </select>
+            <small class="field-hint">Neu chon hoc sinh cu, he thong se uu tien dung lai ho so hien co.</small>
+          </label>
+        </div>
+        <p class="link-warning" *ngIf="suggestedStudents().length && !form.existingStudentId">
+          Tim thay {{suggestedStudents().length}} ho so hoc sinh co thong tin gan trung. Nen lien ket hoc sinh cu neu day la cung mot ban.
+        </p>
+
         <h4>Thông tin phụ huynh</h4>
         <div class="form-grid">
           <label>Tên PH <span class="req">*</span>
-            <input name="parentName" [(ngModel)]="form.parentName" required />
+            <input name="parentName" [(ngModel)]="form.parentName" (ngModelChange)="onParentFieldsChanged()" required />
           </label>
           <label>SĐT <span class="req">*</span>
-            <input name="parentPhone" [(ngModel)]="form.parentPhone" required />
+            <input name="parentPhone" [(ngModel)]="form.parentPhone" (ngModelChange)="onParentFieldsChanged()" required />
           </label>
           <label>Email
-            <input name="parentEmail" [(ngModel)]="form.parentEmail" />
+            <input name="parentEmail" [(ngModel)]="form.parentEmail" (ngModelChange)="onParentFieldsChanged()" />
           </label>
         </div>
 
         <h4>Thông tin học viên</h4>
         <div class="form-grid">
           <label>Tên HS <span class="req">*</span>
-            <input name="studentName" [(ngModel)]="form.studentName" required />
+            <input name="studentName" [(ngModel)]="form.studentName" (ngModelChange)="onStudentFieldsChanged()" required />
           </label>
           <label>Lớp
-            <input name="studentGrade" [(ngModel)]="form.studentGrade" />
+            <input name="studentGrade" [(ngModel)]="form.studentGrade" (ngModelChange)="onStudentFieldsChanged()" />
           </label>
         </div>
 
@@ -260,7 +306,7 @@ const SOURCE_LABELS: Record<string, string> = {
       <div *ngIf="detailOrder()!.processedResults" class="enrollment-results">
         <h4>Kết quả xử lý tự động</h4>
         <div class="enrollment-grid">
-          <div *ngIf="detailOrder()!.processedResults.studentId" class="enrollment-item success-item">
+          <div *ngIf="detailOrder()!.processedResults?.studentId" class="enrollment-item success-item">
             <span class="enrollment-icon">👤</span>
             <span>Học viên: <strong>{{detailOrder()!.processedResults.studentId}}</strong></span>
           </div>
@@ -271,10 +317,47 @@ const SOURCE_LABELS: Record<string, string> = {
         </div>
       </div>
 
+      <div *ngIf="communicationSummary()" class="handoff-box">
+        <div class="handoff-header">
+          <div>
+            <h4>Thong tin ban giao</h4>
+            <p>Copy nhanh noi dung de gui cho PH, GV hoac dung noi bo.</p>
+          </div>
+          <small *ngIf="communicationSummary()!.generatedAt">
+            {{communicationSummary()!.generatedAt | date:'dd/MM/yyyy HH:mm'}}
+          </small>
+        </div>
+
+        <div class="handoff-card" *ngIf="communicationSummary()!.saleMessage">
+          <div class="handoff-card-head">
+            <strong>Noi bo / Sale</strong>
+            <button type="button" class="btn-sm" (click)="copyText(communicationSummary()!.saleMessage, 'Noi dung noi bo')">Copy</button>
+          </div>
+          <pre class="handoff-text">{{communicationSummary()!.saleMessage}}</pre>
+        </div>
+
+        <div class="handoff-card" *ngIf="communicationSummary()!.parentMessage">
+          <div class="handoff-card-head">
+            <strong>Gui phu huynh</strong>
+            <button type="button" class="btn-sm" (click)="copyText(communicationSummary()!.parentMessage, 'Noi dung gui phu huynh')">Copy</button>
+          </div>
+          <pre class="handoff-text">{{communicationSummary()!.parentMessage}}</pre>
+        </div>
+
+        <div class="handoff-card" *ngIf="communicationSummary()!.teacherMessage">
+          <div class="handoff-card-head">
+            <strong>Gui giao vien</strong>
+            <button type="button" class="btn-sm" (click)="copyText(communicationSummary()!.teacherMessage, 'Noi dung gui giao vien')">Copy</button>
+          </div>
+          <pre class="handoff-text">{{communicationSummary()!.teacherMessage}}</pre>
+        </div>
+      </div>
+
       <div class="form-actions">
         <button class="primary" *ngIf="detailOrder()!.status === 'DRAFT' || detailOrder()!.status === 'NEEDS_INFO'" (click)="openEdit(detailOrder()!)">Sửa</button>
         <button class="btn-sm" *ngIf="detailOrder()!.status === 'DRAFT' || detailOrder()!.status === 'NEEDS_INFO'" (click)="submitOrder(detailOrder()!)">Gửi duyệt</button>
         <button class="btn-sm success" *ngIf="detailOrder()!.status === 'SUBMITTED' && canApprove" (click)="approveOrder(detailOrder()!)">Duyệt</button>
+        <button class="btn-sm" *ngIf="detailOrder()!.status === 'SUBMITTED' && canApprove" (click)="requestMoreInfo(detailOrder()!)">Can bo sung</button>
         <button class="btn-sm danger" *ngIf="detailOrder()!.status === 'SUBMITTED' && canApprove" (click)="rejectOrder(detailOrder()!)">Từ chối</button>
         <button class="btn-sm" *ngIf="!['COMPLETED','CANCELLED'].includes(detailOrder()!.status)" (click)="cancelOrder(detailOrder()!)">Hủy đơn</button>
         <button type="button" (click)="detailOrder.set(null)">Đóng</button>
@@ -311,7 +394,11 @@ const SOURCE_LABELS: Record<string, string> = {
     .modal { background:#fff; padding:24px; border-radius:8px; max-width:720px; width:95%; box-shadow:0 8px 24px rgba(15,23,42,.2); max-height:90vh; overflow-y:auto; }
     .modal.wide { max-width:720px; }
     .form-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+    .lookup-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     .form-grid label, .full { display:flex; flex-direction:column; gap:4px; font-size:13px; color:#334155; }
+    .lookup-grid label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:#334155; }
+    .field-hint { color:#64748b; font-size:12px; }
+    .link-warning { margin:8px 0 0; color:#b45309; font-size:12px; }
     .full { margin-top:8px; }
     .req { color:#dc2626; }
     .form-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
@@ -330,6 +417,18 @@ const SOURCE_LABELS: Record<string, string> = {
     .enrollment-item { display:flex; align-items:center; gap:6px; font-size:13px; padding:4px 8px; background:#fff; border-radius:4px; }
     .enrollment-item.success-item { border:1px solid #86efac; }
     .enrollment-icon { font-size:16px; }
+    .handoff-box { background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:12px 16px; margin-top:12px; }
+    .handoff-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+    .handoff-header h4 { margin:0 0 4px; }
+    .handoff-header p { margin:0; font-size:12px; color:#475569; }
+    .handoff-card { background:#fff; border:1px solid #dbeafe; border-radius:6px; padding:10px 12px; margin-top:10px; }
+    .handoff-card-head { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+    .handoff-text { margin:0; white-space:pre-wrap; font-family:Consolas, 'Courier New', monospace; font-size:12px; line-height:1.5; color:#0f172a; }
+    @media (max-width: 768px) {
+      .form-grid, .lookup-grid, .detail-grid { grid-template-columns:1fr; }
+      .form-actions { flex-wrap:wrap; }
+      .handoff-header, .handoff-card-head { flex-direction:column; align-items:flex-start; }
+    }
   `]
 })
 export class OrdersComponent implements OnInit {
@@ -337,6 +436,8 @@ export class OrdersComponent implements OnInit {
   pipeline = signal<OrderPipeline | null>(null);
   products = signal<ProductItem[]>([]);
   sales = signal<UserItem[]>([]);
+  parents = signal<UserItem[]>([]);
+  students = signal<StudentItem[]>([]);
   showModal = signal(false);
   detailOrder = signal<OrderData | null>(null);
   error = signal('');
@@ -350,6 +451,8 @@ export class OrdersComponent implements OnInit {
   isSaleRole = false;
   currentUserId = '';
   currentUserName = '';
+  parentLookup = '';
+  studentLookup = '';
 
   form: any = this.emptyForm();
 
@@ -363,6 +466,7 @@ export class OrdersComponent implements OnInit {
   constructor(
     private orderService: OrderService,
     private productService: ProductService,
+    private studentService: StudentService,
     private leadService: LeadService,
     private adsService: AdsService,
     private auth: AuthService,
@@ -377,10 +481,8 @@ export class OrdersComponent implements OnInit {
     this.isSaleRole = role === Role.SALE;
     this.currentUserId = currentUser?.sub || '';
     this.currentUserName = currentUser?.fullName || '';
-    if (!this.isSaleRole) {
-      void this.loadSales();
-    }
-    this.reload();
+    void this.loadLookups();
+    void this.reload();
 
     // Check if navigated from lead conversion
     this.route.queryParams.subscribe(async params => {
@@ -404,12 +506,32 @@ export class OrdersComponent implements OnInit {
           }
         }
       }
+
+      if (params['orderId']) {
+        const order = await this.orderService.getOne(params['orderId']);
+        if (order) {
+          this.detailOrder.set(order);
+        }
+      }
     });
   }
 
   statusLabel(s: string) { return STATUS_LABELS[s] || s; }
   statusColor(s: string) { return STATUS_COLORS[s] || '#64748b'; }
   typeLabel(s: string) { return TYPE_LABELS[s] || s; }
+  communicationSummary(): OrderCommunicationSummary | null {
+    return this.detailOrder()?.processedResults?.communicationSummary || null;
+  }
+
+  async copyText(value?: string, label = 'Noi dung') {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      alert(`${label} da duoc copy.`);
+    } catch {
+      prompt(`Copy ${label}:`, value);
+    }
+  }
 
   getPipeCount(s: string): number {
     const p = this.pipeline();
@@ -423,15 +545,26 @@ export class OrdersComponent implements OnInit {
   emptyForm(): any {
     return {
       orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '',
-      studentName: '', studentGrade: '', leadSource: '', leadId: '', saleId: this.isSaleRole ? this.currentUserId : '',
+      parentUserId: '',
+      studentName: '', studentGrade: '', existingStudentId: '',
+      leadSource: '', leadId: '', saleId: this.isSaleRole ? this.currentUserId : '',
       adGroupId: '', adGroupName: '', adGroupFromLead: false,
       items: [this.emptyItem()],
       discountAmount: 0, discountReason: '', consultationNotes: '',
     };
   }
 
-  async loadSales() {
-    this.sales.set(await this.userService.listSales());
+  async loadLookups() {
+    const [products, parents, students, sales] = await Promise.all([
+      this.productService.list(),
+      this.userService.listParents(),
+      this.studentService.list(),
+      this.isSaleRole ? Promise.resolve([] as UserItem[]) : this.userService.listSales(),
+    ]);
+    this.products.set(products);
+    this.parents.set(parents);
+    this.students.set(students);
+    this.sales.set(sales);
   }
 
   async onLeadSourceChange() {
@@ -461,6 +594,226 @@ export class OrdersComponent implements OnInit {
     return { productId: '', productName: '', sessions: 24, sessionDuration: 90, pricePerSession: 0, amount: 0, teachingMode: 'ONLINE', notes: '' };
   }
 
+  normalizePhone(value?: string) {
+    return (value || '').replace(/\D/g, '');
+  }
+
+  normalizeOptionalText(value: any): string | undefined {
+    const normalized = String(value ?? '').trim();
+    return normalized || undefined;
+  }
+
+  normalizeOptionalId(value: any): string | undefined {
+    const normalized = String(value ?? '').trim();
+    return normalized || undefined;
+  }
+
+  filteredParents(): UserItem[] {
+    const q = this.parentLookup.trim().toLowerCase();
+    return this.parents()
+      .filter((parent) => {
+        if (!q) return true;
+        return (parent.fullName || '').toLowerCase().includes(q)
+          || (parent.phone || '').includes(q)
+          || (parent.email || '').toLowerCase().includes(q);
+      })
+      .slice(0, 50);
+  }
+
+  filteredStudents(): StudentItem[] {
+    const q = this.studentLookup.trim().toLowerCase();
+    return this.students()
+      .filter((student) => {
+        if (!q) return true;
+        return (student.studentCode || '').toLowerCase().includes(q)
+          || (student.fullName || '').toLowerCase().includes(q)
+          || (student.parentName || '').toLowerCase().includes(q)
+          || (student.parentPhone || '').includes(q);
+      })
+      .slice(0, 50);
+  }
+
+  suggestedStudents(): StudentItem[] {
+    const normalizedName = (this.form.studentName || '').trim().toLowerCase();
+    const normalizedParentPhone = this.normalizePhone(this.form.parentPhone);
+    if (!normalizedName && !normalizedParentPhone) {
+      return [];
+    }
+
+    return this.students()
+      .filter((student) => {
+        const sameName = normalizedName && (student.fullName || '').trim().toLowerCase() === normalizedName;
+        const sameParentPhone = normalizedParentPhone
+          && this.normalizePhone(student.parentPhone) === normalizedParentPhone;
+        return !!(sameName || sameParentPhone);
+      })
+      .slice(0, 5);
+  }
+
+  findParentById(id?: string | null): UserItem | undefined {
+    if (!id) return undefined;
+    return this.parents().find((parent) => parent._id === id);
+  }
+
+  findStudentById(id?: string | null): StudentItem | undefined {
+    if (!id) return undefined;
+    return this.students().find((student) => student._id === id);
+  }
+
+  formatParentOption(parent: UserItem): string {
+    return `${parent.fullName} - ${parent.phone || parent.email || 'Khong co lien he'}`;
+  }
+
+  formatStudentOption(student: StudentItem): string {
+    return `${student.studentCode} - ${student.fullName} - ${student.parentPhone || 'Khong co SDT PH'}`;
+  }
+
+  applyParentSelection(parent: UserItem | null) {
+    if (!parent) {
+      this.form.parentUserId = '';
+      this.parentLookup = '';
+      return;
+    }
+
+    this.form.parentUserId = parent._id;
+    this.form.parentName = parent.fullName || this.form.parentName;
+    this.form.parentPhone = parent.phone || this.form.parentPhone;
+    this.form.parentEmail = parent.email || this.form.parentEmail;
+    if (!this.isSaleRole && !this.form.leadId && !this.form.existingStudentId && parent.saleOwnerId) {
+      this.form.saleId = parent.saleOwnerId;
+    }
+    this.parentLookup = this.formatParentOption(parent);
+  }
+
+  applyStudentSelection(student: StudentItem | null) {
+    if (!student) {
+      this.form.existingStudentId = '';
+      this.studentLookup = '';
+      return;
+    }
+
+    this.form.existingStudentId = student._id;
+    this.form.studentName = student.fullName || this.form.studentName;
+    this.form.studentGrade = student.grade || this.form.studentGrade;
+    this.studentLookup = this.formatStudentOption(student);
+
+    const parent = student.parentUserId ? this.findParentById(student.parentUserId) : undefined;
+    if (parent) {
+      this.applyParentSelection(parent);
+    } else {
+      this.form.parentUserId = student.parentUserId || this.form.parentUserId || '';
+      this.form.parentName = student.parentName || this.form.parentName;
+      this.form.parentPhone = student.parentPhone || this.form.parentPhone;
+    }
+
+    if (!this.isSaleRole && !this.form.leadId && student.saleId) {
+      this.form.saleId = student.saleId;
+    }
+  }
+
+  onParentSelected(parentId: string) {
+    const parent = this.findParentById(parentId);
+    this.applyParentSelection(parent || null);
+
+    if (!parent) {
+      this.form.existingStudentId = '';
+      this.studentLookup = '';
+      return;
+    }
+
+    const currentStudent = this.findStudentById(this.form.existingStudentId);
+    if (parent && currentStudent?.parentUserId && currentStudent.parentUserId !== parent._id) {
+      this.form.existingStudentId = '';
+      this.studentLookup = '';
+    }
+  }
+
+  onExistingStudentSelected(studentId: string) {
+    const student = this.findStudentById(studentId);
+    this.applyStudentSelection(student || null);
+  }
+
+  onParentFieldsChanged() {
+    const selectedParent = this.findParentById(this.form.parentUserId);
+    if (selectedParent) {
+      const sameName = (this.form.parentName || '').trim() === (selectedParent.fullName || '').trim();
+      const samePhone = this.normalizePhone(this.form.parentPhone) === this.normalizePhone(selectedParent.phone);
+      const sameEmail = (this.form.parentEmail || '').trim().toLowerCase() === (selectedParent.email || '').trim().toLowerCase();
+      if (!sameName || !samePhone || !sameEmail) {
+        this.form.parentUserId = '';
+        this.parentLookup = '';
+      }
+    }
+
+    const selectedStudent = this.findStudentById(this.form.existingStudentId);
+    if (selectedStudent) {
+      const sameParentName = (this.form.parentName || '').trim() === (selectedStudent.parentName || '').trim();
+      const sameParentPhone = this.normalizePhone(this.form.parentPhone) === this.normalizePhone(selectedStudent.parentPhone);
+      if (!sameParentName || !sameParentPhone) {
+        this.form.existingStudentId = '';
+        this.studentLookup = '';
+      }
+    }
+  }
+
+  onStudentFieldsChanged() {
+    const selectedStudent = this.findStudentById(this.form.existingStudentId);
+    if (!selectedStudent) return;
+
+    const sameName = (this.form.studentName || '').trim() === (selectedStudent.fullName || '').trim();
+    const sameGrade = (this.form.studentGrade || '').trim() === (selectedStudent.grade || '').trim();
+    if (!sameName || !sameGrade) {
+      this.form.existingStudentId = '';
+      this.studentLookup = '';
+    }
+  }
+
+  syncLookupLabels() {
+    const parent = this.findParentById(this.form.parentUserId);
+    const student = this.findStudentById(this.form.existingStudentId);
+    this.parentLookup = parent ? this.formatParentOption(parent) : '';
+    this.studentLookup = student ? this.formatStudentOption(student) : '';
+  }
+
+  buildPayload() {
+    return {
+      orderType: this.form.orderType,
+      parentName: (this.form.parentName || '').trim(),
+      parentPhone: (this.form.parentPhone || '').trim(),
+      ...(this.normalizeOptionalText(this.form.parentEmail) ? { parentEmail: this.normalizeOptionalText(this.form.parentEmail) } : {}),
+      ...((this.editingId || this.normalizeOptionalId(this.form.parentUserId))
+        ? { parentUserId: this.normalizeOptionalId(this.form.parentUserId) ?? '' }
+        : {}),
+      studentName: (this.form.studentName || '').trim(),
+      ...(this.normalizeOptionalText(this.form.studentGrade) ? { studentGrade: this.normalizeOptionalText(this.form.studentGrade) } : {}),
+      ...((this.editingId || this.normalizeOptionalId(this.form.existingStudentId))
+        ? { existingStudentId: this.normalizeOptionalId(this.form.existingStudentId) ?? '' }
+        : {}),
+      ...(this.normalizeOptionalText(this.form.leadSource) ? { leadSource: this.normalizeOptionalText(this.form.leadSource) } : {}),
+      ...(this.normalizeOptionalId(this.form.leadId) ? { leadId: this.normalizeOptionalId(this.form.leadId) } : {}),
+      ...(this.normalizeOptionalId(this.form.saleId) ? { saleId: this.normalizeOptionalId(this.form.saleId) } : {}),
+      ...(this.normalizeOptionalId(this.form.adGroupId) ? { adGroupId: this.normalizeOptionalId(this.form.adGroupId) } : {}),
+      ...(this.normalizeOptionalText(this.form.adGroupName) ? { adGroupName: this.normalizeOptionalText(this.form.adGroupName) } : {}),
+      items: (this.form.items || []).map((item: any) => ({
+        productId: item.productId,
+        ...(this.normalizeOptionalText(item.productName) ? { productName: this.normalizeOptionalText(item.productName) } : {}),
+        sessions: Number(item.sessions || 0),
+        sessionDuration: Number(item.sessionDuration || 0),
+        pricePerSession: Number(item.pricePerSession || 0),
+        amount: Number(item.amount || 0),
+        teachingMode: item.teachingMode || 'ONLINE',
+        ...(this.normalizeOptionalText(item.preferredSchedule) ? { preferredSchedule: this.normalizeOptionalText(item.preferredSchedule) } : {}),
+        ...(this.normalizeOptionalId(item.preferredTeacherId) ? { preferredTeacherId: this.normalizeOptionalId(item.preferredTeacherId) } : {}),
+        ...(this.normalizeOptionalText(item.notes) ? { notes: this.normalizeOptionalText(item.notes) } : {}),
+      })),
+      discountAmount: Number(this.form.discountAmount || 0),
+      ...(this.normalizeOptionalText(this.form.discountReason) ? { discountReason: this.normalizeOptionalText(this.form.discountReason) } : {}),
+      ...(this.normalizeOptionalText(this.form.consultationNotes) ? { consultationNotes: this.normalizeOptionalText(this.form.consultationNotes) } : {}),
+      totalAmount: this.calcTotal(),
+      finalAmount: this.calcFinal(),
+    };
+  }
+
   filtered = computed(() => {
     let list = this.items();
     const kw = this.keyword.trim().toLowerCase();
@@ -473,14 +826,12 @@ export class OrdersComponent implements OnInit {
   });
 
   async reload() {
-    const [items, pipeline, products] = await Promise.all([
+    const [items, pipeline] = await Promise.all([
       this.orderService.list(),
       this.orderService.getPipeline(),
-      this.productService.list(),
     ]);
     this.items.set(items);
     this.pipeline.set(pipeline);
-    this.products.set(products);
   }
 
   onProductSelect(item: any, productId: string) {
@@ -512,28 +863,38 @@ export class OrdersComponent implements OnInit {
   openCreate() {
     this.editingId = null;
     this.form = this.emptyForm();
+    this.parentLookup = '';
+    this.studentLookup = '';
     this.error.set('');
     this.showModal.set(true);
   }
 
   openEdit(o: OrderData) {
     this.editingId = o._id;
-    this.form = { ...o, items: o.items.map((i: any) => ({ ...i })) };
+    this.form = {
+      ...this.emptyForm(),
+      ...o,
+      parentUserId: o.parentUserId || '',
+      existingStudentId: o.existingStudentId || '',
+      items: o.items.map((i: any) => ({ ...i })),
+    };
+    this.syncLookupLabels();
     this.error.set('');
     this.detailOrder.set(null);
     this.showModal.set(true);
   }
 
-  closeModal() { this.showModal.set(false); this.editingId = null; }
+  closeModal() {
+    this.showModal.set(false);
+    this.editingId = null;
+    this.parentLookup = '';
+    this.studentLookup = '';
+  }
 
   openDetail(o: OrderData) { this.detailOrder.set(o); }
 
   async submitForm() {
-    const payload = {
-      ...this.form,
-      totalAmount: this.calcTotal(),
-      finalAmount: this.calcFinal(),
-    };
+    const payload = this.buildPayload();
 
     if (this.editingId) {
       const res = await this.orderService.update(this.editingId, payload);
@@ -543,7 +904,7 @@ export class OrdersComponent implements OnInit {
       if (!res.ok) { this.error.set(res.message || 'Lỗi'); return; }
     }
     this.closeModal();
-    this.reload();
+    await this.reload();
   }
 
   async submitOrder(o: OrderData) {
@@ -551,13 +912,14 @@ export class OrdersComponent implements OnInit {
     const res = await this.orderService.submit(o._id);
     if (!res.ok) { alert(res.message); return; }
     this.detailOrder.set(null);
-    this.reload();
+    await this.reload();
   }
 
   async approveOrder(o: OrderData) {
     if (!confirm(`Duyệt đơn ${o.orderCode} — ${o.studentName}?\n\nHệ thống sẽ tự động:\n• Tạo hồ sơ học viên\n• Tạo hóa đơn học phí\n\nXác nhận duyệt?`)) return;
     const res = await this.orderService.approve(o._id);
     if (!res.ok) { alert(res.message); return; }
+    const updatedOrder = res.data?.order || await this.orderService.getOne(o._id);
 
     // Hiển thị kết quả enrollment
     if (res.data?.enrollment) {
@@ -578,8 +940,8 @@ export class OrdersComponent implements OnInit {
       }
     }
 
-    this.detailOrder.set(null);
-    this.reload();
+    this.detailOrder.set(updatedOrder || null);
+    await Promise.all([this.reload(), this.loadLookups()]);
   }
 
   async rejectOrder(o: OrderData) {
@@ -588,7 +950,16 @@ export class OrdersComponent implements OnInit {
     const res = await this.orderService.reject(o._id, reason);
     if (!res.ok) { alert(res.message); return; }
     this.detailOrder.set(null);
-    this.reload();
+    await this.reload();
+  }
+
+  async requestMoreInfo(o: OrderData) {
+    const reason = prompt('Noi dung can bo sung:');
+    if (!reason) return;
+    const res = await this.orderService.requestInfo(o._id, reason);
+    if (!res.ok) { alert(res.message); return; }
+    this.detailOrder.set(null);
+    await this.reload();
   }
 
   async cancelOrder(o: OrderData) {
@@ -596,6 +967,6 @@ export class OrdersComponent implements OnInit {
     const res = await this.orderService.cancel(o._id);
     if (!res.ok) { alert(res.message); return; }
     this.detailOrder.set(null);
-    this.reload();
+    await this.reload();
   }
 }

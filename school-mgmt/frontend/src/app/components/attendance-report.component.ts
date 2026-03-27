@@ -21,6 +21,7 @@ interface AttendanceReportItem {
     age: number;
     parentName: string;
     faceImage?: string;
+    totalPurchasedSessions?: number;
   };
   classId: {
     _id: string;
@@ -97,6 +98,7 @@ interface AttendanceReportItem {
               <th>Thời gian điểm danh</th>
               <th>Lớp</th>
               <th>Học sinh</th>
+              <th title="Tổng số buổi lấy từ các hóa đơn đã thanh toán/đã duyệt">Tổng buổi (Đã mua)</th>
               <th>Ảnh học sinh</th>
               <th>Giáo viên</th>
               <th>Hình ảnh điểm danh</th>
@@ -118,6 +120,9 @@ interface AttendanceReportItem {
                   <strong>{{ item.studentId.fullName }}</strong><br />
                   <small>Mã: {{ item.studentId.studentCode }} | Tuổi: {{ item.studentId.age }}</small>
                 </div>
+              </td>
+              <td>
+                <strong>{{ item.studentId.totalPurchasedSessions || 0 }}</strong>
               </td>
               <td class="image-cell">
                 <img 

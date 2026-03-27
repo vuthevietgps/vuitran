@@ -2,20 +2,28 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 
-import { Session, SessionDocument } from '../sessions/schemas/session.schema';
+import { AdsAnalyticsService } from '../ads/ads-analytics.service';
+import { ActionableSuggestion } from '../ads/ads.types';
+import { Session, SessionDocument, SessionStatus } from '../sessions/schemas/session.schema';
 import { Wallet, WalletDocument } from '../wallets/schemas/wallet.schema';
 import { LedgerEntry, LedgerEntryDocument, TransactionType, TransactionStatus } from '../wallets/schemas/ledger-entry.schema';
 import { Payroll, PayrollDocument, PayrollStatus } from '../payroll/schemas/payroll.schema';
 import { Ticket, TicketDocument, TicketStatus, TicketPriority } from '../tickets/schemas/ticket.schema';
-import { TeacherProfile } from '../teachers/schemas/teacher-profile.schema';
+import { TeacherProfile, TeacherStatus } from '../teachers/schemas/teacher-profile.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
+import { Classroom, ClassDocument, ClassUpdateRequestStatus } from '../classes/schemas/class.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
+import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
 import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
 import { Expense, ExpenseDocument, PaymentStatus as ExpensePaymentStatus } from '../expenses/schemas/expense.schema';
-import { Order, OrderDocument } from '../orders/schemas/order.schema';
-import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
+import { Order, OrderDocument, OrderStatus } from '../orders/schemas/order.schema';
+import { Lead, LeadDocument, LeadStatus } from '../leads/schemas/lead.schema';
+import {
+  TrialEnrollment,
+  TrialEnrollmentDocument,
+  TrialEnrollmentStatus,
+} from '../trial-enrollments/schemas/trial-enrollment.schema';
+import { Role } from '../common/interfaces/role.enum';
 
 // ─── Interface definitions for dashboard responses ──────────────────
 
@@ -180,11 +188,55 @@ export interface ParentDashboard {
   };
 }
 
+export type DailyTaskPriority = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | (string & {});
+
+export interface DailyTaskItem {
+  id: string;
+  type: string;
+  title: string;
+  detail?: string;
+  meta?: string[];
+  count?: number;
+  status?: string;
+  priority: DailyTaskPriority;
+  dueAt?: string;
+  route: string;
+  queryParams?: Record<string, string>;
+  actionLabel?: string;
+  overdue?: boolean;
+}
+
+export interface DailyTaskTab {
+  key: string;
+  label: string;
+  description: string;
+  emptyMessage: string;
+  count: number;
+  tasks: DailyTaskItem[];
+}
+
+export interface DailyTaskBoard {
+  role: Role;
+  title: string;
+  subtitle: string;
+  generatedAt: string;
+  summary: {
+    totalTasks: number;
+    overdueTasks: number;
+    dueTodayTasks: number;
+    highPriorityTasks: number;
+  };
+  tabs: DailyTaskTab[];
+}
+
+type DailyTaskBucket = 'priority' | 'today' | 'followup';
+
 // ─── Service ────────────────────────────────────────────────────────
 
 @Injectable()
 export class DashboardService {
   constructor(
+    private readonly adsAnalyticsService: AdsAnalyticsService,
     @InjectModel(Session.name) private sessionModel: Model<SessionDocument>,
     @InjectModel(Wallet.name) private walletModel: Model<WalletDocument>,
     @InjectModel(LedgerEntry.name) private ledgerModel: Model<LedgerEntryDocument>,
@@ -199,6 +251,7 @@ export class DashboardService {
     @InjectModel(Expense.name) private expenseModel: Model<ExpenseDocument>,
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
     @InjectModel(Lead.name) private leadModel: Model<LeadDocument>,
+    @InjectModel(TrialEnrollment.name) private trialEnrollmentModel: Model<TrialEnrollmentDocument>,
   ) {}
 
   // ════════════════════════════════════════════════════════════════════
@@ -808,6 +861,1116 @@ export class DashboardService {
   // Private Helpers
   // ════════════════════════════════════════════════════════════════════
 
+  async getDailyTasks(role: Role, userId: string): Promise<DailyTaskBoard> {
+    switch (role) {
+      case Role.DIRECTOR:
+        return this.getDirectorDailyTasks();
+      case Role.ACCOUNTING:
+        return this.getAccountingDailyTasks();
+      case Role.OPS:
+        return this.getOpsDailyTasks(userId);
+      case Role.TEACHER:
+        return this.getTeacherDailyTasks(userId);
+      case Role.PARENT:
+        return this.getParentDailyTasks(userId);
+      case Role.SALE:
+        return this.getSaleDailyTasks(userId);
+      case Role.ADSMANAGER:
+        return this.getAdsDailyTasks();
+      default:
+        return this.buildDailyTaskBoard(role, []);
+    }
+  }
+
+  private async getDirectorDailyTasks(): Promise<DailyTaskBoard> {
+    const now = new Date();
+    const today = this.startOfDay(now);
+    const tomorrow = this.addDays(today, 1);
+
+    const [
+      pendingPayrolls,
+      pendingInvoices,
+      pendingTopUps,
+      pendingTeachers,
+      pendingClassUpdates,
+      sessionsWaitingFinalization,
+      overdueTickets,
+      leadFollowUps,
+      submittedOrders,
+      trialDecisions,
+    ] = await Promise.all([
+      this.payrollModel
+        .find({ status: PayrollStatus.PENDING_REVIEW })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName email')
+        .lean(),
+      this.invoiceModel
+        .find({ status: InvoiceStatus.PENDING_APPROVAL })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('studentId', 'fullName studentCode')
+        .populate('createdBy', 'fullName email')
+        .lean(),
+      this.ledgerModel
+        .find({ type: TransactionType.TOP_UP, status: TransactionStatus.PENDING })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('userId', 'fullName email')
+        .lean(),
+      this.teacherModel
+        .find({ status: TeacherStatus.PENDING })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('userId', 'fullName email phone')
+        .lean(),
+      this.classModel
+        .find({ 'pendingSaleUpdate.status': ClassUpdateRequestStatus.PENDING })
+        .sort({ 'pendingSaleUpdate.requestedAt': 1 })
+        .limit(10)
+        .populate('sale', 'fullName email')
+        .populate('pendingSaleUpdate.requestedBy', 'fullName email')
+        .lean(),
+      this.sessionModel
+        .find({ status: SessionStatus.TEACHER_COMPLETED })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.ticketModel
+        .find({
+          status: { $in: this.getOpenTicketStatuses() },
+          dueDate: { $lt: now },
+        })
+        .sort({ dueDate: 1 })
+        .limit(10)
+        .populate('createdBy', 'fullName')
+        .populate('assignedTo', 'fullName')
+        .lean(),
+      this.leadModel
+        .find({
+          nextFollowUp: { $lte: tomorrow },
+          status: { $in: this.getActiveLeadStatuses() },
+        })
+        .sort({ nextFollowUp: 1 })
+        .limit(10)
+        .lean(),
+      this.orderModel
+        .find({ status: OrderStatus.SUBMITTED })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .lean(),
+      this.trialEnrollmentModel
+        .find({
+          status: {
+            $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
+          },
+        })
+        .sort({ updatedAt: 1, createdAt: 1 })
+        .limit(10)
+        .populate('classId', 'name code')
+        .populate('saleId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .lean(),
+    ]);
+
+    const approvalTasks: DailyTaskItem[] = [
+      ...pendingPayrolls.map((payroll: any) => ({
+        id: `director-payroll-${String(payroll._id)}`,
+        type: 'PENDING_PAYROLL',
+        title: `Duyet bang luong ${payroll.payrollCode}`,
+        detail: payroll.teacherId?.fullName || 'Bang luong cho duyet',
+        meta: this.compactMeta([
+          payroll.teacherId?.email,
+          payroll.periodStart && payroll.periodEnd
+            ? `${this.toShortDate(payroll.periodStart)} - ${this.toShortDate(payroll.periodEnd)}`
+            : undefined,
+        ]),
+        status: payroll.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(payroll.createdAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'payroll' },
+        actionLabel: 'Mo cho duyet',
+      })),
+      ...pendingInvoices.map((invoice: any) => ({
+        id: `director-invoice-${String(invoice._id)}`,
+        type: 'PENDING_INVOICE',
+        title: `Duyet hoa don ${invoice.invoiceNumber}`,
+        detail: this.studentName(invoice.studentId) || 'Hoa don dang cho duyet',
+        meta: this.compactMeta([invoice.createdBy?.fullName]),
+        status: invoice.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(invoice.createdAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'invoices' },
+        actionLabel: 'Mo cho duyet',
+      })),
+      ...pendingTopUps.map((entry: any) => ({
+        id: `director-topup-${String(entry._id)}`,
+        type: 'PENDING_TOP_UP',
+        title: `Duyet nap vi ${this.formatCurrency(entry.amount)}`,
+        detail: this.personName(entry.userId) || 'Yeu cau nap vi',
+        meta: this.compactMeta([entry.userId?.email]),
+        status: entry.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(entry.createdAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'topups' },
+        actionLabel: 'Mo cho duyet',
+      })),
+      ...pendingTeachers.map((teacher: any) => ({
+        id: `director-teacher-${String(teacher._id)}`,
+        type: 'PENDING_TEACHER',
+        title: `Duyet giao vien ${teacher.userId?.fullName || 'moi'}`,
+        detail: teacher.userId?.email || 'Ho so giao vien cho duyet',
+        meta: this.compactMeta([teacher.userId?.phone]),
+        status: teacher.status,
+        priority: 'MEDIUM',
+        dueAt: this.toIso(teacher.createdAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'teachers' },
+        actionLabel: 'Mo cho duyet',
+      })),
+      ...pendingClassUpdates.map((classItem: any) => ({
+        id: `director-class-update-${String(classItem._id)}`,
+        type: 'PENDING_CLASS_UPDATE',
+        title: `Duyet cap nhat lop ${classItem.code || classItem.name || ''}`.trim(),
+        detail: classItem.name || 'Yeu cau sua lop hoc',
+        meta: this.compactMeta([
+          classItem.pendingSaleUpdate?.requestedBy?.fullName,
+          classItem.pendingSaleUpdate?.requestType,
+        ]),
+        status: classItem.pendingSaleUpdate?.status,
+        priority: classItem.pendingSaleUpdate?.requestType === 'DURATION_CHANGE' ? 'HIGH' : 'MEDIUM',
+        dueAt: this.toIso(classItem.pendingSaleUpdate?.requestedAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'classes' },
+        actionLabel: 'Mo cho duyet',
+      })),
+    ];
+
+    const operationsTasks: DailyTaskItem[] = [
+      ...sessionsWaitingFinalization.map((session: any) => ({
+        id: `director-session-finalize-${String(session._id)}`,
+        type: 'SESSION_WAITING_FINALIZATION',
+        title: `Chot buoi hoc ${this.studentName(session.studentId) || ''}`.trim(),
+        detail: this.className(session.classId) || 'Buoi hoc cho xu ly',
+        meta: this.compactMeta([this.personName(session.teacherId)]),
+        status: session.status,
+        priority: this.isOverdue(session.scheduledDate, today) ? 'HIGH' : 'MEDIUM',
+        dueAt: this.toIso(session.scheduledDate),
+        route: '/app/sessions',
+        actionLabel: 'Mo buoi hoc',
+        overdue: this.isOverdue(session.scheduledDate, today),
+      })),
+      ...overdueTickets.map((ticket: any) => ({
+        id: `director-ticket-${String(ticket._id)}`,
+        type: 'OVERDUE_TICKET',
+        title: `Xu ly ticket ${ticket.ticketCode || ''}`.trim(),
+        detail: ticket.subject || 'Ticket qua han',
+        meta: this.compactMeta([
+          this.personName(ticket.createdBy),
+          this.personName(ticket.assignedTo),
+        ]),
+        status: ticket.status,
+        priority: this.mapTicketPriority(ticket.priority),
+        dueAt: this.toIso(ticket.dueDate),
+        route: '/app/tickets',
+        actionLabel: 'Mo ticket',
+        overdue: true,
+      })),
+    ];
+
+    const salesTasks: DailyTaskItem[] = [
+      ...leadFollowUps.map((lead: any) => ({
+        id: `director-lead-${String(lead._id)}`,
+        type: 'LEAD_FOLLOW_UP',
+        title: `Follow-up lead ${lead.leadCode || ''}`.trim(),
+        detail: lead.parentName || 'Lead can lien he',
+        meta: this.compactMeta([lead.parentPhone, lead.status]),
+        status: lead.status,
+        priority: this.isOverdue(lead.nextFollowUp, today) ? 'HIGH' : 'MEDIUM',
+        dueAt: this.toIso(lead.nextFollowUp),
+        route: '/app/leads',
+        actionLabel: 'Mo lead',
+        overdue: this.isOverdue(lead.nextFollowUp, today),
+      })),
+      ...submittedOrders.map((order: any) => ({
+        id: `director-order-${String(order._id)}`,
+        type: 'ORDER_SUBMITTED',
+        title: `Ra soat don ${order.orderCode}`,
+        detail: this.compactMeta([order.parentName, order.studentName]).join(' · ') || 'Don dang cho xu ly',
+        meta: this.compactMeta([this.formatCurrency(order.finalAmount)]),
+        status: order.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(order.createdAt),
+        route: '/app/orders',
+        actionLabel: 'Mo don hang',
+      })),
+      ...trialDecisions.map((trial: any) => ({
+        id: `director-trial-${String(trial._id)}`,
+        type: 'TRIAL_ENROLLMENT',
+        title:
+          trial.status === TrialEnrollmentStatus.WAITING_DECISION
+            ? `Chot hoc thu ${trial.trialCode || ''}`.trim()
+            : `Theo doi hoc thu ${trial.trialCode || ''}`.trim(),
+        detail: trial.studentName || this.studentName(trial.studentId) || 'Hoc thu offline',
+        meta: this.compactMeta([
+          this.className(trial.classId),
+          this.personName(trial.saleId),
+          `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`,
+        ]),
+        status: trial.status,
+        priority:
+          trial.status === TrialEnrollmentStatus.WAITING_DECISION
+            ? 'HIGH'
+            : (trial.trialSessionsUsed || 0) > 0
+              ? 'MEDIUM'
+              : 'LOW',
+        dueAt: this.toIso(trial.updatedAt || trial.createdAt),
+        route: '/app/trial-enrollments',
+        actionLabel: 'Mo hoc thu',
+        overdue:
+          trial.status === TrialEnrollmentStatus.WAITING_DECISION &&
+          this.isOverdue(trial.updatedAt || trial.createdAt, today),
+      })),
+    ];
+
+    return this.buildDailyTaskBoard(Role.DIRECTOR, [
+      {
+        key: 'approvals',
+        label: 'Cho duyet',
+        description: 'Cac muc can phe duyet va phan hoi som trong ngay.',
+        emptyMessage: 'Khong co hang muc cho duyet.',
+        count: 0,
+        tasks: approvalTasks,
+      },
+      {
+        key: 'operations',
+        label: 'Van hanh',
+        description: 'Buoi hoc va ticket dang can xu ly ngay.',
+        emptyMessage: 'Khong co viec van hanh cap bach.',
+        count: 0,
+        tasks: operationsTasks,
+      },
+      {
+        key: 'sales',
+        label: 'Kinh doanh',
+        description: 'Lead den han va don dang cho ra quyet dinh.',
+        emptyMessage: 'Khong co lead hay don can theo doi ngay.',
+        count: 0,
+        tasks: salesTasks,
+      },
+    ]);
+  }
+
+  private async getAccountingDailyTasks(): Promise<DailyTaskBoard> {
+    const [pendingTopUps, pendingInvoices, approvedPayrolls, pendingPayrolls] = await Promise.all([
+      this.ledgerModel
+        .find({ type: TransactionType.TOP_UP, status: TransactionStatus.PENDING })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('userId', 'fullName email')
+        .lean(),
+      this.invoiceModel
+        .find({ status: InvoiceStatus.PENDING_APPROVAL })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('studentId', 'fullName studentCode')
+        .populate('createdBy', 'fullName email')
+        .lean(),
+      this.payrollModel
+        .find({ status: PayrollStatus.APPROVED })
+        .sort({ updatedAt: 1, createdAt: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName email')
+        .lean(),
+      this.payrollModel
+        .find({ status: PayrollStatus.PENDING_REVIEW })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName email')
+        .lean(),
+    ]);
+
+    const incomingTasks: DailyTaskItem[] = [
+      ...pendingTopUps.map((entry: any) => ({
+        id: `accounting-topup-${String(entry._id)}`,
+        type: 'PENDING_TOP_UP',
+        title: `Xac nhan nap vi ${this.formatCurrency(entry.amount)}`,
+        detail: this.personName(entry.userId) || 'Yeu cau nap vi',
+        meta: this.compactMeta([entry.userId?.email, entry.paymentMethod]),
+        status: entry.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(entry.createdAt),
+        route: '/app/wallets',
+        actionLabel: 'Mo vi',
+      })),
+      ...pendingInvoices.map((invoice: any) => ({
+        id: `accounting-invoice-${String(invoice._id)}`,
+        type: 'PENDING_INVOICE',
+        title: `Ra soat hoa don ${invoice.invoiceNumber}`,
+        detail: this.studentName(invoice.studentId) || 'Hoa don cho xu ly',
+        meta: this.compactMeta([invoice.createdBy?.fullName]),
+        status: invoice.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(invoice.createdAt),
+        route: '/app/invoices',
+        actionLabel: 'Mo hoa don',
+      })),
+    ];
+
+    const payrollTasks: DailyTaskItem[] = [
+      ...approvedPayrolls.map((payroll: any) => ({
+        id: `accounting-approved-payroll-${String(payroll._id)}`,
+        type: 'APPROVED_PAYROLL',
+        title: `Chi luong ${payroll.payrollCode}`,
+        detail: payroll.teacherId?.fullName || 'Bang luong da duyet',
+        meta: this.compactMeta([
+          this.formatCurrency(payroll.netAmount),
+          payroll.periodStart && payroll.periodEnd
+            ? `${this.toShortDate(payroll.periodStart)} - ${this.toShortDate(payroll.periodEnd)}`
+            : undefined,
+        ]),
+        status: payroll.status,
+        priority: 'HIGH',
+        dueAt: this.toIso(payroll.updatedAt || payroll.createdAt),
+        route: '/app/payroll',
+        actionLabel: 'Mo payroll',
+      })),
+      ...pendingPayrolls.map((payroll: any) => ({
+        id: `accounting-pending-payroll-${String(payroll._id)}`,
+        type: 'PAYROLL_WAITING_APPROVAL',
+        title: `Theo doi bang luong ${payroll.payrollCode}`,
+        detail: 'Dang cho director duyet truoc khi chi tra',
+        meta: this.compactMeta([payroll.teacherId?.fullName]),
+        status: payroll.status,
+        priority: 'MEDIUM',
+        dueAt: this.toIso(payroll.createdAt),
+        route: '/app/payroll',
+        actionLabel: 'Mo payroll',
+      })),
+    ];
+
+    return this.buildDailyTaskBoard(Role.ACCOUNTING, [
+      {
+        key: 'incoming',
+        label: 'Thu vao',
+        description: 'Top-up va hoa don moi can duoc xu ly.',
+        emptyMessage: 'Khong co top-up hay hoa don dang cho xu ly.',
+        count: 0,
+        tasks: incomingTasks,
+      },
+      {
+        key: 'payroll',
+        label: 'Luong',
+        description: 'Bang luong da duyet de chi tra va bang luong dang theo doi.',
+        emptyMessage: 'Khong co bang luong can xu ly ngay.',
+        count: 0,
+        tasks: payrollTasks,
+      },
+    ]);
+  }
+
+  private async getOpsDailyTasks(opsUserId: string): Promise<DailyTaskBoard> {
+    const now = new Date();
+    const today = this.startOfDay(now);
+    const tomorrow = this.addDays(today, 1);
+
+    const [
+      sessionsToday,
+      sessionsWaitingFinalization,
+      overdueTickets,
+      pendingTeachers,
+      pendingClassUpdates,
+      pendingStudents,
+      trialQueue,
+    ] = await Promise.all([
+      this.sessionModel
+        .find({
+          status: SessionStatus.SCHEDULED,
+          scheduledDate: { $gte: today, $lt: tomorrow },
+        })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.sessionModel
+        .find({ status: SessionStatus.TEACHER_COMPLETED })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.ticketModel
+        .find({
+          status: { $in: this.getOpenTicketStatuses() },
+          dueDate: { $lt: now },
+          ...(Types.ObjectId.isValid(opsUserId) ? { assignedTo: new Types.ObjectId(opsUserId) } : {}),
+        })
+        .sort({ dueDate: 1 })
+        .limit(10)
+        .populate('createdBy', 'fullName')
+        .populate('assignedTo', 'fullName')
+        .lean(),
+      this.teacherModel
+        .find({ status: TeacherStatus.PENDING })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('userId', 'fullName email phone')
+        .lean(),
+      this.classModel
+        .find({
+          'pendingSaleUpdate.status': ClassUpdateRequestStatus.PENDING,
+          'pendingSaleUpdate.requestType': { $ne: 'DURATION_CHANGE' },
+        })
+        .sort({ 'pendingSaleUpdate.requestedAt': 1 })
+        .limit(10)
+        .populate('sale', 'fullName email')
+        .populate('pendingSaleUpdate.requestedBy', 'fullName email')
+        .lean(),
+      this.studentModel
+        .find({ status: 'PENDING' })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .select('fullName name studentCode parentName createdAt status')
+        .lean(),
+      this.trialEnrollmentModel
+        .find({
+          status: {
+            $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
+          },
+        })
+        .sort({ updatedAt: 1, createdAt: 1 })
+        .limit(12)
+        .populate('classId', 'name code')
+        .populate('saleId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .lean(),
+    ]);
+
+    const sessionTasks: DailyTaskItem[] = [
+      ...sessionsToday.map((session: any) => ({
+        id: `ops-session-today-${String(session._id)}`,
+        type: 'SESSION_TODAY',
+        title: `Dieu phoi buoi ${this.studentName(session.studentId) || ''}`.trim(),
+        detail: this.className(session.classId) || 'Buoi hoc hom nay',
+        meta: this.compactMeta([this.personName(session.teacherId)]),
+        status: session.status,
+        priority: 'MEDIUM',
+        dueAt: this.toIso(session.scheduledDate),
+        route: '/app/sessions',
+        actionLabel: 'Mo buoi hoc',
+      })),
+      ...sessionsWaitingFinalization.map((session: any) => ({
+        id: `ops-session-finalize-${String(session._id)}`,
+        type: 'SESSION_WAITING_FINALIZATION',
+        title: `Chot buoi ${this.studentName(session.studentId) || ''}`.trim(),
+        detail: this.className(session.classId) || 'Buoi hoc can chot',
+        meta: this.compactMeta([this.personName(session.teacherId)]),
+        status: session.status,
+        priority: this.isOverdue(session.scheduledDate, today) ? 'HIGH' : 'MEDIUM',
+        dueAt: this.toIso(session.scheduledDate),
+        route: '/app/sessions',
+        actionLabel: 'Mo buoi hoc',
+        overdue: this.isOverdue(session.scheduledDate, today),
+      })),
+    ];
+
+    const supportTasks: DailyTaskItem[] = overdueTickets.map((ticket: any) => ({
+      id: `ops-ticket-${String(ticket._id)}`,
+      type: 'OVERDUE_TICKET',
+      title: `Xu ly ticket ${ticket.ticketCode || ''}`.trim(),
+      detail: ticket.subject || 'Ticket qua han',
+      meta: this.compactMeta([this.personName(ticket.createdBy), this.personName(ticket.assignedTo)]),
+      status: ticket.status,
+      priority: this.mapTicketPriority(ticket.priority),
+      dueAt: this.toIso(ticket.dueDate),
+      route: '/app/tickets',
+      actionLabel: 'Mo ticket',
+      overdue: true,
+    }));
+
+    const resourceTasks: DailyTaskItem[] = [
+      ...pendingTeachers.map((teacher: any) => ({
+        id: `ops-teacher-${String(teacher._id)}`,
+        type: 'PENDING_TEACHER',
+        title: `Ra soat giao vien ${teacher.userId?.fullName || 'moi'}`,
+        detail: teacher.userId?.email || 'Ho so giao vien can tiep nhan',
+        meta: this.compactMeta([teacher.userId?.phone]),
+        status: teacher.status,
+        priority: 'MEDIUM',
+        dueAt: this.toIso(teacher.createdAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'teachers' },
+        actionLabel: 'Mo cho duyet',
+      })),
+      ...pendingClassUpdates.map((classItem: any) => ({
+        id: `ops-class-update-${String(classItem._id)}`,
+        type: 'PENDING_CLASS_UPDATE',
+        title: `Cap nhat lop ${classItem.code || classItem.name || ''}`.trim(),
+        detail: classItem.name || 'Yeu cau sua lop',
+        meta: this.compactMeta([classItem.pendingSaleUpdate?.requestedBy?.fullName]),
+        status: classItem.pendingSaleUpdate?.status,
+        priority: 'MEDIUM',
+        dueAt: this.toIso(classItem.pendingSaleUpdate?.requestedAt),
+        route: '/app/pending-approvals',
+        queryParams: { tab: 'classes' },
+        actionLabel: 'Mo cho duyet',
+      })),
+      ...pendingStudents.map((student: any) => ({
+        id: `ops-student-${String(student._id)}`,
+        type: 'PENDING_STUDENT',
+        title: `Ra soat hoc sinh ${student.fullName || student.name || ''}`.trim(),
+        detail: student.studentCode || 'Hoc sinh cho xu ly',
+        meta: this.compactMeta([student.parentName]),
+        status: student.status,
+        priority: 'LOW',
+        dueAt: this.toIso(student.createdAt),
+        route: '/app/students',
+        actionLabel: 'Mo hoc sinh',
+      })),
+    ];
+
+    const trialTasks: DailyTaskItem[] = trialQueue.map((trial: any) => ({
+      id: `ops-trial-${String(trial._id)}`,
+      type: 'TRIAL_ENROLLMENT',
+      title:
+        trial.status === TrialEnrollmentStatus.WAITING_DECISION
+          ? `Chot hoc thu ${trial.trialCode || ''}`.trim()
+          : `Theo doi hoc thu ${trial.trialCode || ''}`.trim(),
+      detail: trial.studentName || this.studentName(trial.studentId) || 'Hoc thu offline',
+      meta: this.compactMeta([
+        this.className(trial.classId),
+        this.personName(trial.saleId),
+        `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`,
+      ]),
+      status: trial.status,
+      priority:
+        trial.status === TrialEnrollmentStatus.WAITING_DECISION
+          ? 'HIGH'
+          : (trial.trialSessionsUsed || 0) > 0
+            ? 'MEDIUM'
+            : 'LOW',
+      dueAt: this.toIso(trial.updatedAt || trial.createdAt),
+      route: '/app/trial-enrollments',
+      actionLabel: 'Mo hoc thu',
+      overdue:
+        trial.status === TrialEnrollmentStatus.WAITING_DECISION &&
+        this.isOverdue(trial.updatedAt || trial.createdAt, today),
+    }));
+
+    return this.buildDailyTaskBoard(Role.OPS, [
+      {
+        key: 'sessions',
+        label: 'Buoi hoc',
+        description: 'Nhung buoi hom nay va buoi can chot ngay.',
+        emptyMessage: 'Khong co buoi hoc nao can xu ly them.',
+        count: 0,
+        tasks: sessionTasks,
+      },
+      {
+        key: 'support',
+        label: 'Ticket',
+        description: 'Ticket qua han dang duoc giao cho van hanh.',
+        emptyMessage: 'Khong co ticket qua han dang giao cho ban.',
+        count: 0,
+        tasks: supportTasks,
+      },
+      {
+        key: 'resources',
+        label: 'Nhan su & lop',
+        description: 'Nhan su, lop hoc va hoc sinh can tiep nhan.',
+        emptyMessage: 'Khong co hang muc nhan su hay lop can xu ly.',
+        count: 0,
+        tasks: resourceTasks,
+      },
+      {
+        key: 'trials',
+        label: 'Hoc thu',
+        description: 'Hoc thu dang hoc va hoc thu can chot quyet dinh.',
+        emptyMessage: 'Khong co hoc thu nao can xu ly.',
+        count: 0,
+        tasks: trialTasks,
+      },
+    ]);
+  }
+
+  private async getTeacherDailyTasks(teacherUserId: string): Promise<DailyTaskBoard> {
+    const now = new Date();
+    const today = this.startOfDay(now);
+    const teacherObjId = new Types.ObjectId(teacherUserId);
+
+    const [missedCompletions, upcomingSessions, waitingParentConfirm, openTickets] = await Promise.all([
+      this.sessionModel
+        .find({
+          teacherId: teacherObjId,
+          status: SessionStatus.SCHEDULED,
+          scheduledDate: { $lt: now },
+        })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.sessionModel
+        .find({
+          teacherId: teacherObjId,
+          status: SessionStatus.SCHEDULED,
+          scheduledDate: { $gte: now },
+        })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.sessionModel
+        .find({
+          teacherId: teacherObjId,
+          status: SessionStatus.TEACHER_COMPLETED,
+        })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.ticketModel
+        .find({
+          createdBy: teacherObjId,
+          status: { $in: this.getOpenTicketStatuses() },
+        })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+
+    const completionTasks: DailyTaskItem[] = missedCompletions.map((session: any) => ({
+      id: `teacher-missed-${String(session._id)}`,
+      type: 'MISSING_SESSION_COMPLETION',
+      title: `Cap nhat buoi ${this.studentName(session.studentId) || ''}`.trim(),
+      detail: this.className(session.classId) || 'Buoi da qua gio nhung chua chot',
+      meta: [],
+      status: session.status,
+      priority: 'HIGH',
+      dueAt: this.toIso(session.scheduledDate),
+      route: '/app/sessions',
+      actionLabel: 'Mo buoi hoc',
+      overdue: true,
+    }));
+
+    const upcomingTasks: DailyTaskItem[] = upcomingSessions.map((session: any) => ({
+      id: `teacher-upcoming-${String(session._id)}`,
+      type: 'UPCOMING_SESSION',
+      title: `Sap day ${this.studentName(session.studentId) || ''}`.trim(),
+      detail: this.className(session.classId) || 'Buoi hoc sap toi',
+      meta: [],
+      status: session.status,
+      priority: this.isSameDay(session.scheduledDate, today) ? 'HIGH' : 'MEDIUM',
+      dueAt: this.toIso(session.scheduledDate),
+      route: '/app/sessions',
+      actionLabel: 'Mo lich day',
+    }));
+
+    const confirmationTasks: DailyTaskItem[] = waitingParentConfirm.map((session: any) => ({
+      id: `teacher-wait-parent-${String(session._id)}`,
+      type: 'WAITING_PARENT_CONFIRMATION',
+      title: `Cho PH xac nhan ${this.studentName(session.studentId) || ''}`.trim(),
+      detail: this.className(session.classId) || 'Buoi hoc dang cho PH xac nhan',
+      meta: [],
+      status: session.status,
+      priority: this.isOverdue(session.scheduledDate, today) ? 'MEDIUM' : 'LOW',
+      dueAt: this.toIso(session.scheduledDate),
+      route: '/app/sessions',
+      actionLabel: 'Mo buoi hoc',
+      overdue: this.isOverdue(session.scheduledDate, today),
+    }));
+
+    const supportTasks: DailyTaskItem[] = openTickets.map((ticket: any) => ({
+      id: `teacher-ticket-${String(ticket._id)}`,
+      type: 'TEACHER_OPEN_TICKET',
+      title: `Theo doi ticket ${ticket.ticketCode || ''}`.trim(),
+      detail: ticket.subject || 'Ticket dang mo',
+      meta: this.compactMeta([ticket.priority]),
+      status: ticket.status,
+      priority: this.mapTicketPriority(ticket.priority),
+      dueAt: this.toIso(ticket.dueDate),
+      route: '/app/tickets',
+      actionLabel: 'Mo ticket',
+      overdue: this.isOverdue(ticket.dueDate, now),
+    }));
+
+    return this.buildDailyTaskBoard(Role.TEACHER, [
+      {
+        key: 'completion',
+        label: 'Can cap nhat',
+        description: 'Buoi da qua gio nhung chua duoc giao vien chot.',
+        emptyMessage: 'Khong co buoi nao bi tre cap nhat.',
+        count: 0,
+        tasks: completionTasks,
+      },
+      {
+        key: 'upcoming',
+        label: 'Sap toi',
+        description: 'Nhung buoi day can mo ra de chuan bi trong ngay.',
+        emptyMessage: 'Khong co buoi day sap toi nao.',
+        count: 0,
+        tasks: upcomingTasks,
+      },
+      {
+        key: 'confirmations',
+        label: 'Cho PH',
+        description: 'Buoi hoc da nop nhung dang cho phu huynh xac nhan.',
+        emptyMessage: 'Khong co buoi nao dang cho PH xac nhan.',
+        count: 0,
+        tasks: confirmationTasks,
+      },
+      {
+        key: 'support',
+        label: 'Ho tro',
+        description: 'Ticket giao vien dang mo can tiep tuc theo doi.',
+        emptyMessage: 'Khong co ticket nao dang mo.',
+        count: 0,
+        tasks: supportTasks,
+      },
+    ]);
+  }
+
+  private async getParentDailyTasks(parentUserId: string): Promise<DailyTaskBoard> {
+    const now = new Date();
+    const today = this.startOfDay(now);
+    const parentObjId = new Types.ObjectId(parentUserId);
+    const children = await this.studentModel
+      .find({ parentUserId: parentObjId })
+      .select('fullName name studentCode')
+      .lean();
+    const childIds = children.map((child) => child._id);
+
+    const [needsConfirmation, upcomingSessions, pendingTopUps, openTickets] = await Promise.all([
+      this.sessionModel
+        .find({
+          studentId: { $in: childIds },
+          status: SessionStatus.TEACHER_COMPLETED,
+        })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.sessionModel
+        .find({
+          studentId: { $in: childIds },
+          status: SessionStatus.SCHEDULED,
+          scheduledDate: { $gte: now },
+        })
+        .sort({ scheduledDate: 1 })
+        .limit(10)
+        .populate('teacherId', 'fullName')
+        .populate('studentId', 'fullName studentCode')
+        .populate('classId', 'name code')
+        .lean(),
+      this.ledgerModel
+        .find({
+          userId: parentObjId,
+          type: TransactionType.TOP_UP,
+          status: TransactionStatus.PENDING,
+        })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .lean(),
+      this.ticketModel
+        .find({
+          createdBy: parentObjId,
+          status: { $in: this.getOpenTicketStatuses() },
+        })
+        .sort({ updatedAt: -1, createdAt: -1 })
+        .limit(10)
+        .lean(),
+    ]);
+
+    const confirmationTasks: DailyTaskItem[] = needsConfirmation.map((session: any) => ({
+      id: `parent-confirm-${String(session._id)}`,
+      type: 'PARENT_CONFIRM_SESSION',
+      title: `Xac nhan buoi ${this.studentName(session.studentId) || ''}`.trim(),
+      detail: this.className(session.classId) || 'Buoi hoc dang cho phu huynh xac nhan',
+      meta: this.compactMeta([this.personName(session.teacherId)]),
+      status: session.status,
+      priority: this.isOverdue(session.scheduledDate, today) ? 'HIGH' : 'MEDIUM',
+      dueAt: this.toIso(session.scheduledDate),
+      route: '/app/sessions',
+      actionLabel: 'Mo buoi hoc',
+      overdue: this.isOverdue(session.scheduledDate, today),
+    }));
+
+    const upcomingTasks: DailyTaskItem[] = upcomingSessions.map((session: any) => ({
+      id: `parent-upcoming-${String(session._id)}`,
+      type: 'PARENT_UPCOMING_SESSION',
+      title: `Sap hoc ${this.studentName(session.studentId) || ''}`.trim(),
+      detail: this.className(session.classId) || 'Buoi hoc sap toi',
+      meta: this.compactMeta([this.personName(session.teacherId)]),
+      status: session.status,
+      priority: this.isSameDay(session.scheduledDate, today) ? 'HIGH' : 'LOW',
+      dueAt: this.toIso(session.scheduledDate),
+      route: '/app/parent-calendar',
+      actionLabel: 'Mo lich hoc',
+    }));
+
+    const financeTasks: DailyTaskItem[] = pendingTopUps.map((entry: any) => ({
+      id: `parent-topup-${String(entry._id)}`,
+      type: 'PARENT_PENDING_TOP_UP',
+      title: `Theo doi yeu cau nap vi ${this.formatCurrency(entry.amount)}`,
+      detail: 'Yeu cau nap vi dang cho xac nhan',
+      meta: this.compactMeta([entry.paymentMethod]),
+      status: entry.status,
+      priority: 'MEDIUM',
+      dueAt: this.toIso(entry.createdAt),
+      route: '/app/wallets',
+      actionLabel: 'Mo vi',
+    }));
+
+    const supportTasks: DailyTaskItem[] = openTickets.map((ticket: any) => ({
+      id: `parent-ticket-${String(ticket._id)}`,
+      type: 'PARENT_OPEN_TICKET',
+      title: `Theo doi ticket ${ticket.ticketCode || ''}`.trim(),
+      detail: ticket.subject || 'Yeu cau ho tro dang mo',
+      meta: this.compactMeta([ticket.priority]),
+      status: ticket.status,
+      priority: this.mapTicketPriority(ticket.priority),
+      dueAt: this.toIso(ticket.dueDate),
+      route: '/app/tickets',
+      actionLabel: 'Mo ticket',
+      overdue: this.isOverdue(ticket.dueDate, now),
+    }));
+
+    return this.buildDailyTaskBoard(Role.PARENT, [
+      {
+        key: 'confirmations',
+        label: 'Can xac nhan',
+        description: 'Nhung buoi hoc phu huynh can vao xac nhan.',
+        emptyMessage: 'Khong co buoi hoc nao can xac nhan.',
+        count: 0,
+        tasks: confirmationTasks,
+      },
+      {
+        key: 'upcoming',
+        label: 'Sap hoc',
+        description: 'Lich hoc sap toi cua con de chuan bi trong ngay.',
+        emptyMessage: 'Khong co buoi hoc sap toi nao.',
+        count: 0,
+        tasks: upcomingTasks,
+      },
+      {
+        key: 'finance',
+        label: 'Giao dich',
+        description: 'Yeu cau nap vi dang cho xac nhan.',
+        emptyMessage: 'Khong co giao dich nao dang cho xu ly.',
+        count: 0,
+        tasks: financeTasks,
+      },
+      {
+        key: 'support',
+        label: 'Ho tro',
+        description: 'Ticket dang mo can theo doi tiep.',
+        emptyMessage: 'Khong co ticket nao dang mo.',
+        count: 0,
+        tasks: supportTasks,
+      },
+    ]);
+  }
+
+  private async getSaleDailyTasks(saleUserId: string): Promise<DailyTaskBoard> {
+    const today = this.startOfDay(new Date());
+    const tomorrow = this.addDays(today, 1);
+    const saleObjId = new Types.ObjectId(saleUserId);
+
+    const [leadFollowUps, orderQueue, pendingInvoices, trialQueue] = await Promise.all([
+      this.leadModel
+        .find({
+          saleId: saleObjId,
+          nextFollowUp: { $lte: tomorrow },
+          status: { $in: this.getActiveLeadStatuses() },
+        })
+        .sort({ nextFollowUp: 1 })
+        .limit(12)
+        .lean(),
+      this.orderModel
+        .find({
+          saleId: saleObjId,
+          status: { $in: [OrderStatus.SUBMITTED, 'NEEDS_INFO', OrderStatus.APPROVED] },
+        })
+        .sort({ createdAt: 1 })
+        .limit(12)
+        .lean(),
+      this.invoiceModel
+        .find({
+          $or: [
+            { createdBy: saleObjId },
+            { saleId: saleObjId },
+          ],
+          status: InvoiceStatus.PENDING_APPROVAL,
+        })
+        .sort({ createdAt: 1 })
+        .limit(10)
+        .populate('studentId', 'fullName studentCode')
+        .lean(),
+      this.trialEnrollmentModel
+        .find({
+          saleId: saleObjId,
+          status: {
+            $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
+          },
+        })
+        .sort({ updatedAt: 1, createdAt: 1 })
+        .limit(12)
+        .populate('classId', 'name code')
+        .populate('studentId', 'fullName studentCode')
+        .lean(),
+    ]);
+
+    const followUpTasks: DailyTaskItem[] = leadFollowUps.map((lead: any) => ({
+      id: `sale-lead-${String(lead._id)}`,
+      type: 'SALE_FOLLOW_UP',
+      title: `Follow-up ${lead.parentName || lead.leadCode || 'lead'}`,
+      detail: lead.parentPhone || 'Lead den han lien he',
+      meta: this.compactMeta([lead.leadCode, lead.status]),
+      status: lead.status,
+      priority: this.isOverdue(lead.nextFollowUp, today) ? 'HIGH' : 'MEDIUM',
+      dueAt: this.toIso(lead.nextFollowUp),
+      route: '/app/leads',
+      actionLabel: 'Mo leads',
+      overdue: this.isOverdue(lead.nextFollowUp, today),
+    }));
+
+    const orderTasks: DailyTaskItem[] = orderQueue.map((order: any) => ({
+      id: `sale-order-${String(order._id)}`,
+      type: 'SALE_ORDER_QUEUE',
+      title: `Theo doi don ${order.orderCode}`,
+      detail: this.compactMeta([order.parentName, order.studentName]).join(' · ') || 'Don hang can theo doi',
+      meta: this.compactMeta([this.formatCurrency(order.finalAmount)]),
+      status: order.status,
+      priority: order.status === 'NEEDS_INFO' ? 'HIGH' : 'MEDIUM',
+      dueAt: this.toIso(order.createdAt),
+      route: '/app/orders',
+      actionLabel: 'Mo don hang',
+    }));
+
+    const financeTasks: DailyTaskItem[] = pendingInvoices.map((invoice: any) => ({
+      id: `sale-invoice-${String(invoice._id)}`,
+      type: 'SALE_PENDING_INVOICE',
+      title: `Theo doi hoa don ${invoice.invoiceNumber}`,
+      detail: this.studentName(invoice.studentId) || 'Hoa don dang cho duyet',
+      meta: [],
+      status: invoice.status,
+      priority: 'MEDIUM',
+      dueAt: this.toIso(invoice.createdAt),
+      route: '/app/invoices',
+      actionLabel: 'Mo hoa don',
+    }));
+
+    const trialTasks: DailyTaskItem[] = trialQueue.map((trial: any) => ({
+      id: `sale-trial-${String(trial._id)}`,
+      type: 'TRIAL_ENROLLMENT',
+      title:
+        trial.status === TrialEnrollmentStatus.WAITING_DECISION
+          ? `Chot PH sau hoc thu ${trial.trialCode || ''}`.trim()
+          : `Xep hoc thu ${trial.trialCode || ''}`.trim(),
+      detail: trial.studentName || this.studentName(trial.studentId) || 'Hoc thu offline',
+      meta: this.compactMeta([
+        this.className(trial.classId),
+        `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`,
+        trial.parentPhone,
+      ]),
+      status: trial.status,
+      priority:
+        trial.status === TrialEnrollmentStatus.WAITING_DECISION
+          ? 'HIGH'
+          : (trial.trialSessionsUsed || 0) > 0
+            ? 'MEDIUM'
+            : 'LOW',
+      dueAt: this.toIso(trial.updatedAt || trial.createdAt),
+      route: '/app/trial-enrollments',
+      actionLabel: 'Mo hoc thu',
+      overdue:
+        trial.status === TrialEnrollmentStatus.WAITING_DECISION &&
+        this.isOverdue(trial.updatedAt || trial.createdAt, today),
+    }));
+
+    return this.buildDailyTaskBoard(Role.SALE, [
+      {
+        key: 'followups',
+        label: 'Follow-up',
+        description: 'Lead den han va lead da qua han can lien he ngay.',
+        emptyMessage: 'Khong co lead nao den han follow-up.',
+        count: 0,
+        tasks: followUpTasks,
+      },
+      {
+        key: 'orders',
+        label: 'Don hang',
+        description: 'Don dang cho duyet, bo sung hoac tiep tuc handover.',
+        emptyMessage: 'Khong co don hang nao can theo doi hom nay.',
+        count: 0,
+        tasks: orderTasks,
+      },
+      {
+        key: 'finance',
+        label: 'Hoa don',
+        description: 'Hoa don do sale tao dang cho duyet.',
+        emptyMessage: 'Khong co hoa don nao dang cho duyet.',
+        count: 0,
+        tasks: financeTasks,
+      },
+      {
+        key: 'trials',
+        label: 'Hoc thu',
+        description: 'Ban ghi hoc thu dang hoc va hoc thu can chot voi phu huynh.',
+        emptyMessage: 'Khong co hoc thu nao can theo doi.',
+        count: 0,
+        tasks: trialTasks,
+      },
+    ]);
+  }
+
+  private async getAdsDailyTasks(): Promise<DailyTaskBoard> {
+    const actionsResponse = await this.adsAnalyticsService.getActionsRequired().catch(() => ({
+      actions: [] as ActionableSuggestion[],
+      summary: null,
+    }));
+    const actions = actionsResponse.actions || [];
+
+    const urgentTasks = actions
+      .filter((action) => action.priority === 'CRITICAL' || action.priority === 'HIGH')
+      .map((action) => this.mapAdsActionToTask(action));
+    const growthTasks = actions
+      .filter((action) => action.priority !== 'CRITICAL' && action.priority !== 'HIGH')
+      .map((action) => this.mapAdsActionToTask(action));
+
+    return this.buildDailyTaskBoard(Role.ADSMANAGER, [
+      {
+        key: 'urgent',
+        label: 'Xu ly ngay',
+        description: 'Nhung de xuat uu tien cao can mo analytics hoac management de thao tac.',
+        emptyMessage: 'Khong co de xuat cap bach nao tu he thong ads.',
+        count: 0,
+        tasks: urgentTasks,
+      },
+      {
+        key: 'growth',
+        label: 'Mo rong',
+        description: 'Nhung de xuat toi uu budget va mo rong nhom quang cao.',
+        emptyMessage: 'Khong co de xuat mo rong nao can xu ly ngay.',
+        count: 0,
+        tasks: growthTasks,
+      },
+    ]);
+  }
+
   private buildDateFilter(fromDate?: string, toDate?: string): any {
     if (!fromDate && !toDate) return {};
     const filter: any = {};
@@ -818,6 +1981,164 @@ export class DashboardService {
       filter.$lte = end;
     }
     return { createdAt: filter };
+  }
+
+  private buildDailyTaskBoard(role: Role, tabs: DailyTaskTab[]): DailyTaskBoard {
+    const normalizedTabs = tabs.map((tab) => ({
+      ...tab,
+      tasks: this.sortDailyTasks(tab.tasks),
+      count: tab.tasks.length,
+    }));
+    const allTasks = normalizedTabs.flatMap((tab) => tab.tasks);
+    const today = this.startOfDay(new Date());
+
+    return {
+      role,
+      title: 'Viec trong ngay',
+      subtitle: 'Danh sach can xu ly tu cac module theo role hien tai.',
+      generatedAt: new Date().toISOString(),
+      summary: {
+        totalTasks: allTasks.length,
+        overdueTasks: allTasks.filter((task) => task.overdue).length,
+        dueTodayTasks: allTasks.filter((task) => task.dueAt && this.isSameDay(task.dueAt, today)).length,
+        highPriorityTasks: allTasks.filter((task) => task.priority === 'CRITICAL' || task.priority === 'HIGH').length,
+      },
+      tabs: normalizedTabs,
+    };
+  }
+
+  private sortDailyTasks(tasks: DailyTaskItem[]): DailyTaskItem[] {
+    return [...tasks].sort((left, right) => {
+      const overdueDiff = Number(Boolean(right.overdue)) - Number(Boolean(left.overdue));
+      if (overdueDiff !== 0) return overdueDiff;
+
+      const priorityDiff = this.getPriorityWeight(left.priority) - this.getPriorityWeight(right.priority);
+      if (priorityDiff !== 0) return priorityDiff;
+
+      const leftTime = left.dueAt ? new Date(left.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const rightTime = right.dueAt ? new Date(right.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return leftTime - rightTime;
+    });
+  }
+
+  private getPriorityWeight(priority: DailyTaskPriority): number {
+    switch (priority) {
+      case 'CRITICAL':
+        return 0;
+      case 'HIGH':
+        return 1;
+      case 'MEDIUM':
+        return 2;
+      default:
+        return 3;
+    }
+  }
+
+  private getOpenTicketStatuses(): TicketStatus[] {
+    return [TicketStatus.OPEN, TicketStatus.IN_PROGRESS, TicketStatus.WAITING_INFO];
+  }
+
+  private getActiveLeadStatuses(): LeadStatus[] {
+    return [LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.CONSULTING, LeadStatus.INTERESTED];
+  }
+
+  private mapTicketPriority(priority?: TicketPriority): DailyTaskPriority {
+    switch (priority) {
+      case TicketPriority.URGENT:
+        return 'CRITICAL';
+      case TicketPriority.HIGH:
+        return 'HIGH';
+      case TicketPriority.MEDIUM:
+        return 'MEDIUM';
+      default:
+        return 'LOW';
+    }
+  }
+
+  private mapAdsActionToTask(action: ActionableSuggestion): DailyTaskItem {
+    const route = action.type === 'CREATE_GROUP' ? '/app/ads-management' : '/app/ads-analytics';
+    return {
+      id: `ads-action-${action.type}-${action.relatedEntity?.id || action.title}`,
+      type: action.type,
+      title: action.title,
+      detail: action.description,
+      meta: this.compactMeta([
+        action.relatedEntity?.name,
+        action.estimatedImpact?.monthlyProfitChange != null
+          ? `${this.formatCurrency(action.estimatedImpact.monthlyProfitChange)}/thang`
+          : undefined,
+      ]),
+      priority: action.priority,
+      dueAt: undefined,
+      route,
+      actionLabel: route === '/app/ads-management' ? 'Mo ads management' : 'Mo ads analytics',
+      overdue: action.priority === 'CRITICAL',
+    };
+  }
+
+  private startOfDay(date: Date): Date {
+    const clone = new Date(date);
+    clone.setHours(0, 0, 0, 0);
+    return clone;
+  }
+
+  private addDays(date: Date, days: number): Date {
+    const clone = new Date(date);
+    clone.setDate(clone.getDate() + days);
+    return clone;
+  }
+
+  private isSameDay(value: string | Date, reference: Date): boolean {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return false;
+    const start = this.startOfDay(reference);
+    const end = this.addDays(start, 1);
+    return date >= start && date < end;
+  }
+
+  private isOverdue(value: string | Date | undefined | null, reference: Date): boolean {
+    if (!value) return false;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return false;
+    return date.getTime() < reference.getTime();
+  }
+
+  private toIso(value: string | Date | undefined | null): string | undefined {
+    if (!value) return undefined;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return undefined;
+    return date.toISOString();
+  }
+
+  private toShortDate(value: string | Date | undefined | null): string {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('vi-VN');
+  }
+
+  private formatCurrency(value: number | undefined | null): string {
+    const amount = Number(value || 0);
+    return `${amount.toLocaleString('vi-VN')}d`;
+  }
+
+  private compactMeta(values: Array<string | undefined | null>): string[] {
+    return values.filter((value): value is string => Boolean(value && value.trim()));
+  }
+
+  private personName(person?: { fullName?: string; name?: string } | null): string {
+    return person?.fullName || person?.name || '';
+  }
+
+  private studentName(student?: { fullName?: string; name?: string; studentCode?: string } | null): string {
+    const name = student?.fullName || student?.name || '';
+    if (!name) return '';
+    return student?.studentCode ? `${name} (${student.studentCode})` : name;
+  }
+
+  private className(classRef?: { name?: string; code?: string } | null): string {
+    if (!classRef?.name) return '';
+    return classRef.code ? `${classRef.code} - ${classRef.name}` : classRef.name;
   }
 
   private async getSessionStats(dateFilter: any) {

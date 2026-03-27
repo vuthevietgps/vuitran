@@ -8,11 +8,14 @@ export interface StudentItem {
   studentCode: string;
   fullName: string;
   age: number;
+  grade?: string;
   studentBirthMonth?: number;
   parentBirthMonth?: number;
   parentUserId?: string;
   parentName: string;
   parentPhone: string;
+  saleId?: string;
+  saleName?: string;
   faceImage: string;
   productPackage?: {
     _id: string;

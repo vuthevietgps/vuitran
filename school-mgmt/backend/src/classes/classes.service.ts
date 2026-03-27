@@ -11,18 +11,30 @@ import { Model, Types } from 'mongoose';
 import {
   Classroom,
   ClassDocument,
+  ClassUpdateRequestStatus,
+  DurationSnapshotSource,
+  PendingClassUpdateType,
   PricingSnapshotSource,
+  StudentConfigSlotType,
 } from './schemas/class.schema';
 import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 import { AssignStudentsDto } from './dto/assign-students.dto';
+import { UpdateStudentConfigDto } from './dto/update-student-config.dto';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
 import { TeacherProfile } from '../teachers/schemas/teacher-profile.schema';
+import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Role } from '../common/interfaces/role.enum';
 import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
+import { Session, SessionDocument, SessionStatus } from '../sessions/schemas/session.schema';
+import {
+  getCurrentTeacherIdForStudent,
+  getCurrentDurationForStudent,
+  getTeacherOwnedStudentIds,
+} from './student-config.utils';
 
 @Injectable()
 export class ClassesService {
@@ -34,6 +46,8 @@ export class ClassesService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(TeacherProfile.name) private readonly teacherProfileModel: Model<any>,
+    @InjectModel(Product.name) private readonly productModel: Model<ProductDocument>,
+    @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
     private readonly studentSupportSnapshotService: StudentSupportSnapshotService,
   ) {}
 
@@ -77,6 +91,496 @@ export class ClassesService {
     return actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? null;
   }
 
+  private isManagerRole(role?: Role): boolean {
+    return role === Role.DIRECTOR || role === Role.OPS;
+  }
+
+  private resolveRequestedUpdateType(dto?: Pick<UpdateClassDto, 'requestType'>): PendingClassUpdateType {
+    return dto?.requestType === PendingClassUpdateType.DURATION_CHANGE
+      ? PendingClassUpdateType.DURATION_CHANGE
+      : PendingClassUpdateType.GENERAL;
+  }
+
+  private stripUpdateMetaFields<T extends object>(dto: T): Omit<T, 'requestType'> {
+    const { requestType, ...rest } = dto as T & { requestType?: PendingClassUpdateType };
+    return rest;
+  }
+
+  private sanitizeSaleUpdateDto(dto: UpdateClassDto): UpdateClassDto {
+    const { saleId, studentIds, invoiceId, requestType, code, ...allowed } = dto;
+    return allowed;
+  }
+
+  private sanitizeDurationUpdateDto(dto: UpdateClassDto): UpdateClassDto {
+    const requestedChanges = new UpdateClassDto();
+    requestedChanges.requestType = PendingClassUpdateType.DURATION_CHANGE;
+    if (dto.baseDuration !== undefined) {
+      requestedChanges.baseDuration = dto.baseDuration;
+    }
+    if (dto.sessionDuration !== undefined) {
+      requestedChanges.sessionDuration = dto.sessionDuration;
+    }
+    return requestedChanges;
+  }
+
+  private isSameObjectId(left: unknown, right: unknown): boolean {
+    const normalize = (value: unknown): string => {
+      if (!value) {
+        return '';
+      }
+      if (typeof value === 'string') {
+        return value;
+      }
+      return (value as any)?.toString?.() || '';
+    };
+
+    return normalize(left) === normalize(right);
+  }
+
+  private splitSaleUpdateChanges(
+    dto: UpdateClassDto,
+    existing: any,
+  ): {
+    directChanges: UpdateClassDto;
+    approvalChanges: UpdateClassDto | null;
+    requestType: PendingClassUpdateType | null;
+  } {
+    const saleChanges = this.sanitizeSaleUpdateDto(dto);
+    const directChanges = new UpdateClassDto();
+    const approvalChanges = new UpdateClassDto();
+
+    const directFieldNames: Array<keyof UpdateClassDto> = [
+      'name',
+      'productPackageId',
+      'pricePerSession',
+      'subject',
+      'grade',
+      'learningGoals',
+      'curriculum',
+      'revenuePerStudent',
+      'teacherSalaryCost',
+      'maxStudents',
+    ];
+
+    for (const fieldName of directFieldNames) {
+      if (saleChanges[fieldName] !== undefined) {
+        directChanges[fieldName] = saleChanges[fieldName] as never;
+      }
+    }
+
+    if (
+      saleChanges.teacherId !== undefined
+      && !this.isSameObjectId(saleChanges.teacherId, existing?.teacher)
+    ) {
+      approvalChanges.teacherId = saleChanges.teacherId;
+    }
+
+    if (
+      saleChanges.teacherPayPerSession !== undefined
+      && this.toSafeNumber(saleChanges.teacherPayPerSession, 0)
+        !== this.toSafeNumber(existing?.teacherPayPerSession, 0)
+    ) {
+      approvalChanges.teacherPayPerSession = saleChanges.teacherPayPerSession;
+    }
+
+    if (
+      saleChanges.teacherPayPerStudent !== undefined
+      && this.toSafeNumber(saleChanges.teacherPayPerStudent, 0)
+        !== this.toSafeNumber(existing?.teacherPayPerStudent, 0)
+    ) {
+      approvalChanges.teacherPayPerStudent = saleChanges.teacherPayPerStudent;
+    }
+
+    if (
+      saleChanges.baseDuration !== undefined
+      && this.toSafeNumber(saleChanges.baseDuration, 0)
+        !== this.toSafeNumber(existing?.baseDuration, 0)
+    ) {
+      approvalChanges.baseDuration = saleChanges.baseDuration;
+    }
+
+    if (
+      saleChanges.sessionDuration !== undefined
+      && this.toSafeNumber(saleChanges.sessionDuration, 0)
+        !== this.toSafeNumber(existing?.sessionDuration, 0)
+    ) {
+      approvalChanges.sessionDuration = saleChanges.sessionDuration;
+    }
+
+    const hasApprovalChanges = Object.keys(approvalChanges).length > 0;
+    const requestType = hasApprovalChanges
+      ? (
+        approvalChanges.baseDuration !== undefined || approvalChanges.sessionDuration !== undefined
+          ? PendingClassUpdateType.DURATION_CHANGE
+          : PendingClassUpdateType.GENERAL
+      )
+      : null;
+
+    if (requestType) {
+      approvalChanges.requestType = requestType;
+    }
+
+    return {
+      directChanges,
+      approvalChanges: hasApprovalChanges ? approvalChanges : null,
+      requestType,
+    };
+  }
+
+  private assertCanReviewPendingUpdate(pendingSaleUpdate: any, actor?: JwtPayload): void {
+    if (!actor || !this.isManagerRole(actor.role)) {
+      throw new ForbiddenException('Ban khong co quyen duyet thay doi lop hoc');
+    }
+
+    if (pendingSaleUpdate?.status && pendingSaleUpdate.status !== ClassUpdateRequestStatus.PENDING) {
+      throw new BadRequestException('Yeu cau sua lop hoc khong con cho duyet');
+    }
+  }
+
+  private buildDurationSnapshotData(classState: any): {
+    baseDuration: number;
+    sessionDuration: number;
+    pricePerSession: number;
+    teacherPayPerSession: number;
+    teacherPayPerStudent: number;
+  } {
+    const snapshot = classState?.pricingSnapshot || {};
+    const baseDuration =
+      this.toSafeNumber(snapshot.referenceDuration, this.toSafeNumber(classState?.baseDuration, 60)) || 60;
+    const sessionDuration =
+      this.toSafeNumber(snapshot.sessionDuration, this.toSafeNumber(classState?.sessionDuration, baseDuration))
+      || baseDuration;
+
+    return {
+      baseDuration,
+      sessionDuration,
+      pricePerSession: this.toSafeNumber(
+        snapshot.pricePerSession,
+        this.toSafeNumber(classState?.pricePerSession, 0),
+      ),
+      teacherPayPerSession: this.toSafeNumber(
+        snapshot.teacherPayPerSession,
+        this.toSafeNumber(classState?.teacherPayPerSession, 0),
+      ),
+      teacherPayPerStudent: this.toSafeNumber(
+        snapshot.teacherPayPerStudent,
+        this.toSafeNumber(classState?.teacherPayPerStudent, 0),
+      ),
+    };
+  }
+
+  private buildDurationSnapshotRecord(
+    classState: any,
+    source: DurationSnapshotSource,
+    requestType: PendingClassUpdateType,
+    effectiveById?: string | null,
+  ) {
+    return {
+      source,
+      requestType,
+      effectiveAt: new Date(),
+      effectiveBy: effectiveById ? new Types.ObjectId(effectiveById) : undefined,
+      ...this.buildDurationSnapshotData(classState),
+    };
+  }
+
+  private roundTo2(value: number): number {
+    return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+  }
+
+  private buildInitialStudentConfigRecord(
+    classState: any,
+    studentId: string,
+    totalSessions: number,
+    actorId?: string | null,
+  ) {
+    if (!classState?.teacher) {
+      throw new BadRequestException('Lop hoc chua co giao vien phu trach');
+    }
+
+    const durationSnapshot = this.buildDurationSnapshotData(classState);
+    return {
+      studentId: new Types.ObjectId(studentId),
+      teacherSlots: [
+        {
+          slotIndex: 1,
+          slotType: StudentConfigSlotType.INITIAL,
+          teacherId: new Types.ObjectId(classState.teacher.toString()),
+          assignedAt: new Date(),
+          assignedBy: actorId ? new Types.ObjectId(actorId) : undefined,
+        },
+      ],
+      durationSlots: [
+        {
+          slotIndex: 1,
+          slotType: StudentConfigSlotType.INITIAL,
+          effectiveAt: new Date(),
+          effectiveBy: actorId ? new Types.ObjectId(actorId) : undefined,
+          baseDuration: durationSnapshot.baseDuration,
+          sessionDuration: durationSnapshot.sessionDuration,
+          totalSessions: this.roundTo2(totalSessions),
+        },
+      ],
+      updatedAt: new Date(),
+    };
+  }
+
+  private async buildStudentCompletedSessionMap(
+    classroom: any,
+    studentIds: string[],
+  ): Promise<Map<string, number>> {
+    const completedSessionMap = new Map<string, number>();
+    if (!studentIds.length || !classroom?._id) {
+      return completedSessionMap;
+    }
+
+    const rows = await this.sessionModel.aggregate([
+      {
+        $match: {
+          classId: new Types.ObjectId(classroom._id),
+          studentId: { $in: studentIds.map((studentId) => new Types.ObjectId(studentId)) },
+          status: { $nin: [SessionStatus.CANCELLED, SessionStatus.RESCHEDULED] },
+        },
+      },
+      {
+        $group: {
+          _id: '$studentId',
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    for (const row of rows) {
+      completedSessionMap.set(row._id?.toString?.() || '', this.toSafeNumber(row.count, 0));
+    }
+
+    return completedSessionMap;
+  }
+
+  private async buildStudentRemainingMinutesMap(
+    classroom: any,
+    studentIds: string[],
+  ): Promise<Map<string, number>> {
+    const remainingMinutesMap = new Map<string, number>();
+    if (!studentIds.length || !classroom?._id) {
+      return remainingMinutesMap;
+    }
+
+    const fallbackReferenceDuration =
+      this.toSafeNumber((classroom as any)?.pricingSnapshot?.referenceDuration, 0)
+      || this.toSafeNumber((classroom as any)?.baseDuration, 60)
+      || 60;
+
+    const invoices = await this.invoiceModel
+      .find({
+        classId: new Types.ObjectId(classroom._id),
+        studentId: { $in: studentIds.map((studentId) => new Types.ObjectId(studentId)) },
+        status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
+      })
+      .select('studentId referenceDuration sessionsRemaining bonusSessionsRemaining')
+      .lean();
+
+    for (const invoice of invoices) {
+      const studentId = (invoice as any)?.studentId?.toString?.();
+      if (!studentId) {
+        continue;
+      }
+
+      const referenceDuration =
+        this.toSafeNumber((invoice as any)?.referenceDuration, fallbackReferenceDuration) || fallbackReferenceDuration;
+      const remainingUnits =
+        this.toSafeNumber((invoice as any)?.sessionsRemaining, 0)
+        + this.toSafeNumber((invoice as any)?.bonusSessionsRemaining, 0);
+      const currentMinutes = remainingMinutesMap.get(studentId) || 0;
+      remainingMinutesMap.set(studentId, currentMinutes + (remainingUnits * referenceDuration));
+    }
+
+    return remainingMinutesMap;
+  }
+
+  private async buildProjectedStudentTotalSessionsMap(
+    classroom: any,
+    studentIds: string[],
+    sessionDurationOverrides?: Map<string, number>,
+  ): Promise<Map<string, number>> {
+    const [completedSessionMap, remainingMinutesMap] = await Promise.all([
+      this.buildStudentCompletedSessionMap(classroom, studentIds),
+      this.buildStudentRemainingMinutesMap(classroom, studentIds),
+    ]);
+
+    const totalSessionsMap = new Map<string, number>();
+    for (const studentId of studentIds) {
+      const currentDuration = getCurrentDurationForStudent(classroom, studentId);
+      const sessionDuration =
+        this.toSafeNumber(sessionDurationOverrides?.get(studentId), 0)
+        || this.toSafeNumber(currentDuration.sessionDuration, 0)
+        || 60;
+      const completedSessions = this.toSafeNumber(completedSessionMap.get(studentId), 0);
+      const remainingMinutes = this.toSafeNumber(remainingMinutesMap.get(studentId), 0);
+      const projectedTotal = completedSessions + (sessionDuration > 0 ? remainingMinutes / sessionDuration : 0);
+      const fallbackTotal =
+        this.toSafeNumber(currentDuration.totalSessions, this.toSafeNumber((classroom as any)?.totalSessions, 0));
+
+      totalSessionsMap.set(
+        studentId,
+        projectedTotal > 0 ? this.roundTo2(projectedTotal) : this.roundTo2(fallbackTotal),
+      );
+    }
+
+    return totalSessionsMap;
+  }
+
+  private async syncStudentConfigsOnClass(classId: string, actorId?: string | null): Promise<void> {
+    const classroom = await this.classModel.findById(classId).lean();
+    if (!classroom) {
+      return;
+    }
+
+    const studentIds = ((classroom as any).students || [])
+      .map((studentId: any) => studentId?.toString?.())
+      .filter((studentId: string | undefined): studentId is string => !!studentId);
+
+    const existingConfigs = Array.isArray((classroom as any).studentConfigs)
+      ? (classroom as any).studentConfigs
+      : [];
+    const existingConfigMap = new Map(
+      existingConfigs
+        .map((config: any) => [config?.studentId?.toString?.(), config] as const)
+        .filter(([studentId]) => !!studentId),
+    );
+
+    const totalSessionsMap = await this.buildProjectedStudentTotalSessionsMap(classroom, studentIds);
+    const normalizedConfigs = studentIds.map((studentId) => {
+      const existingConfig = existingConfigMap.get(studentId);
+      return existingConfig || this.buildInitialStudentConfigRecord(
+        classroom,
+        studentId,
+        totalSessionsMap.get(studentId) || 0,
+        actorId,
+      );
+    });
+
+    const hasMissingConfig = studentIds.some((studentId) => !existingConfigMap.has(studentId));
+    const hasRemovedConfig = existingConfigs.length !== normalizedConfigs.length;
+    if (!hasMissingConfig && !hasRemovedConfig) {
+      return;
+    }
+
+    await this.classModel.findByIdAndUpdate(classId, {
+      $set: {
+        studentConfigs: normalizedConfigs,
+      },
+    });
+  }
+
+  private async syncTeacherSlotsOnClass(
+    classId: string,
+    teacherId: string,
+    actorId?: string | null,
+  ): Promise<void> {
+    await this.syncStudentConfigsOnClass(classId, actorId);
+
+    const classroom = await this.classModel.findById(classId).lean();
+    if (!classroom) {
+      return;
+    }
+
+    const normalizedTeacherId = teacherId.toString();
+    const studentConfigs = Array.isArray((classroom as any).studentConfigs)
+      ? (classroom as any).studentConfigs
+      : [];
+    if (!studentConfigs.length) {
+      return;
+    }
+
+    const assignedAt = new Date();
+    const assignedBy = actorId ? new Types.ObjectId(actorId) : undefined;
+    let hasChanges = false;
+
+    const nextStudentConfigs = studentConfigs.map((config: any) => {
+      const teacherSlots = Array.isArray(config?.teacherSlots)
+        ? [...config.teacherSlots]
+        : [];
+      teacherSlots.sort((left: any, right: any) => Number(left?.slotIndex || 0) - Number(right?.slotIndex || 0));
+
+      const currentTeacherId = teacherSlots.at(-1)?.teacherId?.toString?.() || null;
+      if (currentTeacherId === normalizedTeacherId && teacherSlots.length > 0) {
+        return config;
+      }
+
+      hasChanges = true;
+      const nextTeacherSlot = {
+        teacherId: new Types.ObjectId(normalizedTeacherId),
+        assignedAt,
+        assignedBy,
+      };
+
+      const nextTeacherSlots = teacherSlots.length === 0
+        ? [
+            {
+              slotIndex: 1,
+              slotType: StudentConfigSlotType.INITIAL,
+              ...nextTeacherSlot,
+            },
+          ]
+        : teacherSlots.length >= 3
+          ? [
+              {
+                slotIndex: 1,
+                slotType: StudentConfigSlotType.INITIAL,
+                ...nextTeacherSlot,
+              },
+            ]
+          : [
+              ...teacherSlots,
+              {
+                slotIndex: teacherSlots.length + 1,
+                slotType: StudentConfigSlotType.UPDATE,
+                ...nextTeacherSlot,
+              },
+            ];
+
+      return {
+        ...config,
+        teacherSlots: nextTeacherSlots,
+        updatedAt: assignedAt,
+      };
+    });
+
+    if (!hasChanges) {
+      return;
+    }
+
+    await this.classModel.findByIdAndUpdate(classId, {
+      $set: {
+        studentConfigs: nextStudentConfigs,
+      },
+    });
+  }
+
+  private async validateTeacherForClassSale(classroom: any, teacherId: string): Promise<Types.ObjectId> {
+    const validatedTeacherId = await this.validateUserRole(teacherId, Role.TEACHER);
+    const saleId = classroom?.sale?.toString?.();
+    if (!saleId) {
+      return validatedTeacherId;
+    }
+
+    const profile = await this.teacherProfileModel
+      .findOne({ userId: new Types.ObjectId(teacherId) })
+      .select('managedSales')
+      .lean();
+
+    const managedSales = Array.isArray((profile as any)?.managedSales)
+      ? (profile as any).managedSales.map((managedSale: any) => managedSale?.toString?.())
+      : [];
+
+    if (!managedSales.includes(saleId)) {
+      throw new BadRequestException('Giao vien nay khong duoc gan cho sale phu trach lop');
+    }
+
+    return validatedTeacherId;
+  }
+
   private async assertClassAccess(classroom: any, actor?: JwtPayload): Promise<void> {
     if (!actor) return;
     const actorId = this.getActorId(actor);
@@ -95,6 +599,7 @@ export class ClassesService {
       if (classroom?.teacher?.toString() === actorId) return;
       const subs = (classroom?.substituteTeachers || []) as any[];
       if (subs.some((s) => s?.teacherId?.toString() === actorId)) return;
+      if (getTeacherOwnedStudentIds(classroom, actorId).length > 0) return;
       throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
     }
 
@@ -135,6 +640,12 @@ export class ClassesService {
     return {
       ...classroom,
       students: filteredStudents,
+      studentConfigs: Array.isArray(classroom.studentConfigs)
+        ? classroom.studentConfigs.filter((config: any) => {
+            const studentId = config?.studentId?._id?.toString?.() || config?.studentId?.toString?.();
+            return !!studentId && allowedStudentIds.has(studentId);
+          })
+        : [],
     };
   }
 
@@ -172,6 +683,14 @@ export class ClassesService {
     const payload = await this.buildPayload(dto);
     this.applyInvoicePricingDefaults(payload, invoice);
     this.attachPricingSnapshot(payload, invoice);
+    (payload as any).durationSnapshots = [
+      this.buildDurationSnapshotRecord(
+        payload,
+        DurationSnapshotSource.INITIAL,
+        PendingClassUpdateType.GENERAL,
+        this.getActorId(actor),
+      ),
+    ];
 
     if (dto.invoiceId) {
       (payload as any).invoiceId = new Types.ObjectId(dto.invoiceId);
@@ -186,6 +705,8 @@ export class ClassesService {
       );
     }
 
+    await this.syncStudentConfigsOnClass(created._id.toString(), this.getActorId(actor));
+
     this.triggerStudentSupportSnapshotRefreshForClass(created._id.toString(), 'createClass');
     return this.findByIdPopulated(created._id);
   }
@@ -193,11 +714,20 @@ export class ClassesService {
   async findOne(id: string, actor?: JwtPayload) {
     const classroom = await this.classModel
       .findById(id)
-      .select('teacher sale students substituteTeachers')
+      .select('teacher sale students substituteTeachers studentConfigs')
       .lean();
     if (!classroom) throw new NotFoundException('Lop hoc khong ton tai');
     await this.assertClassAccess(classroom, actor);
     const detailedClass = await this.findByIdPopulated(id);
+    if (actor?.role === Role.TEACHER) {
+      const actorTeacherId = this.getActorId(actor);
+      if (!actorTeacherId) {
+        throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
+      }
+      const allowedStudentIds = new Set(getTeacherOwnedStudentIds(detailedClass, actorTeacherId));
+      return this.filterClassStudentsByIds(detailedClass, allowedStudentIds);
+    }
+
     if (actor?.role !== Role.PARENT) {
       return detailedClass;
     }
@@ -223,6 +753,7 @@ export class ClassesService {
         $or: [
           { teacher: actorId },
           { 'substituteTeachers.teacherId': actorId },
+          { 'studentConfigs.teacherSlots.teacherId': actorId },
         ],
       };
     } else if (actor.role === Role.PARENT) {
@@ -247,13 +778,28 @@ export class ClassesService {
       .sort({ createdAt: -1 })
       .populate('teacher', 'fullName email role')
       .populate('sale', 'fullName email role')
+      .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
       .populate('students', 'fullName age parentName studentCode')
+      .populate('studentConfigs.studentId', 'fullName studentCode')
+      .populate('studentConfigs.teacherSlots.teacherId', 'fullName email role userCode')
       .lean();
 
     const mapped = classrooms.map((classroom) => ({
       ...classroom,
       ...this.buildClassFinancialSummary(classroom),
     }));
+
+    if (actor.role === Role.TEACHER && actorId) {
+      return mapped
+        .map((classroom) => {
+          const allowedStudentIds = new Set(getTeacherOwnedStudentIds(classroom, actorId));
+          if (!allowedStudentIds.size) {
+            return null;
+          }
+          return this.filterClassStudentsByIds(classroom, allowedStudentIds);
+        })
+        .filter((classroom): classroom is NonNullable<typeof classroom> => !!classroom);
+    }
 
     if (actor.role !== Role.PARENT || !parentStudentIdSet) {
       return mapped;
@@ -264,101 +810,155 @@ export class ClassesService {
     );
   }
 
-  async update(id: string, dto: UpdateClassDto) {
+  async update(id: string, dto: UpdateClassDto, actor?: JwtPayload) {
     const existing = await this.classModel.findById(id).lean();
     if (!existing) throw new NotFoundException('Class not found');
-    const existingStudentIds = ((existing as any).students || []).map((studentId: any) =>
-      studentId?.toString?.(),
-    ).filter((studentId: string | undefined): studentId is string => !!studentId);
+    const actorId = this.getActorId(actor);
 
-    const update: Record<string, unknown> = {};
-    if (dto.name) update.name = dto.name;
-    if (dto.code) {
-      await this.ensureCodeUnique(dto.code, id);
-      update.code = dto.code.toUpperCase();
-    }
-    const members = await this.buildPayload(dto, true);
-    Object.assign(update, members);
+    if (actor?.role === Role.SALE) {
+      if (!actorId || existing.sale?.toString() !== actorId) {
+        throw new ForbiddenException('Ban khong phu trach lop hoc nay');
+      }
 
-    const pricingFields = [
-      'pricePerSession',
-      'teacherPayPerSession',
-      'teacherPayPerStudent',
-      'baseDuration',
-      'sessionDuration',
-    ];
-    const hasPricingUpdate = pricingFields.some((field) =>
-      Object.prototype.hasOwnProperty.call(update, field),
-    );
+      const { directChanges, approvalChanges, requestType } = this.splitSaleUpdateChanges(dto, existing);
 
-    if (hasPricingUpdate) {
-      const currentSnapshot = (existing as any).pricingSnapshot || {};
-      const referenceDuration = this.toSafeNumber(
-        update.baseDuration,
-        this.toSafeNumber(
-          currentSnapshot.referenceDuration,
-          this.toSafeNumber((existing as any).baseDuration, 60),
-        ),
-      ) || 60;
-      const sessionDuration = this.toSafeNumber(
-        update.sessionDuration,
-        this.toSafeNumber(
-          currentSnapshot.sessionDuration,
-          this.toSafeNumber((existing as any).sessionDuration, referenceDuration),
-        ),
-      ) || referenceDuration;
-      const pricePerSession = this.toSafeNumber(
-        update.pricePerSession,
-        this.toSafeNumber(
-          currentSnapshot.pricePerSession,
-          this.toSafeNumber((existing as any).pricePerSession, 0),
-        ),
-      );
-      const teacherPayPerSession = this.toSafeNumber(
-        update.teacherPayPerSession,
-        this.toSafeNumber(
-          currentSnapshot.teacherPayPerSession,
-          this.toSafeNumber((existing as any).teacherPayPerSession, 0),
-        ),
-      );
-      const teacherPayPerStudent = this.toSafeNumber(
-        update.teacherPayPerStudent,
-        this.toSafeNumber(
-          currentSnapshot.teacherPayPerStudent,
-          this.toSafeNumber((existing as any).teacherPayPerStudent, 0),
-        ),
-      );
-      const perMinuteRate = referenceDuration > 0
-        ? pricePerSession / referenceDuration
-        : 0;
+      const directPrepared = await this.prepareClassUpdate(id, directChanges, existing);
+      const hasDirectChanges = Object.keys(directPrepared.update).length > 0;
 
-      update.pricingSnapshot = {
-        source: PricingSnapshotSource.MANUAL,
-        capturedAt: new Date(),
-        sourceInvoiceId: currentSnapshot.sourceInvoiceId,
-        sourceInvoiceNumber: currentSnapshot.sourceInvoiceNumber,
-        referenceDuration,
-        sessionDuration,
-        pricePerSession,
-        perMinuteRate,
-        teacherPayPerSession,
-        teacherPayPerStudent,
-      };
+      if (approvalChanges?.teacherId) {
+        await this.validateTeacherForClassSale(existing, approvalChanges.teacherId);
+      }
+      const hasApprovalChanges = !!approvalChanges;
+
+      if (!hasDirectChanges && !hasApprovalChanges) {
+        throw new BadRequestException('Khong co thay doi nao de cap nhat');
+      }
+
+      if (hasDirectChanges) {
+        await this.applyPreparedClassUpdate(id, directPrepared, 'saleDirectUpdateClass', {
+          durationSnapshotSource: directPrepared.durationSnapshotData
+            ? DurationSnapshotSource.MANAGER_DIRECT
+            : undefined,
+          requestType: this.resolveRequestedUpdateType(directChanges),
+          effectiveById: actorId,
+        });
+      }
+
+      if (hasApprovalChanges) {
+        const persistedRequestedChanges = this.stripUpdateMetaFields(approvalChanges as UpdateClassDto);
+        await this.classModel.findByIdAndUpdate(id, {
+          $set: {
+            pendingSaleUpdate: {
+              status: ClassUpdateRequestStatus.PENDING,
+              requestType,
+              requestedChanges: persistedRequestedChanges,
+              requestedBy: new Types.ObjectId(actorId),
+              requestedAt: new Date(),
+              reviewedBy: null,
+              reviewedAt: null,
+              rejectionReason: null,
+            },
+          },
+        });
+
+        if (hasDirectChanges) {
+          return {
+            ok: true,
+            pendingApproval: true,
+            message: requestType === PendingClassUpdateType.DURATION_CHANGE
+              ? 'Da cap nhat thong tin lop. Phan doi giao vien/thoi luong dang cho Director duyet'
+              : 'Da cap nhat thong tin lop. Phan doi giao vien dang cho Director/Ops duyet',
+          };
+        }
+
+        return {
+          ok: true,
+          pendingApproval: true,
+          message: requestType === PendingClassUpdateType.DURATION_CHANGE
+            ? 'Da gui yeu cau doi giao vien/thoi luong lop hoc cho Director duyet'
+            : 'Da gui yeu cau doi giao vien/luong GV cho Director/Ops duyet',
+        };
+      }
+
+      return this.findByIdPopulated(id);
     }
 
-    await this.classModel.findByIdAndUpdate(id, update, { new: true }).lean();
-
-    if (Object.prototype.hasOwnProperty.call(update, 'students')) {
-      const updatedStudentIds = ((update.students as Types.ObjectId[]) || [])
-        .map((studentId) => studentId?.toString?.())
-        .filter((studentId: string | undefined): studentId is string => !!studentId);
-      this.triggerStudentSupportSnapshotRefreshForStudentIds(
-        [...new Set([...existingStudentIds, ...updatedStudentIds])],
-        'updateClassStudents',
-      );
-    } else {
-      this.triggerStudentSupportSnapshotRefreshForClass(id, 'updateClass');
+    if (actor?.role && !this.isManagerRole(actor.role)) {
+      throw new ForbiddenException('Ban khong co quyen cap nhat lop hoc');
     }
+
+    const prepared = await this.prepareClassUpdate(id, dto, existing);
+    await this.applyPreparedClassUpdate(id, prepared, 'updateClass', {
+      clearPendingSaleUpdate: true,
+      durationSnapshotSource: prepared.durationSnapshotData
+        ? DurationSnapshotSource.MANAGER_DIRECT
+        : undefined,
+      requestType: this.resolveRequestedUpdateType(dto),
+      effectiveById: actorId,
+    });
+
+    return this.findByIdPopulated(id);
+  }
+
+  async approvePendingSaleUpdate(id: string, actor?: JwtPayload) {
+    const existing = await this.classModel.findById(id).lean();
+    if (!existing) throw new NotFoundException('Class not found');
+
+    const pendingSaleUpdate = (existing as any).pendingSaleUpdate;
+    if (!pendingSaleUpdate || pendingSaleUpdate.status !== ClassUpdateRequestStatus.PENDING) {
+      throw new BadRequestException('Lop hoc khong co yeu cau cap nhat cho duyet');
+    }
+    this.assertCanReviewPendingUpdate(pendingSaleUpdate, actor);
+
+    const requestedChanges = (pendingSaleUpdate.requestedChanges || {}) as UpdateClassDto;
+    const requestType = (pendingSaleUpdate.requestType || PendingClassUpdateType.GENERAL) as PendingClassUpdateType;
+    const prepared = await this.prepareClassUpdate(id, requestedChanges, existing);
+    if (requestedChanges.teacherId) {
+      prepared.update.teacher = await this.validateTeacherForClassSale(existing, requestedChanges.teacherId);
+    }
+    if (!Object.keys(prepared.update).length) {
+      throw new BadRequestException('Yeu cau cap nhat khong hop le');
+    }
+
+    const actorId = this.getActorId(actor);
+    await this.applyPreparedClassUpdate(id, prepared, 'approvePendingSaleUpdate', {
+      clearPendingSaleUpdate: true,
+      durationSnapshotSource: prepared.durationSnapshotData
+        ? (
+          requestType === PendingClassUpdateType.DURATION_CHANGE
+            ? DurationSnapshotSource.APPROVED_DURATION_CHANGE
+            : DurationSnapshotSource.APPROVED_SALE_UPDATE
+        )
+        : undefined,
+      requestType,
+      effectiveById: actorId,
+    });
+    return this.findByIdPopulated(id);
+  }
+
+  async rejectPendingSaleUpdate(id: string, reason?: string, actor?: JwtPayload) {
+    const existing = await this.classModel.findById(id).lean();
+    if (!existing) throw new NotFoundException('Class not found');
+
+    const pendingSaleUpdate = (existing as any).pendingSaleUpdate;
+    if (!pendingSaleUpdate || pendingSaleUpdate.status !== ClassUpdateRequestStatus.PENDING) {
+      throw new BadRequestException('Lop hoc khong co yeu cau cap nhat cho duyet');
+    }
+    this.assertCanReviewPendingUpdate(pendingSaleUpdate, actor);
+
+    const actorId = this.getActorId(actor);
+    if (!actorId) {
+      throw new ForbiddenException('Khong xac dinh duoc nguoi duyet');
+    }
+
+    await this.classModel.findByIdAndUpdate(id, {
+      $set: {
+        'pendingSaleUpdate.status': ClassUpdateRequestStatus.REJECTED,
+        'pendingSaleUpdate.reviewedBy': new Types.ObjectId(actorId),
+        'pendingSaleUpdate.reviewedAt': new Date(),
+        'pendingSaleUpdate.rejectionReason': reason?.trim() || 'Khong dat yeu cau',
+      },
+    });
 
     return this.findByIdPopulated(id);
   }
@@ -430,9 +1030,310 @@ export class ClassesService {
     
     // Cập nhật danh sách học sinh trong lớp
     await this.classModel.findByIdAndUpdate(id, { students: merged });
+    await this.syncStudentConfigsOnClass(id, actorId);
 
     this.triggerStudentSupportSnapshotRefreshForClass(id, 'assignStudentsBySale');
     return this.findByIdPopulated(id);
+  }
+
+  async updateStudentConfig(
+    classId: string,
+    studentId: string,
+    dto: UpdateStudentConfigDto,
+    actor?: JwtPayload,
+  ) {
+    const classroom = await this.classModel.findById(classId).lean();
+    if (!classroom) {
+      throw new NotFoundException('Class not found');
+    }
+
+    const actorId = this.getActorId(actor);
+    if (actor?.role === Role.SALE) {
+      if (!actorId || classroom.sale?.toString() !== actorId) {
+        throw new ForbiddenException('Ban khong phu trach lop hoc nay');
+      }
+    } else if (!actor?.role || !this.isManagerRole(actor.role)) {
+      throw new ForbiddenException('Ban khong co quyen cap nhat hoc sinh trong lop');
+    }
+
+    const classStudentIds = ((classroom as any).students || [])
+      .map((currentStudentId: any) => currentStudentId?.toString?.())
+      .filter((currentStudentId: string | undefined): currentStudentId is string => !!currentStudentId);
+    if (!classStudentIds.includes(studentId)) {
+      throw new BadRequestException('Hoc sinh khong thuoc lop hoc nay');
+    }
+
+    await this.syncStudentConfigsOnClass(classId, actorId);
+    const refreshedClassroom = await this.classModel.findById(classId).lean();
+    if (!refreshedClassroom) {
+      throw new NotFoundException('Class not found');
+    }
+
+    const studentConfig = ((refreshedClassroom as any).studentConfigs || [])
+      .find((config: any) => config?.studentId?.toString?.() === studentId);
+    if (!studentConfig) {
+      throw new NotFoundException('Khong tim thay cau hinh hoc sinh trong lop');
+    }
+
+    const updateQuery: Record<string, any> = {
+      $set: {
+        'studentConfigs.$[studentConfig].updatedAt': new Date(),
+      },
+    };
+    const arrayFilters = [{ 'studentConfig.studentId': new Types.ObjectId(studentId) }];
+    let hasChanges = false;
+
+    if (dto.teacherId) {
+      const teacherSlots = Array.isArray(studentConfig.teacherSlots) ? studentConfig.teacherSlots : [];
+      const currentTeacherId = getCurrentTeacherIdForStudent(refreshedClassroom, studentId);
+
+      if (currentTeacherId !== dto.teacherId) {
+        if (teacherSlots.length >= 3) {
+          throw new BadRequestException('Da dat toi da 3 moc giao vien cho hoc sinh nay');
+        }
+
+        const validatedTeacherId = await this.validateTeacherForClassSale(refreshedClassroom, dto.teacherId);
+        updateQuery.$push = updateQuery.$push || {};
+        updateQuery.$push['studentConfigs.$[studentConfig].teacherSlots'] = {
+          slotIndex: teacherSlots.length + 1,
+          slotType: StudentConfigSlotType.UPDATE,
+          teacherId: validatedTeacherId,
+          assignedAt: new Date(),
+          assignedBy: actorId ? new Types.ObjectId(actorId) : undefined,
+        };
+        hasChanges = true;
+      }
+    }
+
+    const hasDurationPayload = dto.baseDuration !== undefined || dto.sessionDuration !== undefined;
+    if (hasDurationPayload) {
+      const durationSlots = Array.isArray(studentConfig.durationSlots) ? studentConfig.durationSlots : [];
+      const currentDuration = getCurrentDurationForStudent(refreshedClassroom, studentId);
+      const nextBaseDuration =
+        this.toSafeNumber(dto.baseDuration, currentDuration.baseDuration) || currentDuration.baseDuration;
+      const nextSessionDuration =
+        this.toSafeNumber(dto.sessionDuration, currentDuration.sessionDuration) || currentDuration.sessionDuration;
+
+      if (
+        nextBaseDuration !== currentDuration.baseDuration
+        || nextSessionDuration !== currentDuration.sessionDuration
+      ) {
+        if (durationSlots.length >= 3) {
+          throw new BadRequestException('Da dat toi da 3 moc thoi luong cho hoc sinh nay');
+        }
+
+        const projectedTotalSessions = await this.buildProjectedStudentTotalSessionsMap(
+          refreshedClassroom,
+          [studentId],
+          new Map([[studentId, nextSessionDuration]]),
+        );
+
+        updateQuery.$push = updateQuery.$push || {};
+        updateQuery.$push['studentConfigs.$[studentConfig].durationSlots'] = {
+          slotIndex: durationSlots.length + 1,
+          slotType: StudentConfigSlotType.UPDATE,
+          effectiveAt: new Date(),
+          effectiveBy: actorId ? new Types.ObjectId(actorId) : undefined,
+          baseDuration: nextBaseDuration,
+          sessionDuration: nextSessionDuration,
+          totalSessions: this.roundTo2(projectedTotalSessions.get(studentId) || currentDuration.totalSessions),
+        };
+        hasChanges = true;
+      }
+    }
+
+    if (!hasChanges) {
+      throw new BadRequestException('Khong co thay doi nao de luu');
+    }
+
+    await this.classModel.updateOne(
+      { _id: new Types.ObjectId(classId) },
+      updateQuery,
+      { arrayFilters },
+    );
+
+    this.triggerStudentSupportSnapshotRefreshForClass(classId, 'updateStudentConfig');
+    return this.findByIdPopulated(classId);
+  }
+
+  private async prepareClassUpdate(
+    id: string,
+    dto: Partial<CreateClassDto> & Partial<Pick<UpdateClassDto, 'requestType'>>,
+    existing: any,
+  ): Promise<{
+    existingStudentIds: string[];
+    update: Record<string, unknown>;
+    durationSnapshotData?: {
+      baseDuration: number;
+      sessionDuration: number;
+      pricePerSession: number;
+      teacherPayPerSession: number;
+      teacherPayPerStudent: number;
+    };
+  }> {
+    const dtoWithoutMeta = this.stripUpdateMetaFields(dto);
+    const existingStudentIds = ((existing as any).students || [])
+      .map((studentId: any) => studentId?.toString?.())
+      .filter((studentId: string | undefined): studentId is string => !!studentId);
+
+    const update: Record<string, unknown> = {};
+    if (dtoWithoutMeta.name) update.name = dtoWithoutMeta.name;
+    if (dtoWithoutMeta.code) {
+      await this.ensureCodeUnique(dtoWithoutMeta.code, id);
+      update.code = dtoWithoutMeta.code.toUpperCase();
+    }
+
+    const members = await this.buildPayload(dtoWithoutMeta, true);
+    Object.assign(update, members);
+
+    const pricingFields = [
+      'pricePerSession',
+      'teacherPayPerSession',
+      'teacherPayPerStudent',
+      'baseDuration',
+      'sessionDuration',
+    ];
+    const hasPricingUpdate = pricingFields.some((field) =>
+      Object.prototype.hasOwnProperty.call(update, field),
+    );
+
+    let durationSnapshotData:
+      | {
+        baseDuration: number;
+        sessionDuration: number;
+        pricePerSession: number;
+        teacherPayPerSession: number;
+        teacherPayPerStudent: number;
+      }
+      | undefined;
+
+    if (hasPricingUpdate) {
+      const currentSnapshot = (existing as any).pricingSnapshot || {};
+      const referenceDuration = this.toSafeNumber(
+        update.baseDuration,
+        this.toSafeNumber(
+          currentSnapshot.referenceDuration,
+          this.toSafeNumber((existing as any).baseDuration, 60),
+        ),
+      ) || 60;
+      const sessionDuration = this.toSafeNumber(
+        update.sessionDuration,
+        this.toSafeNumber(
+          currentSnapshot.sessionDuration,
+          this.toSafeNumber((existing as any).sessionDuration, referenceDuration),
+        ),
+      ) || referenceDuration;
+      const pricePerSession = this.toSafeNumber(
+        update.pricePerSession,
+        this.toSafeNumber(
+          currentSnapshot.pricePerSession,
+          this.toSafeNumber((existing as any).pricePerSession, 0),
+        ),
+      );
+      const teacherPayPerSession = this.toSafeNumber(
+        update.teacherPayPerSession,
+        this.toSafeNumber(
+          currentSnapshot.teacherPayPerSession,
+          this.toSafeNumber((existing as any).teacherPayPerSession, 0),
+        ),
+      );
+      const teacherPayPerStudent = this.toSafeNumber(
+        update.teacherPayPerStudent,
+        this.toSafeNumber(
+          currentSnapshot.teacherPayPerStudent,
+          this.toSafeNumber((existing as any).teacherPayPerStudent, 0),
+        ),
+      );
+      const perMinuteRate = referenceDuration > 0
+        ? pricePerSession / referenceDuration
+        : 0;
+
+      update.pricingSnapshot = {
+        source: PricingSnapshotSource.MANUAL,
+        capturedAt: new Date(),
+        sourceInvoiceId: currentSnapshot.sourceInvoiceId,
+        sourceInvoiceNumber: currentSnapshot.sourceInvoiceNumber,
+        referenceDuration,
+        sessionDuration,
+        pricePerSession,
+        perMinuteRate,
+        teacherPayPerSession,
+        teacherPayPerStudent,
+      };
+      durationSnapshotData = this.buildDurationSnapshotData({
+        ...existing,
+        ...update,
+        pricingSnapshot: update.pricingSnapshot,
+      });
+    }
+
+    return { existingStudentIds, update, durationSnapshotData };
+  }
+
+  private async applyPreparedClassUpdate(
+    id: string,
+    prepared: {
+      existingStudentIds: string[];
+      update: Record<string, unknown>;
+      durationSnapshotData?: {
+        baseDuration: number;
+        sessionDuration: number;
+        pricePerSession: number;
+        teacherPayPerSession: number;
+        teacherPayPerStudent: number;
+      };
+    },
+    reason: string,
+    options?: {
+      clearPendingSaleUpdate?: boolean;
+      durationSnapshotSource?: DurationSnapshotSource;
+      requestType?: PendingClassUpdateType;
+      effectiveById?: string | null;
+    },
+  ): Promise<void> {
+    const updateQuery: Record<string, unknown> = {};
+    if (Object.keys(prepared.update).length) {
+      updateQuery.$set = prepared.update;
+    }
+    if (options?.clearPendingSaleUpdate) {
+      updateQuery.$unset = { pendingSaleUpdate: 1 };
+    }
+    if (prepared.durationSnapshotData && options?.durationSnapshotSource) {
+      updateQuery.$push = {
+        durationSnapshots: {
+          source: options.durationSnapshotSource,
+          requestType: options.requestType || PendingClassUpdateType.GENERAL,
+          effectiveAt: new Date(),
+          effectiveBy: options.effectiveById ? new Types.ObjectId(options.effectiveById) : undefined,
+          ...prepared.durationSnapshotData,
+        },
+      };
+    }
+
+    if (Object.keys(updateQuery).length) {
+      await this.classModel.findByIdAndUpdate(id, updateQuery, { new: true }).lean();
+    }
+
+    if (Object.prototype.hasOwnProperty.call(prepared.update, 'teacher')) {
+      const teacherId = (prepared.update.teacher as Types.ObjectId | undefined)?.toString?.();
+      if (teacherId) {
+        await this.syncTeacherSlotsOnClass(id, teacherId, options?.effectiveById);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(prepared.update, 'students')) {
+      await this.syncStudentConfigsOnClass(id, options?.effectiveById);
+      const updatedStudentIds = ((prepared.update.students as Types.ObjectId[]) || [])
+        .map((studentId) => studentId?.toString?.())
+        .filter((studentId: string | undefined): studentId is string => !!studentId);
+      this.triggerStudentSupportSnapshotRefreshForStudentIds(
+        [...new Set([...prepared.existingStudentIds, ...updatedStudentIds])],
+        `${reason}Students`,
+      );
+      return;
+    }
+
+    this.triggerStudentSupportSnapshotRefreshForClass(id, reason);
   }
 
   private toSafeNumber(value: unknown, fallback = 0): number {
@@ -566,6 +1467,10 @@ export class ClassesService {
       payload.students = await this.validateStudents(ids);
     }
 
+    if (dto.productPackageId) {
+      payload.productPackage = await this.validateProductPackage(dto.productPackageId);
+    }
+
     if (!allowPartial || dto.name) payload.name = dto.name;
     if (!allowPartial || dto.code) payload.code = dto.code?.toUpperCase();
     
@@ -608,12 +1513,25 @@ export class ClassesService {
     }
     return studentIds.map((id) => new Types.ObjectId(id));
   }
+  private async validateProductPackage(productPackageId: string): Promise<Types.ObjectId> {
+    const product = await this.productModel.findById(productPackageId).lean();
+    if (!product) {
+      throw new BadRequestException('Goi san pham khong hop le');
+    }
+    return new Types.ObjectId(productPackageId);
+  }
+
   private async findByIdPopulated(id: string | Types.ObjectId) {
     const classroom = await this.classModel
       .findById(id)
       .populate('teacher', 'fullName email role')
       .populate('sale', 'fullName email role')
+      .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
       .populate('students', 'fullName age parentName')
+      .populate('studentConfigs.studentId', 'fullName studentCode')
+      .populate('studentConfigs.teacherSlots.teacherId', 'fullName email role userCode')
+      .populate('studentConfigs.teacherSlots.assignedBy', 'fullName email role')
+      .populate('studentConfigs.durationSlots.effectiveBy', 'fullName email role')
       .lean();
 
     if (classroom) {

@@ -3,6 +3,42 @@ import { HttpClient } from '@angular/common/http';
 import { environment } from '../../environments/environment';
 import { firstValueFrom } from 'rxjs';
 
+export interface DailyTaskItem {
+  id: string;
+  type: string;
+  title: string;
+  detail?: string;
+  meta?: string[];
+  status?: string;
+  priority: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+  dueAt?: string;
+  route: string;
+  queryParams?: Record<string, string>;
+  actionLabel?: string;
+  overdue?: boolean;
+}
+
+export interface DailyTaskTab {
+  key: string;
+  label: string;
+  description: string;
+  emptyMessage: string;
+  count: number;
+  tasks: DailyTaskItem[];
+}
+
+export interface DailyTaskBoard {
+  role: string;
+  generatedAt: string;
+  summary: {
+    totalTasks: number;
+    overdueTasks: number;
+    dueTodayTasks: number;
+    highPriorityTasks: number;
+  };
+  tabs: DailyTaskTab[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class DashboardService {
   private http = inject(HttpClient);
@@ -45,6 +81,10 @@ export class DashboardService {
 
   getParentDashboard() {
     return firstValueFrom(this.http.get<any>(`${this.base}/parent`));
+  }
+
+  getDailyTasks() {
+    return firstValueFrom(this.http.get<DailyTaskBoard>(`${this.base}/daily-tasks`));
   }
 
   getTeacherKPI(fromDate?: string, toDate?: string) {

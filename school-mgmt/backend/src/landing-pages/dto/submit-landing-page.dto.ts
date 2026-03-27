@@ -43,6 +43,10 @@ export class SubmitLandingPageDto {
   @IsOptional()
   adGroupId?: string;
 
+  @IsMongoId()
+  @IsOptional()
+  referredByUserId?: string;
+
   @IsString()
   @IsOptional()
   adGroupName?: string;

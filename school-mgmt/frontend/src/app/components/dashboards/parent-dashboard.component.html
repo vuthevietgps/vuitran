@@ -1,0 +1,391 @@
+<div class="dashboard-shell">
+  <header class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Dashboard ph&#7909; huynh</p>
+      <h2>Gom l&#7841;i theo 3 khu v&#7921;c: T&#224;i ch&#237;nh, H&#7885;c b&#7841; tr&#7921;c tuy&#7871;n, H&#7895; tr&#7907;</h2>
+      <p class="hero-text">
+        M&#7895;i ph&#7847;n b&#226;y gi&#7901; t&#7853;p trung theo nhu c&#7847;u s&#7917; d&#7909;ng: thanh to&#225;n v&#224; v&#237;,
+        theo d&#245;i l&#7899;p h&#7885;c v&#224; b&#225;o c&#225;o, c&#249;ng ticket/chatbot h&#7895; tr&#7907;.
+      </p>
+    </div>
+
+    <div class="hero-metrics" *ngIf="data() as dashboard">
+      <div class="metric-card">
+        <span>Con em</span>
+        <strong>{{ dashboard.children.total }}</strong>
+      </div>
+      <div class="metric-card">
+        <span>Bu&#7893;i c&#7847;n x&#225;c nh&#7853;n</span>
+        <strong>{{ dashboard.sessions.needsConfirmation }}</strong>
+      </div>
+      <div class="metric-card">
+        <span>Ticket &#273;ang m&#7903;</span>
+        <strong>{{ dashboard.tickets.openTickets }}</strong>
+      </div>
+    </div>
+  </header>
+
+  <div *ngIf="loading()" class="state-card">Dang tai du lieu...</div>
+  <div *ngIf="error()" class="state-card error">{{ error() }}</div>
+
+  <ng-container *ngIf="data() as dashboard">
+    <section class="dashboard-section" data-tone="finance">
+      <div class="section-head">
+        <div>
+          <p class="section-kicker">01</p>
+          <h3>Tai chinh</h3>
+          <p class="section-text">Hoa don, vi, dong tien vao ra va cac giao dich can theo doi.</p>
+        </div>
+        <div class="section-actions">
+          <a class="section-link" routerLink="/app/parent-invoices">Hoa don</a>
+          <a class="section-link" routerLink="/app/wallets">Vi</a>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <article class="stat-card">
+          <span class="stat-label">So du vi</span>
+          <strong class="stat-value">{{ (dashboard.wallet?.balance || 0) | number:'1.0-0' }}d</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Tien vao vi</span>
+          <strong class="stat-value positive">{{ totalInflow() | number:'1.0-0' }}d</strong>
+          <small>Nap va hoan tien</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Tien ra khoi vi</span>
+          <strong class="stat-value negative">{{ totalOutflow() | number:'1.0-0' }}d</strong>
+          <small>Tru buoi hoc</small>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Tong hoa don</span>
+          <strong class="stat-value">{{ dashboard.invoices.total }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Da thanh toan</span>
+          <strong class="stat-value">{{ dashboard.invoices.totalPaid | number:'1.0-0' }}d</strong>
+        </article>
+      </div>
+
+      <div class="content-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Dieu huong tai chinh</h4>
+            <span class="panel-note">{{ financeLinks.length }} muc</span>
+          </div>
+          <div class="link-grid">
+            <a class="link-card" *ngFor="let item of financeLinks" [routerLink]="item.route">
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.description }}</p>
+              <span>{{ item.cta }}</span>
+            </a>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Hoa don gan day</h4>
+            <span class="panel-note">{{ recentInvoices().length }}</span>
+          </div>
+          <div *ngIf="recentInvoices().length; else emptyInvoices" class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Ma HD</th>
+                  <th>Hoc sinh</th>
+                  <th>Lop</th>
+                  <th>So tien</th>
+                  <th>Trang thai</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let invoice of recentInvoices()">
+                  <td class="mono">{{ invoice.invoiceNumber || '-' }}</td>
+                  <td>{{ studentLabel(invoice.studentId) }}</td>
+                  <td>{{ classLabel(invoice.classId) }}</td>
+                  <td>{{ (invoice.amount || 0) | number:'1.0-0' }}d</td>
+                  <td>
+                    <span class="badge" [attr.data-status]="invoice.status">{{ invoiceStatusLabel(invoice.status) }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ng-template #emptyInvoices>
+            <p class="empty">Chua co hoa don nao.</p>
+          </ng-template>
+        </article>
+
+        <article class="panel panel-full">
+          <div class="panel-head">
+            <h4>Tien vao, tien ra gan day</h4>
+            <span class="panel-note">{{ recentTransactions().length }} giao dich</span>
+          </div>
+          <div *ngIf="recentTransactions().length; else emptyTransactions" class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Loai</th>
+                  <th>Mo ta</th>
+                  <th>Trang thai</th>
+                  <th>So tien</th>
+                  <th>Thoi gian</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let transaction of recentTransactions()">
+                  <td>
+                    <span class="badge" [attr.data-type]="transaction.type">{{ txLabel(transaction.type) }}</span>
+                  </td>
+                  <td>{{ transaction.description || '-' }}</td>
+                  <td><span class="badge" [attr.data-status]="transaction.status">{{ transaction.status || '-' }}</span></td>
+                  <td [class.positive]="isCredit(transaction.type)" [class.negative]="!isCredit(transaction.type)">
+                    {{ isCredit(transaction.type) ? '+' : '-' }}{{ (transaction.amount || 0) | number:'1.0-0' }}d
+                  </td>
+                  <td>{{ transaction.createdAt | date:'dd/MM/yyyy HH:mm' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ng-template #emptyTransactions>
+            <p class="empty">Chua co giao dich gan day.</p>
+          </ng-template>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-section" data-tone="learning">
+      <div class="section-head">
+        <div>
+          <p class="section-kicker">02</p>
+          <h3>Hoc ba truc tuyen</h3>
+          <p class="section-text">Chuong trinh hoc, lop hoc, bao cao giang day chi tiet va giao vien.</p>
+        </div>
+        <div class="section-actions">
+          <a class="section-link" routerLink="/app/teaching-materials">Chuong trinh hoc</a>
+          <a class="section-link" routerLink="/app/student-progress">Hoc ba</a>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <article class="stat-card">
+          <span class="stat-label">Hoc sinh dang theo doi</span>
+          <strong class="stat-value">{{ dashboard.children.total }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Mon / chuong trinh</span>
+          <strong class="stat-value">{{ programSubjects().length }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Lop hoc dang hien thi</span>
+          <strong class="stat-value">{{ classHighlights().length }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Giao vien lien quan</span>
+          <strong class="stat-value">{{ teacherHighlights().length }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Buoi can xac nhan</span>
+          <strong class="stat-value">{{ dashboard.sessions.needsConfirmation }}</strong>
+        </article>
+      </div>
+
+      <div class="content-grid">
+        <article class="panel panel-full">
+          <div class="panel-head">
+            <h4>Dieu huong hoc ba truc tuyen</h4>
+            <span class="panel-note">{{ learningLinks.length }} muc</span>
+          </div>
+          <div class="link-grid">
+            <a class="link-card" *ngFor="let item of learningLinks" [routerLink]="item.route">
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.description }}</p>
+              <span>{{ item.cta }}</span>
+            </a>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Chuong trinh hoc theo tung con</h4>
+            <span class="panel-note">{{ children().length }} hoc sinh</span>
+          </div>
+          <div *ngIf="children().length; else emptyChildren" class="child-grid">
+            <div *ngFor="let child of children()" class="child-card">
+              <div class="child-top">
+                <strong>{{ childLabel(child) }}</strong>
+                <span *ngIf="child.grade">Lop {{ child.grade }}</span>
+              </div>
+              <p *ngIf="child.subjects?.length; else noSubjectList">
+                {{ child.subjects!.join(', ') }}
+              </p>
+              <ng-template #noSubjectList>
+                <p>Dang cap nhat chuong trinh hoc.</p>
+              </ng-template>
+            </div>
+          </div>
+          <ng-template #emptyChildren>
+            <p class="empty">Chua co hoc sinh nao duoc lien ket.</p>
+          </ng-template>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Lop hoc va giao vien</h4>
+            <span class="panel-note">{{ upcomingSessions().length }} buoi sap toi</span>
+          </div>
+          <div class="info-stack">
+            <div>
+              <h5>Mon / chuong trinh</h5>
+              <div class="chip-list" *ngIf="programSubjects().length; else emptyPrograms">
+                <span class="chip" *ngFor="let subject of programSubjects()">{{ subject }}</span>
+              </div>
+            </div>
+            <div>
+              <h5>Lop hoc</h5>
+              <div class="chip-list" *ngIf="classHighlights().length; else emptyClasses">
+                <span class="chip" *ngFor="let item of classHighlights()">{{ item.code ? item.code + ' - ' : '' }}{{ item.name }}</span>
+              </div>
+            </div>
+            <div>
+              <h5>Giao vien</h5>
+              <div class="chip-list" *ngIf="teacherHighlights().length; else emptyTeachers">
+                <span class="chip chip-teacher" *ngFor="let teacher of teacherHighlights()">{{ teacher }}</span>
+              </div>
+            </div>
+          </div>
+          <ng-template #emptyPrograms>
+            <p class="empty compact">Chua co mon hoc nao.</p>
+          </ng-template>
+          <ng-template #emptyClasses>
+            <p class="empty compact">Chua co lop hoc nao.</p>
+          </ng-template>
+          <ng-template #emptyTeachers>
+            <p class="empty compact">Chua co giao vien nao.</p>
+          </ng-template>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Lop hoc sap toi</h4>
+            <span class="panel-note">{{ dashboard.sessions.upcomingCount }} buoi</span>
+          </div>
+          <div *ngIf="upcomingSessions().length; else emptySessions" class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Ngay gio</th>
+                  <th>Hoc sinh</th>
+                  <th>Lop</th>
+                  <th>Giao vien</th>
+                  <th>Trang thai</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let session of upcomingSessions()">
+                  <td>{{ session.scheduledDate | date:'dd/MM/yyyy' }} {{ session.scheduledStartTime || '' }}</td>
+                  <td>{{ studentLabel(session.studentId) }}</td>
+                  <td>{{ classLabel(session.classId) }}</td>
+                  <td>{{ personLabel(session.teacherId) }}</td>
+                  <td><span class="badge" [attr.data-status]="session.status">{{ statusLabel(session.status) }}</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ng-template #emptySessions>
+            <p class="empty">Khong co lop hoc sap toi.</p>
+          </ng-template>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Hoat dong giang day gan day</h4>
+            <span class="panel-note">{{ recentReports().length }} ban ghi</span>
+          </div>
+          <div *ngIf="recentReports().length; else emptyReports" class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Ngay</th>
+                  <th>Hoc sinh</th>
+                  <th>Lop</th>
+                  <th>Giao vien</th>
+                  <th>Trang thai</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr *ngFor="let item of recentReports()">
+                  <td>{{ item.date | date:'dd/MM/yyyy' }}</td>
+                  <td>{{ studentLabel(item.studentId) }}</td>
+                  <td>{{ classLabel(item.classId) }}</td>
+                  <td>{{ personLabel(item.teacherId) }}</td>
+                  <td><span class="badge" [attr.data-attend]="item.status">{{ attendanceLabel(item.status) }}</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ng-template #emptyReports>
+            <p class="empty">Chua co bao cao giang day nao.</p>
+          </ng-template>
+        </article>
+      </div>
+    </section>
+
+    <section class="dashboard-section" data-tone="support">
+      <div class="section-head">
+        <div>
+          <p class="section-kicker">03</p>
+          <h3>Ho tro</h3>
+          <p class="section-text">Ticket va chatbot duoc dat chung mot khu vuc de phu huynh theo doi de hon.</p>
+        </div>
+        <div class="section-actions">
+          <a class="section-link" routerLink="/app/tickets">Ticket</a>
+          <a class="section-link" routerLink="/app/parent-chat">Chatbot</a>
+        </div>
+      </div>
+
+      <div class="stats-grid support-stats">
+        <article class="stat-card">
+          <span class="stat-label">Tong ticket cua toi</span>
+          <strong class="stat-value">{{ dashboard.tickets.myTickets }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Ticket dang mo</span>
+          <strong class="stat-value">{{ dashboard.tickets.openTickets }}</strong>
+        </article>
+        <article class="stat-card">
+          <span class="stat-label">Kenh chatbot</span>
+          <strong class="stat-value">1</strong>
+          <small>Phan hoi nhanh</small>
+        </article>
+      </div>
+
+      <div class="content-grid support-grid">
+        <article class="panel">
+          <div class="panel-head">
+            <h4>Dieu huong ho tro</h4>
+            <span class="panel-note">{{ supportLinks.length }} muc</span>
+          </div>
+          <div class="link-grid">
+            <a class="link-card" *ngFor="let item of supportLinks" [routerLink]="item.route">
+              <strong>{{ item.title }}</strong>
+              <p>{{ item.description }}</p>
+              <span>{{ item.cta }}</span>
+            </a>
+          </div>
+        </article>
+
+        <article class="panel support-note-card">
+          <div class="panel-head">
+            <h4>Cach dung de tranh bo sot</h4>
+          </div>
+          <ul class="support-list">
+            <li>Dung chatbot khi can hoi nhanh ve tien do, lich hoc, bai tap va giao vien.</li>
+            <li>Mo ticket khi can theo doi xu ly, can doi lich, khieu nai hoac can phan hoi chinh thuc.</li>
+            <li>Nhung van de nhay cam tu chatbot se duoc chuyen thanh ticket de trung tam theo doi tiep.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </ng-container>
+</div>

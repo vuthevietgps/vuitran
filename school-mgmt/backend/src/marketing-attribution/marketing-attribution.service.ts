@@ -20,6 +20,7 @@ import {
 
 export type UpsertParentAttributionInput = {
   parentUserId?: string | Types.ObjectId | null;
+  referredByUserId?: string | Types.ObjectId | null;
   parentPhone?: string | null;
   parentEmail?: string | null;
   adGroupId?: string | Types.ObjectId | null;
@@ -47,6 +48,7 @@ export class MarketingAttributionService {
     session?: ClientSession,
   ): Promise<ParentAttributionDocument | null> {
     const parentUserId = toObjectId(input.parentUserId);
+    const referredByUserId = toObjectId(input.referredByUserId);
     const adGroupId = toObjectId(input.adGroupId);
     const sourceConversationId = toObjectId(input.sourceConversationId);
     const sourceLeadId = toObjectId(input.sourceLeadId);
@@ -77,19 +79,22 @@ export class MarketingAttributionService {
 
     const now = new Date();
     const requestedModel = input.attributionModel || ParentAttributionModel.FIRST_TOUCH_LOCKED;
-    const requestedSourceType = input.sourceType || ParentAttributionSourceType.SYSTEM;
+    const requestedSourceType =
+      input.sourceType ||
+      (referredByUserId ? ParentAttributionSourceType.REFERRAL : ParentAttributionSourceType.SYSTEM);
     const canOverride =
       requestedModel === ParentAttributionModel.MANUAL_OVERRIDE ||
       requestedModel === ParentAttributionModel.LAST_TOUCH;
 
     if (!doc) {
-      if (!adGroupId && !input.adGroupName) {
+      if (!adGroupId && !input.adGroupName && !referredByUserId) {
         return null;
       }
 
       doc = new this.parentAttributionModel({
         parentKey,
         parentUserId,
+        referredByUserId,
         parentPhone: input.parentPhone || undefined,
         normalizedParentPhone: normalizedParentPhone || undefined,
         parentEmail: input.parentEmail || undefined,
@@ -115,6 +120,7 @@ export class MarketingAttributionService {
 
     doc.parentKey = parentKey;
     if (parentUserId) doc.parentUserId = parentUserId;
+  if (!doc.referredByUserId && referredByUserId) doc.referredByUserId = referredByUserId;
     if (input.parentPhone) doc.parentPhone = input.parentPhone;
     if (normalizedParentPhone) doc.normalizedParentPhone = normalizedParentPhone;
     if (input.parentEmail) doc.parentEmail = input.parentEmail;
@@ -176,6 +182,9 @@ export class MarketingAttributionService {
     }
     if (!primary.sourceLeadId && secondary.sourceLeadId) primary.sourceLeadId = secondary.sourceLeadId;
     if (!primary.sourceOrderId && secondary.sourceOrderId) primary.sourceOrderId = secondary.sourceOrderId;
+    if (!primary.referredByUserId && secondary.referredByUserId) {
+      primary.referredByUserId = secondary.referredByUserId;
+    }
     if (!primary.notes && secondary.notes) primary.notes = secondary.notes;
 
     primary.firstAttributedAt = primary.firstAttributedAt || secondary.firstAttributedAt || new Date();

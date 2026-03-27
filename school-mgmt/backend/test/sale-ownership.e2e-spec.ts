@@ -18,7 +18,7 @@ type SeedUser = {
   email: string;
   password: string;
   fullName: string;
-  role: 'DIRECTOR' | 'OPS' | 'ACCOUNTING' | 'SALE';
+  role: 'DIRECTOR' | 'OPS' | 'ACCOUNTING' | 'SALE' | 'TEACHER';
 };
 
 function extractCookieValue(
@@ -48,6 +48,11 @@ describe('Sale ownership integrity (e2e)', () => {
   let invoiceModel: Model<any>;
   let conversationModel: Model<any>;
   let walletModel: Model<any>;
+  let classModel: Model<any>;
+  let attendanceModel: Model<any>;
+  let sessionModel: Model<any>;
+  let teacherProfileModel: Model<any>;
+  let notificationModel: Model<any>;
 
   const director: SeedUser = {
     email: 'director-owner.e2e@school.local',
@@ -84,17 +89,35 @@ describe('Sale ownership integrity (e2e)', () => {
     role: 'SALE',
   };
 
+  const teacherA: SeedUser = {
+    email: 'teacher-a-owner.e2e@school.local',
+    password: 'E2ePass123!',
+    fullName: 'Teacher Alpha E2E',
+    role: 'TEACHER',
+  };
+
+  const teacherB: SeedUser = {
+    email: 'teacher-b-owner.e2e@school.local',
+    password: 'E2ePass123!',
+    fullName: 'Teacher Beta E2E',
+    role: 'TEACHER',
+  };
+
   let directorUser: any;
   let opsUser: any;
   let accountingUser: any;
   let saleAUser: any;
   let saleBUser: any;
+  let teacherAUser: any;
+  let teacherBUser: any;
 
   let directorSession: SessionCookies;
   let opsSession: SessionCookies;
   let accountingSession: SessionCookies;
   let saleASession: SessionCookies;
   let saleBSession: SessionCookies;
+  let teacherASession: SessionCookies;
+  let teacherBSession: SessionCookies;
 
   async function upsertUser(user: SeedUser): Promise<any> {
     const hashedPassword = await bcrypt.hash(user.password, 10);
@@ -177,8 +200,12 @@ describe('Sale ownership integrity (e2e)', () => {
       leadModel.deleteMany({}),
       orderModel.deleteMany({}),
       invoiceModel.deleteMany({}),
+      classModel.deleteMany({}),
+      attendanceModel.deleteMany({}),
+      sessionModel.deleteMany({}),
       conversationModel.deleteMany({}),
       walletModel.deleteMany({}),
+      notificationModel.deleteMany({}),
       userModel.deleteMany({ role: 'PARENT' }),
     ]);
   }
@@ -239,6 +266,54 @@ describe('Sale ownership integrity (e2e)', () => {
       saleId: params.saleUser?._id,
       saleName: params.saleUser?.fullName,
     });
+  }
+
+  async function createParentAccount(params: {
+    userCode: string;
+    email: string;
+    fullName: string;
+    phone: string;
+    saleUser?: any;
+  }) {
+    const res = await authedPost(directorSession, '/users')
+      .send({
+        userCode: params.userCode,
+        email: params.email,
+        password: 'ParentPass123!',
+        fullName: params.fullName,
+        role: 'PARENT',
+        phone: params.phone,
+        ...(params.saleUser ? { saleOwnerId: String(params.saleUser._id) } : {}),
+      })
+      .expect(201);
+
+    return res.body;
+  }
+
+  async function upsertTeacherProfile(user: any, managedSales: any[] = []) {
+    await teacherProfileModel.updateOne(
+      { userId: user._id },
+      {
+        $set: {
+          userId: user._id,
+          managedSales: managedSales.map((saleUser) => saleUser._id),
+          subjects: ['Toan'],
+          grades: ['Lop 6'],
+          teachingMode: 'ONLINE',
+          locations: [],
+          qualifications: [],
+          yearsOfExperience: 2,
+          availability: [],
+          pricePerSession: 200000,
+          status: 'APPROVED',
+          approvedBy: directorUser?._id,
+          approvedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+
+    return teacherProfileModel.findOne({ userId: user._id }).lean();
   }
 
   async function createLead(params: {
@@ -314,18 +389,30 @@ describe('Sale ownership integrity (e2e)', () => {
     invoiceModel = moduleRef.get<Model<any>>(getModelToken('Invoice'));
     conversationModel = moduleRef.get<Model<any>>(getModelToken('Conversation'));
     walletModel = moduleRef.get<Model<any>>(getModelToken('Wallet'));
+    classModel = moduleRef.get<Model<any>>(getModelToken('Classroom'));
+    attendanceModel = moduleRef.get<Model<any>>(getModelToken('Attendance'));
+    sessionModel = moduleRef.get<Model<any>>(getModelToken('Session'));
+    teacherProfileModel = moduleRef.get<Model<any>>(getModelToken('TeacherProfile'));
+    notificationModel = moduleRef.get<Model<any>>(getModelToken('Notification'));
 
     directorUser = await upsertUser(director);
     opsUser = await upsertUser(ops);
     accountingUser = await upsertUser(accounting);
     saleAUser = await upsertUser(saleA);
     saleBUser = await upsertUser(saleB);
+    teacherAUser = await upsertUser(teacherA);
+    teacherBUser = await upsertUser(teacherB);
+
+    await upsertTeacherProfile(teacherAUser, [saleAUser]);
+    await upsertTeacherProfile(teacherBUser, [saleAUser]);
 
     directorSession = await loginAndGetSession(director.email, director.password);
     opsSession = await loginAndGetSession(ops.email, ops.password);
     accountingSession = await loginAndGetSession(accounting.email, accounting.password);
     saleASession = await loginAndGetSession(saleA.email, saleA.password);
     saleBSession = await loginAndGetSession(saleB.email, saleB.password);
+    teacherASession = await loginAndGetSession(teacherA.email, teacherA.password);
+    teacherBSession = await loginAndGetSession(teacherB.email, teacherB.password);
   });
 
   beforeEach(async () => {
@@ -620,6 +707,246 @@ describe('Sale ownership integrity (e2e)', () => {
     expect(String(res.body.message)).toContain('Lead');
   });
 
+  it('inherits sale owner from linked parent when DIRECTOR creates an order without saleId', async () => {
+    const parent = await createParentAccount({
+      userCode: 'PH-ORDER-PARENT-001',
+      email: 'parent-order-parent-001@school.local',
+      fullName: 'Parent Linked Order',
+      phone: '0901333001',
+      saleUser: saleBUser,
+    });
+
+    const res = await authedPost(directorSession, '/orders')
+      .send(buildOrderPayload({
+        parentName: parent.fullName,
+        parentPhone: parent.phone,
+        parentEmail: parent.email,
+        parentUserId: String(parent._id),
+        studentName: 'Student Linked Parent',
+      }))
+      .expect(201);
+
+    expect(String(res.body.parentUserId)).toBe(String(parent._id));
+    expect(String(res.body.saleId)).toBe(String(saleBUser._id));
+    expect(res.body.saleName).toBe(saleB.fullName);
+  });
+
+  it('inherits linked parent and sale owner from existing student when DIRECTOR creates an order', async () => {
+    const parent = await createParentAccount({
+      userCode: 'PH-ORDER-STUDENT-001',
+      email: 'parent-order-student-001@school.local',
+      fullName: 'Parent Existing Student',
+      phone: '0901333002',
+      saleUser: saleAUser,
+    });
+    const student = await studentModel.create({
+      studentCode: 'STU-ORDER-LINK-001',
+      fullName: 'Student Existing Order',
+      age: 11,
+      grade: 'Lop 6',
+      parentUserId: new Types.ObjectId(parent._id),
+      parentName: parent.fullName,
+      parentPhone: parent.phone,
+      faceImage: 'default-avatar.png',
+      saleId: saleAUser._id,
+      saleName: saleA.fullName,
+    });
+
+    const res = await authedPost(directorSession, '/orders')
+      .send(buildOrderPayload({
+        parentName: parent.fullName,
+        parentPhone: parent.phone,
+        studentName: student.fullName,
+        studentGrade: 'Lop 6',
+        existingStudentId: String(student._id),
+      }))
+      .expect(201);
+
+    expect(String(res.body.parentUserId)).toBe(String(parent._id));
+    expect(String(res.body.existingStudentId)).toBe(String(student._id));
+    expect(String(res.body.saleId)).toBe(String(saleAUser._id));
+    expect(res.body.saleName).toBe(saleA.fullName);
+  });
+
+  it('rejects linking an existing student to a different parent account in the same order', async () => {
+    const parentA = await createParentAccount({
+      userCode: 'PH-ORDER-MISMATCH-001',
+      email: 'parent-order-mismatch-001@school.local',
+      fullName: 'Parent Student Match A',
+      phone: '0901333003',
+      saleUser: saleAUser,
+    });
+    const parentB = await createParentAccount({
+      userCode: 'PH-ORDER-MISMATCH-002',
+      email: 'parent-order-mismatch-002@school.local',
+      fullName: 'Parent Student Match B',
+      phone: '0901333004',
+      saleUser: saleAUser,
+    });
+    const student = await studentModel.create({
+      studentCode: 'STU-ORDER-MISMATCH-001',
+      fullName: 'Student Parent Mismatch',
+      age: 10,
+      parentUserId: new Types.ObjectId(parentA._id),
+      parentName: parentA.fullName,
+      parentPhone: parentA.phone,
+      faceImage: 'default-avatar.png',
+      saleId: saleAUser._id,
+      saleName: saleA.fullName,
+    });
+
+    const res = await authedPost(directorSession, '/orders')
+      .send(buildOrderPayload({
+        parentName: parentB.fullName,
+        parentPhone: parentB.phone,
+        parentUserId: String(parentB._id),
+        studentName: student.fullName,
+        existingStudentId: String(student._id),
+      }))
+      .expect(400);
+
+    expect(String(res.body.message)).toContain('phu huynh khac');
+  });
+
+  it('allows DIRECTOR to unlink parent and student references while keeping the current sale owner', async () => {
+    const parent = await createParentAccount({
+      userCode: 'PH-ORDER-UNLINK-001',
+      email: 'parent-order-unlink-001@school.local',
+      fullName: 'Parent Order Unlink',
+      phone: '0901333005',
+      saleUser: saleAUser,
+    });
+    const student = await studentModel.create({
+      studentCode: 'STU-ORDER-UNLINK-001',
+      fullName: 'Student Order Unlink',
+      age: 12,
+      grade: 'Lop 7',
+      parentUserId: new Types.ObjectId(parent._id),
+      parentName: parent.fullName,
+      parentPhone: parent.phone,
+      faceImage: 'default-avatar.png',
+      saleId: saleAUser._id,
+      saleName: saleA.fullName,
+    });
+
+    const orderRes = await authedPost(directorSession, '/orders')
+      .send(buildOrderPayload({
+        parentName: parent.fullName,
+        parentPhone: parent.phone,
+        parentUserId: String(parent._id),
+        studentName: student.fullName,
+        studentGrade: 'Lop 7',
+        existingStudentId: String(student._id),
+      }))
+      .expect(201);
+
+    const updateRes = await authedPatch(directorSession, `/orders/${orderRes.body._id}`)
+      .send({
+        parentName: 'Parent Manual Order',
+        parentPhone: '0901333999',
+        studentName: 'Student Manual Order',
+        studentGrade: 'Lop 8',
+        parentUserId: '',
+        existingStudentId: '',
+        saleId: String(saleAUser._id),
+      })
+      .expect(200);
+
+    expect(updateRes.body.parentUserId ?? null).toBeNull();
+    expect(updateRes.body.existingStudentId ?? null).toBeNull();
+    expect(String(updateRes.body.saleId)).toBe(String(saleAUser._id));
+
+    const stored = await orderModel.findById(orderRes.body._id).lean() as any;
+    expect(stored).toBeTruthy();
+    expect(stored.parentUserId ?? null).toBeNull();
+    expect(stored.existingStudentId ?? null).toBeNull();
+    expect(String(stored.saleId)).toBe(String(saleAUser._id));
+  });
+
+  it('stores handoff summary on completed order and notifies sale, parent, and preferred teacher', async () => {
+    const parent = await createParentAccount({
+      userCode: 'PH-ORDER-HANDOFF-001',
+      email: 'parent-order-handoff-001@school.local',
+      fullName: 'Parent Handoff Order',
+      phone: '0901333006',
+      saleUser: saleAUser,
+    });
+    const parentSession = await loginAndGetSession(parent.email, 'ParentPass123!');
+
+    const orderRes = await authedPost(saleASession, '/orders')
+      .send(buildOrderPayload({
+        parentName: parent.fullName,
+        parentPhone: parent.phone,
+        parentEmail: parent.email,
+        parentUserId: String(parent._id),
+        studentName: 'Student Handoff Order',
+        items: [
+          {
+            productId: new Types.ObjectId().toString(),
+            productName: 'Combo Handoff',
+            sessions: 12,
+            sessionDuration: 90,
+            pricePerSession: 100000,
+            amount: 1200000,
+            preferredTeacherId: String(teacherAUser._id),
+            preferredSchedule: 'Thu 2 18:00',
+          },
+        ],
+      }))
+      .expect(201);
+
+    await authedPost(saleASession, `/orders/${orderRes.body._id}/submit`)
+      .send({})
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    const approveRes = await authedPost(directorSession, `/orders/${orderRes.body._id}/approve`)
+      .send({})
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    const summary = approveRes.body.order?.processedResults?.communicationSummary;
+    expect(summary).toBeTruthy();
+    expect(String(summary.saleMessage)).toContain(orderRes.body.orderCode);
+    expect(String(summary.saleMessage)).toContain(parent.email);
+    expect(String(summary.parentMessage)).toContain('Student Handoff Order');
+    expect(String(summary.teacherMessage)).toContain('Thu 2 18:00');
+    expect(String(summary.parentRecipientId)).toBe(String(parent._id));
+    expect((summary.teacherRecipientIds || []).map((id: any) => String(id))).toContain(String(teacherAUser._id));
+
+    const storedOrder = await orderModel.findById(orderRes.body._id).lean() as any;
+    expect(storedOrder.processedResults?.communicationSummary?.saleMessage).toContain(orderRes.body.orderCode);
+
+    const saleNotifications = await authedGet(saleASession, '/notifications?limit=20').expect(200);
+    expect(
+      saleNotifications.body.data.some(
+        (notification: any) =>
+          notification.targetId === orderRes.body._id
+          && String(notification.link || '').includes(orderRes.body._id),
+      ),
+    ).toBe(true);
+
+    const parentNotifications = await authedGet(parentSession, '/notifications?limit=20').expect(200);
+    expect(
+      parentNotifications.body.data.some(
+        (notification: any) =>
+          notification.targetId === orderRes.body._id
+          && String(notification.title || '').includes('Ho so hoc tap'),
+      ),
+    ).toBe(true);
+
+    const teacherNotifications = await authedGet(teacherASession, '/notifications?limit=20').expect(200);
+    expect(
+      teacherNotifications.body.data.some(
+        (notification: any) =>
+          notification.targetId === orderRes.body._id
+          && String(notification.message || '').includes('Thu 2 18:00'),
+      ),
+    ).toBe(true);
+  });
+
   it('uses explicitly selected sale for brand new orders created by OPS', async () => {
     const res = await authedPost(opsSession, '/orders')
       .send(buildOrderPayload({
@@ -676,6 +1003,43 @@ describe('Sale ownership integrity (e2e)', () => {
     expect(String(res.body.createdBy)).toBe(String(saleAUser._id));
   });
 
+  it('derives price per session and initializes remaining sessions on create', async () => {
+    const student = await createStudent({
+      studentCode: 'STU-INVOICE-CREATE-001',
+      fullName: 'Student Invoice Create',
+      parentName: 'Parent Invoice Create',
+      parentPhone: '0901888001',
+      saleUser: saleAUser,
+    });
+
+    const res = await authedPost(saleASession, '/invoices')
+      .send({
+        invoiceNumber: 'INV-CREATE-LOGIC-0001',
+        studentId: String(student._id),
+        sessions: 12,
+        bonusSessions: 2,
+        amount: 1800000,
+        paymentDate: '2026-03-20',
+      })
+      .expect(201);
+
+    expect(res.body.amount).toBe(1800000);
+    expect(res.body.pricePerSession).toBe(150000);
+    expect(res.body.sessionsRemaining).toBe(12);
+    expect(res.body.bonusSessionsRemaining).toBe(2);
+    expect(res.body.status).toBe('PENDING_APPROVAL');
+    expect(res.body.invoiceType).toBe('TUITION');
+
+    const stored = await invoiceModel.findById(res.body._id).lean() as any;
+    expect(stored).toBeTruthy();
+    expect(stored.amount).toBe(1800000);
+    expect(stored.sessions).toBe(12);
+    expect(stored.bonusSessions).toBe(2);
+    expect(stored.sessionsRemaining).toBe(12);
+    expect(stored.bonusSessionsRemaining).toBe(2);
+    expect(String(stored.saleId)).toBe(String(saleAUser._id));
+  });
+
   it('prevents SALE from mutating invoice ownership fields while editing pending invoices', async () => {
     const studentA = await createStudent({
       studentCode: 'STU-2026-A2',
@@ -720,6 +1084,142 @@ describe('Sale ownership integrity (e2e)', () => {
     expect(String(stored.studentId)).toBe(String(studentA._id));
     expect(stored.classId).toBeUndefined();
     expect(stored.status).toBe('PENDING_APPROVAL');
+  });
+
+  it('recomputes pending invoice remaining sessions and pricing fields during edit', async () => {
+    const student = await createStudent({
+      studentCode: 'STU-INVOICE-UPDATE-001',
+      fullName: 'Student Invoice Update',
+      parentName: 'Parent Invoice Update',
+      parentPhone: '0901888002',
+      saleUser: saleAUser,
+    });
+
+    const invoice = await invoiceModel.create({
+      invoiceNumber: 'INV-UPDATE-LOGIC-0001',
+      studentId: student._id,
+      saleId: saleAUser._id,
+      createdBy: saleAUser._id,
+      status: 'PENDING_APPROVAL',
+      invoiceType: 'TUITION',
+      sessions: 10,
+      sessionsRemaining: 8,
+      bonusSessions: 3,
+      bonusSessionsRemaining: 2,
+      pricePerSession: 100000,
+      referenceDuration: 60,
+      perMinuteRate: 100000 / 60,
+      amount: 1000000,
+      paymentDate: new Date('2026-03-20'),
+    });
+
+    const res = await authedPatch(saleASession, `/invoices/${invoice._id}`)
+      .send({
+        sessions: 14,
+        bonusSessions: 5,
+        pricePerSession: 120000,
+        referenceDuration: 90,
+        amount: 1680000,
+      })
+      .expect(200);
+
+    expect(res.body.amount).toBe(1680000);
+    expect(res.body.sessionsRemaining).toBe(12);
+    expect(res.body.bonusSessionsRemaining).toBe(4);
+
+    const stored = await invoiceModel.findById(invoice._id).lean() as any;
+    expect(stored).toBeTruthy();
+    expect(stored.amount).toBe(1680000);
+    expect(stored.sessions).toBe(14);
+    expect(stored.sessionsRemaining).toBe(12);
+    expect(stored.bonusSessions).toBe(5);
+    expect(stored.bonusSessionsRemaining).toBe(4);
+    expect(stored.pricePerSession).toBe(120000);
+    expect(stored.referenceDuration).toBe(90);
+    expect(stored.perMinuteRate).toBeCloseTo(120000 / 90, 8);
+  });
+
+  it('blocks financial edits on approved invoices', async () => {
+    const student = await createStudent({
+      studentCode: 'STU-INVOICE-UPDATE-002',
+      fullName: 'Student Invoice Approved',
+      parentName: 'Parent Invoice Approved',
+      parentPhone: '0901888003',
+      saleUser: saleAUser,
+    });
+
+    const invoice = await invoiceModel.create({
+      invoiceNumber: 'INV-UPDATE-LOGIC-0002',
+      studentId: student._id,
+      saleId: saleAUser._id,
+      createdBy: saleAUser._id,
+      approvedBy: directorUser._id,
+      approvedAt: new Date('2026-03-21'),
+      status: 'APPROVED',
+      invoiceType: 'TUITION',
+      sessions: 8,
+      sessionsRemaining: 8,
+      bonusSessions: 1,
+      bonusSessionsRemaining: 1,
+      pricePerSession: 125000,
+      referenceDuration: 60,
+      perMinuteRate: 125000 / 60,
+      amount: 1000000,
+      paymentDate: new Date('2026-03-20'),
+    });
+
+    const res = await authedPatch(directorSession, `/invoices/${invoice._id}`)
+      .send({
+        amount: 1100000,
+        sessions: 9,
+      })
+      .expect(400);
+
+    expect(String(res.body.message)).toContain('Không thể sửa thông tin tài chính hay học sinh của hóa đơn đã duyệt');
+
+    const stored = await invoiceModel.findById(invoice._id).lean() as any;
+    expect(stored).toBeTruthy();
+    expect(stored.amount).toBe(1000000);
+    expect(stored.sessions).toBe(8);
+    expect(stored.status).toBe('APPROVED');
+  });
+
+  it('stores and returns invoice course status for create, update, and list flows', async () => {
+    const student = await createStudent({
+      studentCode: 'STU-INVOICE-COURSE-STATUS',
+      fullName: 'Student Invoice Course Status',
+      parentName: 'Parent Invoice Course Status',
+      parentPhone: '0901999999',
+      saleUser: saleAUser,
+    });
+
+    const createRes = await authedPost(saleASession, '/invoices')
+      .send({
+        invoiceNumber: 'INV-COURSE-STATUS-0001',
+        studentId: String(student._id),
+        amount: 1600000,
+        paymentDate: '2026-03-20',
+        courseStatus: 'CONTINUE_2',
+      })
+      .expect(201);
+
+    expect(createRes.body.courseStatus).toBe('CONTINUE_2');
+
+    const updateRes = await authedPatch(saleASession, `/invoices/${createRes.body._id}`)
+      .send({
+        courseStatus: 'CONTINUE_3',
+      })
+      .expect(200);
+
+    expect(updateRes.body.courseStatus).toBe('CONTINUE_3');
+
+    const stored = await invoiceModel.findById(createRes.body._id).lean() as any;
+    expect(stored.courseStatus).toBe('CONTINUE_3');
+
+    const listRes = await authedGet(saleASession, '/invoices').expect(200);
+    const listedInvoice = listRes.body.find((invoice: any) => String(invoice._id) === String(createRes.body._id));
+    expect(listedInvoice).toBeTruthy();
+    expect(listedInvoice.courseStatus).toBe('CONTINUE_3');
   });
 
   it('requires an explicit sale when OPS creates a lead from conversation without an assigned sale', async () => {
@@ -783,5 +1283,601 @@ describe('Sale ownership integrity (e2e)', () => {
     const stored = await orderModel.findById(res.body._id).lean() as any;
     expect(stored).toBeTruthy();
     expect(String(stored.saleId)).toBe(String(saleAUser._id));
+  });
+
+  it('applies non-sensitive SALE class edits immediately while storing duration changes as pending updates', async () => {
+    const cls = await classModel.create({
+      name: 'Class Pending Approval',
+      code: 'CLS-PENDING-APPROVAL',
+      teacher: directorUser._id,
+      sale: saleAUser._id,
+      students: [],
+      classMode: 'ONLINE',
+      pricePerSession: 500000,
+      teacherPayPerSession: 250000,
+      teacherPayPerStudent: 0,
+      baseDuration: 70,
+      sessionDuration: 70,
+    });
+
+    const requestRes = await authedPatch(saleASession, `/classes/${cls._id}`)
+      .send({
+        name: 'Class Pending Approval Updated',
+        pricePerSession: 550000,
+        sessionDuration: 90,
+      })
+      .expect(200);
+
+    expect(requestRes.body.pendingApproval).toBe(true);
+
+    const stored = await classModel.findById(cls._id).lean() as any;
+    expect(stored.name).toBe('Class Pending Approval Updated');
+    expect(stored.pricePerSession).toBe(550000);
+    expect(stored.sessionDuration).toBe(70);
+    expect(stored.pendingSaleUpdate?.status).toBe('PENDING');
+    expect(stored.pendingSaleUpdate?.requestType).toBe('DURATION_CHANGE');
+    expect(stored.pendingSaleUpdate?.requestedChanges?.name).toBeUndefined();
+    expect(stored.pendingSaleUpdate?.requestedChanges?.pricePerSession).toBeUndefined();
+    expect(stored.pendingSaleUpdate?.requestedChanges?.sessionDuration).toBe(90);
+
+    const pendingListRes = await authedGet(opsSession, '/pending-approvals/classes').expect(200);
+    expect(Array.isArray(pendingListRes.body)).toBe(true);
+    expect(
+      pendingListRes.body.some((item: any) => String(item._id) === String(cls._id)),
+    ).toBe(true);
+  });
+
+  it('keeps class code stable for sale teacher changes and only lets the new teacher take later attendance after approval', async () => {
+    const studentA = await createStudent({
+      studentCode: 'STU-TEACHER-CHANGE-A1',
+      fullName: 'Student Teacher Change A1',
+      parentName: 'Parent Teacher Change A1',
+      parentPhone: '0903999991',
+      saleUser: saleAUser,
+    });
+
+    const cls = await classModel.create({
+      name: 'Class Teacher Change Lock',
+      code: 'CLS-TEACHER-CHANGE-LOCK',
+      teacher: teacherAUser._id,
+      sale: saleAUser._id,
+      students: [studentA._id],
+      classMode: 'ONLINE',
+      pricePerSession: 400000,
+      teacherPayPerSession: 180000,
+      teacherPayPerStudent: 0,
+      baseDuration: 70,
+      sessionDuration: 70,
+    });
+
+    const beforeChangeAttendance = await authedPost(teacherASession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentA._id),
+        date: '2026-03-24',
+        status: 'PRESENT',
+      })
+      .expect(201);
+
+    expect(beforeChangeAttendance.body.teacherId || beforeChangeAttendance.body.teacher?._id).toBeTruthy();
+
+    const requestRes = await authedPatch(saleASession, `/classes/${cls._id}`)
+      .send({
+        code: 'CLS-HACKED-BY-SALE',
+        teacherId: String(teacherBUser._id),
+        teacherPayPerSession: 210000,
+      })
+      .expect(200);
+
+    expect(requestRes.body.pendingApproval).toBe(true);
+
+    const pendingStored = await classModel.findById(cls._id).lean() as any;
+    expect(pendingStored.code).toBe('CLS-TEACHER-CHANGE-LOCK');
+    expect(String(pendingStored.teacher)).toBe(String(teacherAUser._id));
+    expect(pendingStored.teacherPayPerSession).toBe(180000);
+    expect(pendingStored.pendingSaleUpdate?.requestedChanges?.code).toBeUndefined();
+    expect(String(pendingStored.pendingSaleUpdate?.requestedChanges?.teacherId)).toBe(String(teacherBUser._id));
+    expect(pendingStored.pendingSaleUpdate?.requestedChanges?.teacherPayPerSession).toBe(210000);
+
+    const approveRes = await authedPost(opsSession, `/classes/${cls._id}/pending-sale-update/approve`)
+      .send({})
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    expect(approveRes.body.code).toBe('CLS-TEACHER-CHANGE-LOCK');
+    expect(String(approveRes.body.teacher?._id || approveRes.body.teacher)).toBe(String(teacherBUser._id));
+    expect(approveRes.body.teacherPayPerSession).toBe(210000);
+
+    await authedPost(teacherASession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentA._id),
+        date: '2026-03-25',
+        status: 'PRESENT',
+      })
+      .expect(403);
+
+    await authedPost(teacherBSession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentA._id),
+        date: '2026-03-25',
+        status: 'PRESENT',
+      })
+      .expect(201);
+
+    const oldAttendance = await attendanceModel.findOne({
+      classId: cls._id,
+      studentId: studentA._id,
+      date: new Date('2026-03-24T00:00:00.000Z'),
+    }).lean() as any;
+    const newAttendance = await attendanceModel.findOne({
+      classId: cls._id,
+      studentId: studentA._id,
+      date: new Date('2026-03-25T00:00:00.000Z'),
+    }).lean() as any;
+
+    expect(String(oldAttendance.teacherId)).toBe(String(teacherAUser._id));
+    expect(String(newAttendance.teacherId)).toBe(String(teacherBUser._id));
+
+    const storedClass = await classModel.findById(cls._id).lean() as any;
+    const storedConfig = storedClass.studentConfigs.find(
+      (config: any) => String(config.studentId) === String(studentA._id),
+    );
+
+    expect(storedConfig).toBeTruthy();
+    expect(String(storedConfig.teacherSlots[storedConfig.teacherSlots.length - 1].teacherId))
+      .toBe(String(teacherBUser._id));
+  });
+
+  it('applies DIRECTOR edits immediately and clears any pending SALE request', async () => {
+    const cls = await classModel.create({
+      name: 'Class Direct Manager Edit',
+      code: 'CLS-DIRECT-EDIT',
+      teacher: directorUser._id,
+      sale: saleAUser._id,
+      students: [],
+      classMode: 'ONLINE',
+      pricePerSession: 420000,
+      teacherPayPerSession: 220000,
+      teacherPayPerStudent: 0,
+      baseDuration: 70,
+      sessionDuration: 70,
+    });
+
+    await authedPatch(saleASession, `/classes/${cls._id}`)
+      .send({
+        sessionDuration: 80,
+      })
+      .expect(200);
+
+    const beforeDirectEdit = await classModel.findById(cls._id).lean() as any;
+    expect(beforeDirectEdit.pendingSaleUpdate?.status).toBe('PENDING');
+    expect(beforeDirectEdit.sessionDuration).toBe(70);
+
+    const directRes = await authedPatch(directorSession, `/classes/${cls._id}`)
+      .send({
+        sessionDuration: 120,
+        baseDuration: 90,
+      })
+      .expect(200);
+
+    expect(directRes.body.sessionDuration).toBe(120);
+    expect(directRes.body.baseDuration).toBe(90);
+
+    const afterDirectEdit = await classModel.findById(cls._id).lean() as any;
+    expect(afterDirectEdit.sessionDuration).toBe(120);
+    expect(afterDirectEdit.baseDuration).toBe(90);
+    expect(afterDirectEdit.pendingSaleUpdate).toBeFalsy();
+  });
+
+  it('lets OPS approve sale duration changes and only applies the new snapshot to future sessions', async () => {
+    const studentA = await createStudent({
+      studentCode: 'STU-DURATION-A1',
+      fullName: 'Student Duration A1',
+      parentName: 'Parent Duration A1',
+      parentPhone: '0903444444',
+      saleUser: saleAUser,
+    });
+
+    const cls = await classModel.create({
+      name: 'Class Duration Snapshot',
+      code: 'CLS-DURATION-SNAPSHOT',
+      teacher: directorUser._id,
+      sale: saleAUser._id,
+      students: [studentA._id],
+      classMode: 'ONLINE',
+      pricePerSession: 350000,
+      teacherPayPerSession: 140000,
+      teacherPayPerStudent: 0,
+      baseDuration: 70,
+      sessionDuration: 70,
+      pricingSnapshot: {
+        source: 'MANUAL',
+        capturedAt: new Date('2026-03-24T08:00:00.000Z'),
+        referenceDuration: 70,
+        sessionDuration: 70,
+        pricePerSession: 350000,
+        perMinuteRate: 5000,
+        teacherPayPerSession: 140000,
+        teacherPayPerStudent: 0,
+      },
+      durationSnapshots: [
+        {
+          source: 'INITIAL',
+          requestType: 'GENERAL',
+          effectiveAt: new Date('2026-03-24T08:00:00.000Z'),
+          baseDuration: 70,
+          sessionDuration: 70,
+          pricePerSession: 350000,
+          teacherPayPerSession: 140000,
+          teacherPayPerStudent: 0,
+        },
+      ],
+    });
+
+    await authedPost(directorSession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentA._id),
+        date: '2026-03-24',
+        status: 'PRESENT',
+      })
+      .expect(201);
+
+    const requestRes = await authedPatch(saleASession, `/classes/${cls._id}`)
+      .send({
+        requestType: 'DURATION_CHANGE',
+        sessionDuration: 90,
+      })
+      .expect(200);
+
+    expect(requestRes.body.pendingApproval).toBe(true);
+
+    const approveRes = await authedPost(opsSession, `/classes/${cls._id}/pending-sale-update/approve`)
+      .send({})
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    expect(approveRes.body.sessionDuration).toBe(90);
+
+    const storedClass = await classModel.findById(cls._id).lean() as any;
+    expect(storedClass.pendingSaleUpdate).toBeFalsy();
+    expect(storedClass.sessionDuration).toBe(90);
+    expect(storedClass.pricingSnapshot?.sessionDuration).toBe(90);
+    expect(storedClass.durationSnapshots).toHaveLength(2);
+    expect(storedClass.durationSnapshots[1].source).toBe('APPROVED_DURATION_CHANGE');
+    expect(storedClass.durationSnapshots[1].requestType).toBe('DURATION_CHANGE');
+    expect(storedClass.durationSnapshots[1].sessionDuration).toBe(90);
+
+    await authedPost(directorSession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentA._id),
+        date: '2026-03-25',
+        status: 'PRESENT',
+      })
+      .expect(201);
+
+    const oldAttendance = await attendanceModel.findOne({
+      classId: cls._id,
+      studentId: studentA._id,
+      date: new Date('2026-03-24T00:00:00.000Z'),
+    }).lean() as any;
+    expect(oldAttendance?.sessionId).toBeTruthy();
+
+    const oldSession = await sessionModel.findById(oldAttendance.sessionId).lean() as any;
+    expect(oldSession).toBeTruthy();
+    expect(oldSession.durationMinutes).toBe(70);
+    expect(oldSession.amountCharged).toBe(350000);
+
+    const attendance = await attendanceModel.findOne({
+      classId: cls._id,
+      studentId: studentA._id,
+      date: new Date('2026-03-25T00:00:00.000Z'),
+    }).lean() as any;
+
+    expect(attendance?.sessionId).toBeTruthy();
+
+    const createdSession = await sessionModel.findById(attendance.sessionId).lean() as any;
+    expect(createdSession).toBeTruthy();
+    expect(createdSession.durationMinutes).toBe(90);
+    expect(createdSession.amountCharged).toBe(450000);
+  });
+
+  it('lets SALE append GV2 and Lan 2 for one student while keeping the same class id', async () => {
+    const studentA = await createStudent({
+      studentCode: 'STU-STUDENT-CONFIG-A1',
+      fullName: 'Student Config A1',
+      parentName: 'Parent Config A1',
+      parentPhone: '0903555555',
+      saleUser: saleAUser,
+    });
+    const studentB = await createStudent({
+      studentCode: 'STU-STUDENT-CONFIG-A2',
+      fullName: 'Student Config A2',
+      parentName: 'Parent Config A2',
+      parentPhone: '0903666666',
+      saleUser: saleAUser,
+    });
+
+    const cls = await classModel.create({
+      name: 'Class Student Config Append',
+      code: 'CLS-STUDENT-CONFIG-APPEND',
+      teacher: teacherAUser._id,
+      sale: saleAUser._id,
+      students: [studentA._id, studentB._id],
+      classMode: 'ONLINE',
+      pricePerSession: 350000,
+      teacherPayPerSession: 175000,
+      teacherPayPerStudent: 0,
+      baseDuration: 70,
+      sessionDuration: 70,
+      totalSessions: 6,
+      pricingSnapshot: {
+        source: 'MANUAL',
+        capturedAt: new Date('2026-03-24T08:00:00.000Z'),
+        referenceDuration: 70,
+        sessionDuration: 70,
+        pricePerSession: 350000,
+        perMinuteRate: 5000,
+        teacherPayPerSession: 175000,
+        teacherPayPerStudent: 0,
+      },
+    });
+
+    await invoiceModel.create({
+      invoiceNumber: 'INV-STUDENT-CONFIG-A1',
+      studentId: studentA._id,
+      classId: cls._id,
+      saleId: saleAUser._id,
+      invoiceType: 'TUITION',
+      classType: 'ONLINE',
+      sessions: 6,
+      bonusSessions: 0,
+      pricePerSession: 350000,
+      referenceDuration: 70,
+      perMinuteRate: 5000,
+      sessionsRemaining: 6,
+      bonusSessionsRemaining: 0,
+      amount: 2100000,
+      paymentDate: new Date('2026-03-24T09:00:00.000Z'),
+      createdBy: directorUser._id,
+      status: 'APPROVED',
+      walletTopUpDone: true,
+    });
+
+    const updateRes = await authedPatch(
+      saleASession,
+      `/classes/${cls._id}/students/${studentA._id}/config`,
+    )
+      .send({
+        teacherId: String(teacherBUser._id),
+        sessionDuration: 90,
+      })
+      .expect(200);
+
+    const updatedConfig = (updateRes.body.studentConfigs || []).find(
+      (config: any) => String(config.studentId?._id || config.studentId) === String(studentA._id),
+    );
+
+    expect(String(updateRes.body._id)).toBe(String(cls._id));
+    expect(updatedConfig).toBeTruthy();
+    expect(updatedConfig.teacherSlots).toHaveLength(2);
+    expect(updatedConfig.durationSlots).toHaveLength(2);
+    expect(String(updatedConfig.teacherSlots[1].teacherId?._id || updatedConfig.teacherSlots[1].teacherId))
+      .toBe(String(teacherBUser._id));
+    expect(updatedConfig.durationSlots[1].slotIndex).toBe(2);
+    expect(updatedConfig.durationSlots[1].sessionDuration).toBe(90);
+    expect(updatedConfig.durationSlots[1].totalSessions).toBeCloseTo(4.67, 2);
+
+    const storedClass = await classModel.findById(cls._id).lean() as any;
+    const storedStudentAConfig = storedClass.studentConfigs.find(
+      (config: any) => String(config.studentId) === String(studentA._id),
+    );
+    const storedStudentBConfig = storedClass.studentConfigs.find(
+      (config: any) => String(config.studentId) === String(studentB._id),
+    );
+
+    expect(storedStudentAConfig.teacherSlots).toHaveLength(2);
+    expect(storedStudentAConfig.durationSlots).toHaveLength(2);
+    expect(storedStudentBConfig.teacherSlots).toHaveLength(1);
+    expect(storedStudentBConfig.durationSlots).toHaveLength(1);
+
+    await authedPost(directorSession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentA._id),
+        date: '2026-03-26',
+        status: 'PRESENT',
+      })
+      .expect(201);
+
+    await authedPost(directorSession, '/attendance/mark')
+      .send({
+        classId: String(cls._id),
+        studentId: String(studentB._id),
+        date: '2026-03-27',
+        status: 'PRESENT',
+      })
+      .expect(201);
+
+    const attendanceA = await attendanceModel.findOne({
+      classId: cls._id,
+      studentId: studentA._id,
+      date: new Date('2026-03-26T00:00:00.000Z'),
+    }).lean() as any;
+    const attendanceB = await attendanceModel.findOne({
+      classId: cls._id,
+      studentId: studentB._id,
+      date: new Date('2026-03-27T00:00:00.000Z'),
+    }).lean() as any;
+
+    const sessionA = await sessionModel.findById(attendanceA.sessionId).lean() as any;
+    const sessionB = await sessionModel.findById(attendanceB.sessionId).lean() as any;
+
+    expect(String(sessionA.teacherId)).toBe(String(teacherBUser._id));
+    expect(sessionA.durationMinutes).toBe(90);
+    expect(String(sessionB.teacherId)).toBe(String(teacherAUser._id));
+    expect(sessionB.durationMinutes).toBe(70);
+  });
+
+  it('shows each teacher only the students currently assigned to them after per-student reassignment', async () => {
+    const studentA = await createStudent({
+      studentCode: 'STU-TEACHER-VIEW-A1',
+      fullName: 'Student Teacher View A1',
+      parentName: 'Parent Teacher View A1',
+      parentPhone: '0903777777',
+      saleUser: saleAUser,
+    });
+    const studentB = await createStudent({
+      studentCode: 'STU-TEACHER-VIEW-A2',
+      fullName: 'Student Teacher View A2',
+      parentName: 'Parent Teacher View A2',
+      parentPhone: '0903888888',
+      saleUser: saleAUser,
+    });
+
+    const cls = await classModel.create({
+      name: 'Class Teacher View Split',
+      code: 'CLS-TEACHER-VIEW-SPLIT',
+      teacher: teacherAUser._id,
+      sale: saleAUser._id,
+      students: [studentA._id, studentB._id],
+      classMode: 'ONLINE',
+      pricePerSession: 300000,
+      teacherPayPerSession: 150000,
+      teacherPayPerStudent: 0,
+      baseDuration: 70,
+      sessionDuration: 70,
+      totalSessions: 10,
+    });
+
+    await authedPatch(
+      saleASession,
+      `/classes/${cls._id}/students/${studentA._id}/config`,
+    )
+      .send({
+        teacherId: String(teacherBUser._id),
+      })
+      .expect(200);
+
+    const teacherARes = await authedGet(teacherASession, '/attendance/classes-with-students').expect(200);
+    const teacherBRes = await authedGet(teacherBSession, '/attendance/classes-with-students').expect(200);
+
+    const teacherAClass = teacherARes.body.find((item: any) => String(item.classId) === String(cls._id));
+    const teacherBClass = teacherBRes.body.find((item: any) => String(item.classId) === String(cls._id));
+
+    expect(teacherAClass).toBeTruthy();
+    expect(teacherBClass).toBeTruthy();
+    expect(teacherAClass.students).toHaveLength(1);
+    expect(teacherBClass.students).toHaveLength(1);
+    expect(String(teacherAClass.students[0].studentId)).toBe(String(studentB._id));
+    expect(String(teacherBClass.students[0].studentId)).toBe(String(studentA._id));
+  });
+
+  it('returns only the logged-in sale students in comprehensive report even when a class mixes sales', async () => {
+    const studentA = await createStudent({
+      studentCode: 'STU-REPORT-A1',
+      fullName: 'Student Report A1',
+      parentName: 'Parent Report A1',
+      parentPhone: '0903111111',
+      saleUser: saleAUser,
+    });
+    const studentB = await createStudent({
+      studentCode: 'STU-REPORT-B1',
+      fullName: 'Student Report B1',
+      parentName: 'Parent Report B1',
+      parentPhone: '0903222222',
+      saleUser: saleBUser,
+    });
+
+    const cls = await classModel.create({
+      name: 'Class Mixed Sales Report',
+      code: 'CLS-REPORT-MIXED',
+      teacher: directorUser._id,
+      sale: saleAUser._id,
+      students: [studentA._id, studentB._id],
+      classMode: 'ONLINE',
+      pricePerSession: 500000,
+      teacherPayPerSession: 250000,
+      teacherPayPerStudent: 0,
+      totalSessions: 10,
+      sessionsCompleted: 1,
+    });
+
+    await attendanceModel.create([
+      {
+        classId: cls._id,
+        studentId: studentA._id,
+        teacherId: directorUser._id,
+        date: new Date('2026-03-24T00:00:00.000Z'),
+        status: 'PRESENT',
+        sessionDuration: 70,
+        sessionIndex: 1,
+        attendedAt: new Date('2026-03-24T01:00:00.000Z'),
+      },
+      {
+        classId: cls._id,
+        studentId: studentB._id,
+        teacherId: directorUser._id,
+        date: new Date('2026-03-24T00:00:00.000Z'),
+        status: 'PRESENT',
+        sessionDuration: 70,
+        sessionIndex: 1,
+        attendedAt: new Date('2026-03-24T01:05:00.000Z'),
+      },
+    ]);
+
+    const saleReport = await authedGet(saleASession, '/students/comprehensive-report').expect(200);
+    expect(saleReport.body.rows).toHaveLength(1);
+    expect(saleReport.body.rows[0].studentCode).toBe('STU-REPORT-A1');
+    expect(String(saleReport.body.rows[0].saleId)).toBe(String(saleAUser._id));
+
+    const directorReport = await authedGet(directorSession, '/students/comprehensive-report').expect(200);
+    expect(directorReport.body.rows).toHaveLength(2);
+  });
+
+  it('falls back to class sale in comprehensive report when legacy students do not have saleId', async () => {
+    const legacyStudent = await studentModel.create({
+      studentCode: 'STU-REPORT-LEGACY',
+      fullName: 'Student Legacy Report',
+      age: 10,
+      parentName: 'Parent Legacy Report',
+      parentPhone: '0903333333',
+      faceImage: 'default-avatar.png',
+    });
+
+    const cls = await classModel.create({
+      name: 'Class Legacy Sale Report',
+      code: 'CLS-REPORT-LEGACY',
+      teacher: directorUser._id,
+      sale: saleAUser._id,
+      students: [legacyStudent._id],
+      classMode: 'ONLINE',
+      pricePerSession: 450000,
+      teacherPayPerSession: 220000,
+      teacherPayPerStudent: 0,
+      totalSessions: 8,
+      sessionsCompleted: 1,
+    });
+
+    await attendanceModel.create({
+      classId: cls._id,
+      studentId: legacyStudent._id,
+      teacherId: directorUser._id,
+      date: new Date('2026-03-24T00:00:00.000Z'),
+      status: 'PRESENT',
+      sessionDuration: 70,
+      sessionIndex: 1,
+      attendedAt: new Date('2026-03-24T01:10:00.000Z'),
+    });
+
+    const saleReport = await authedGet(saleASession, '/students/comprehensive-report').expect(200);
+    expect(saleReport.body.rows).toHaveLength(1);
+    expect(saleReport.body.rows[0].studentCode).toBe('STU-REPORT-LEGACY');
+    expect(String(saleReport.body.rows[0].saleId)).toBe(String(saleAUser._id));
   });
 });

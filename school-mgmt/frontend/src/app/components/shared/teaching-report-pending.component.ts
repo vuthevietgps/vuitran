@@ -5,6 +5,7 @@ import { ReportTemplate } from '../../services/report-template.service';
 import {
   TeachingReportFormComponent,
   ReportFormValues,
+  teachingReportDraftStorageKey,
 } from './teaching-report-form.component';
 
 export interface PendingMeta {
@@ -57,6 +58,7 @@ export interface PendingMeta {
 
       <div *ngIf="canEdit && editingId === s._id" class="report-form-wrapper">
         <app-teaching-report-form
+          [draftKey]="draftKeyFor(s._id)"
           [templates]="templates"
           [submitting]="submitting"
           submitLabel="📤 Nộp báo cáo"
@@ -139,6 +141,10 @@ export class TeachingReportPendingComponent {
   onSubmit(sessionId: string, data: ReportFormValues) {
     this.submitReport.emit({ sessionId, data });
     this.editingId = '';
+  }
+
+  draftKeyFor(sessionId: string): string {
+    return teachingReportDraftStorageKey(sessionId);
   }
 
   statusLabel(s: string): string {

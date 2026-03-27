@@ -16,6 +16,22 @@ export interface OrderItem {
   notes?: string;
 }
 
+export interface OrderCommunicationSummary {
+  saleMessage?: string;
+  parentMessage?: string;
+  teacherMessage?: string;
+  parentRecipientId?: string;
+  teacherRecipientIds?: string[];
+  generatedAt?: string;
+}
+
+export interface OrderProcessedResults {
+  studentId?: string;
+  invoiceIds?: string[];
+  classIds?: string[];
+  communicationSummary?: OrderCommunicationSummary;
+}
+
 export interface OrderData {
   _id: string;
   orderCode: string;

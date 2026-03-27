@@ -16,6 +16,11 @@ import { UserStatus } from '../common/interfaces/user-status.enum';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { MarketingAttributionService } from '../marketing-attribution/marketing-attribution.service';
 import { ParentAttributionSourceType } from '../marketing-attribution/schemas/parent-attribution.schema';
+import {
+  InvoiceReference,
+  OrderCommunicationService,
+  ParentAccountSummary,
+} from './order-communication.service';
 
 export interface EnrollmentResult {
   success: boolean;
@@ -40,6 +45,7 @@ export class EnrollmentService {
     private readonly auditLogService: AuditLogService,
     private readonly notificationsService: NotificationsService,
     private readonly marketingAttributionService: MarketingAttributionService,
+    private readonly orderCommunicationService: OrderCommunicationService,
   ) {}
 
   /**
@@ -65,7 +71,9 @@ export class EnrollmentService {
     let studentCode = '';
     let isNew = false;
     let invoiceIds: string[] = [];
+    let invoiceRefs: InvoiceReference[] = [];
     let parentUserId = '';
+    let parentAccount: ParentAccountSummary | null = null;
 
     try {
       await mongoSession.withTransaction(async () => {
@@ -75,12 +83,15 @@ export class EnrollmentService {
         studentCode = studentResult.studentCode;
         isNew = studentResult.isNew;
         parentUserId = studentResult.parentUserId;
+        parentAccount = studentResult.parentAccount;
 
         // ── Step 2: Tạo Invoice cho mỗi item ──
         invoiceIds = [];
+        invoiceRefs = [];
         for (const item of o.items) {
-          const invoiceId = await this.createInvoiceForItem(o, item, studentId, approver, mongoSession);
-          invoiceIds.push(invoiceId);
+          const invoiceRef = await this.createInvoiceForItem(o, item, studentId, approver, mongoSession);
+          invoiceIds.push(invoiceRef.invoiceId);
+          invoiceRefs.push(invoiceRef);
         }
 
         // ── Step 3: Cập nhật processedResults + status → COMPLETED ──
@@ -89,7 +100,7 @@ export class EnrollmentService {
           parentUserId: new Types.ObjectId(parentUserId),
           processedResults: {
             studentId: new Types.ObjectId(studentId),
-            invoiceIds: invoiceIds.map(id => new Types.ObjectId(id)),
+            invoiceIds: invoiceRefs.map((invoice) => new Types.ObjectId(invoice.invoiceId)),
             classIds: [], // Classes sẽ được tạo sau khi Invoice được duyệt thanh toán
           },
         }, { session: mongoSession });
@@ -112,6 +123,10 @@ export class EnrollmentService {
 
     // ── Non-critical operations OUTSIDE transaction ──
     try {
+      if (!parentAccount) {
+        throw new Error('Khong xac dinh duoc thong tin tai khoan phu huynh sau khi enrollment');
+      }
+
       await this.marketingAttributionService.upsertParentAttribution({
         parentUserId,
         parentPhone: o.parentPhone,
@@ -144,18 +159,38 @@ export class EnrollmentService {
           type: NotificationType.SYSTEM,
           title: `Đơn ${o.orderCode} đã hoàn tất`,
           message: `Đơn ${o.orderCode} (${o.studentName}) đã được duyệt và xử lý tự động. Học viên: ${studentCode}, ${invoiceIds.length} hóa đơn đã tạo.`,
-          link: `/orders`,
+          link: `/app/orders?orderId=${orderId}`,
           targetId: orderId,
           targetModule: 'ORDERS',
         });
       }
 
       // Thông báo cho OPS
+      const communicationSummary = await this.orderCommunicationService.buildSummary({
+        order: o,
+        parentAccount,
+        studentCode,
+        invoiceRefs,
+        classIds: [],
+      });
+      await this.orderModel.findByIdAndUpdate(orderId, {
+        $set: {
+          'processedResults.communicationSummary': communicationSummary,
+        },
+      });
+      await this.orderCommunicationService.sendNotifications({
+        order: { ...o, _id: orderId },
+        summary: communicationSummary,
+        studentCode,
+        parentAccount,
+        invoiceRefs,
+      });
+
       await this.notificationsService.notifyByRole(Role.OPS, {
         type: NotificationType.SYSTEM,
         title: `Enrollment tự động: ${o.orderCode}`,
         message: `Đơn ${o.orderCode} (${o.studentName}) đã xử lý xong: Student ${studentCode}, ${invoiceIds.length} hóa đơn.${errors.length ? ' Có lỗi: ' + errors.join('; ') : ''}`,
-        link: `/orders`,
+        link: `/app/orders?orderId=${orderId}`,
         targetId: orderId,
         targetModule: 'ORDERS',
       });
@@ -180,15 +215,15 @@ export class EnrollmentService {
     return (value || '').trim();
   }
 
-  private async resolveParentUserId(
+  private async resolveParentAccount(
     order: any,
     mongoSession?: ClientSession,
-  ): Promise<Types.ObjectId> {
+  ): Promise<ParentAccountSummary> {
     const withSession = <T>(query: any): any => (mongoSession ? query.session(mongoSession) : query);
 
     if (order.parentUserId) {
       const parentById = await withSession(
-        this.userModel.findById(order.parentUserId).select('_id role').lean(),
+        this.userModel.findById(order.parentUserId).select('_id role email fullName phone').lean(),
       );
       if (!parentById) {
         throw new Error('Khong tim thay tai khoan phu huynh tu parentUserId');
@@ -196,7 +231,14 @@ export class EnrollmentService {
       if ((parentById as any).role !== Role.PARENT) {
         throw new Error('parentUserId khong phai tai khoan PHU HUYNH');
       }
-      return new Types.ObjectId((parentById as any)._id);
+      return {
+        parentUserId: (parentById as any)._id.toString(),
+        fullName: (parentById as any).fullName || (order.parentName || '').trim(),
+        email: (parentById as any).email || '',
+        phone: (parentById as any).phone || this.normalizePhone(order.parentPhone),
+        source: 'LINKED_ORDER',
+        wasAutoCreated: false,
+      };
     }
 
     const email = (order.parentEmail || '').trim().toLowerCase();
@@ -204,11 +246,18 @@ export class EnrollmentService {
       const parentByEmail = await withSession(
         this.userModel
           .findOne({ email, role: Role.PARENT })
-          .select('_id')
+          .select('_id fullName email phone')
           .lean(),
       );
       if (parentByEmail?._id) {
-        return new Types.ObjectId(parentByEmail._id);
+        return {
+          parentUserId: parentByEmail._id.toString(),
+          fullName: (parentByEmail as any).fullName || (order.parentName || '').trim(),
+          email: (parentByEmail as any).email || email,
+          phone: (parentByEmail as any).phone || this.normalizePhone(order.parentPhone),
+          source: 'MATCHED_EMAIL',
+          wasAutoCreated: false,
+        };
       }
     }
 
@@ -217,11 +266,18 @@ export class EnrollmentService {
       const parentByPhone = await withSession(
         this.userModel
           .find({ phone, role: Role.PARENT })
-          .select('_id')
+          .select('_id fullName email phone')
           .lean(),
       );
       if (parentByPhone.length === 1) {
-        return new Types.ObjectId(parentByPhone[0]._id);
+        return {
+          parentUserId: parentByPhone[0]._id.toString(),
+          fullName: (parentByPhone[0] as any).fullName || (order.parentName || '').trim(),
+          email: (parentByPhone[0] as any).email || '',
+          phone: (parentByPhone[0] as any).phone || phone,
+          source: 'MATCHED_PHONE',
+          wasAutoCreated: false,
+        };
       }
       if (parentByPhone.length > 1) {
         throw new Error('Tim thay nhieu tai khoan phu huynh trung so dien thoai');
@@ -238,7 +294,14 @@ export class EnrollmentService {
         if ((existingAutoEmail as any).role !== Role.PARENT) {
           throw new Error(`Email tu dong ${autoEmail} da ton tai nhung khong phai tai khoan PHU HUYNH`);
         }
-        return new Types.ObjectId((existingAutoEmail as any)._id);
+        return {
+          parentUserId: (existingAutoEmail as any)._id.toString(),
+          fullName: (order.parentName || '').trim() || `Phu huynh ${normalizedPhoneDigits}`,
+          email: autoEmail,
+          phone,
+          source: 'MATCHED_EMAIL',
+          wasAutoCreated: false,
+        };
       }
 
       const hashedPassword = await bcrypt.hash('TempParent123!', 10);
@@ -255,7 +318,14 @@ export class EnrollmentService {
         : await parentUser.save();
 
       this.logger.log(`Auto-created PARENT user: ${autoEmail} from order ${order.orderCode || order._id}`);
-      return new Types.ObjectId((savedParent as any)._id);
+      return {
+        parentUserId: (savedParent as any)._id.toString(),
+        fullName: (savedParent as any).fullName || (order.parentName || '').trim(),
+        email: (savedParent as any).email || autoEmail,
+        phone: (savedParent as any).phone || phone,
+        source: 'AUTO_CREATED',
+        wasAutoCreated: true,
+      };
     }
 
     throw new Error(
@@ -267,9 +337,16 @@ export class EnrollmentService {
     order: any,
     approver: JwtPayload,
     mongoSession?: ClientSession,
-  ): Promise<{ studentId: string; studentCode: string; isNew: boolean; parentUserId: string }> {
+  ): Promise<{
+    studentId: string;
+    studentCode: string;
+    isNew: boolean;
+    parentUserId: string;
+    parentAccount: ParentAccountSummary;
+  }> {
     const sessionOpts = mongoSession ? { session: mongoSession } : {};
-    const parentUserId = await this.resolveParentUserId(order, mongoSession);
+    const parentAccount = await this.resolveParentAccount(order, mongoSession);
+    const parentUserId = new Types.ObjectId(parentAccount.parentUserId);
 
     // Nếu order đã link existingStudentId → dùng luôn
     if (order.existingStudentId) {
@@ -297,6 +374,7 @@ export class EnrollmentService {
           studentCode: (existing as any).studentCode,
           isNew: false,
           parentUserId: parentUserId.toString(),
+          parentAccount,
         };
       }
     }
@@ -330,6 +408,7 @@ export class EnrollmentService {
         studentCode: (existingByPhone as any).studentCode,
         isNew: false,
         parentUserId: parentUserId.toString(),
+        parentAccount,
       };
     }
 
@@ -376,6 +455,7 @@ export class EnrollmentService {
       studentCode,
       isNew: true,
       parentUserId: parentUserId.toString(),
+      parentAccount,
     };
   }
 
@@ -389,7 +469,7 @@ export class EnrollmentService {
     studentId: string,
     approver: JwtPayload,
     mongoSession?: ClientSession,
-  ): Promise<string> {
+  ): Promise<InvoiceReference> {
     const sessionOpts = mongoSession ? { session: mongoSession } : {};
     const invoiceNumber = await this.generateInvoiceNumber(mongoSession);
 
@@ -427,7 +507,10 @@ export class EnrollmentService {
     // Audit log + notifications are non-critical, run outside transaction
     // (audit log for invoice creation will be handled post-transaction in processApprovedOrder)
 
-    return invoiceId;
+    return {
+      invoiceId,
+      invoiceNumber,
+    };
   }
 
   // ────────────────────────────────────────────────

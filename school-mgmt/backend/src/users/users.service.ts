@@ -19,7 +19,11 @@ import { MarketingAttributionService } from '../marketing-attribution/marketing-
 import { normalizePhone } from '../marketing-attribution/parent-attribution.util';
 import { AdGroup, AdGroupDocument } from '../ads/schemas/ad-group.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { TeacherProfile, TeacherProfileDocument } from '../teachers/schemas/teacher-profile.schema';
+import {
+  TeacherProfile,
+  TeacherProfileDocument,
+  TeacherStatus,
+} from '../teachers/schemas/teacher-profile.schema';
 
 @Injectable()
 export class UsersService {
@@ -38,6 +42,14 @@ export class UsersService {
   async hashPassword(plain: string): Promise<string> {
     const salt = await bcrypt.genSalt(10);
     return bcrypt.hash(plain, salt);
+  }
+
+  private getActorObjectId(actor?: JwtPayload): Types.ObjectId | null {
+    const actorId = actor?.sub || actor?._id;
+    if (!actorId || !Types.ObjectId.isValid(actorId)) {
+      return null;
+    }
+    return new Types.ObjectId(actorId);
   }
 
   private normalizeEmail(email: string): string {
@@ -552,7 +564,8 @@ export class UsersService {
     const saved = await user.save();
 
     try {
-      if (isTeacher && managedSales.length) {
+      if (isTeacher) {
+        const approvedBy = this.getActorObjectId(actor);
         await this.teacherProfileModel.create({
           userId: saved._id,
           managedSales,
@@ -564,6 +577,9 @@ export class UsersService {
           yearsOfExperience: 0,
           availability: [],
           pricePerSession: 0,
+          status: TeacherStatus.APPROVED,
+          approvedBy: approvedBy || undefined,
+          approvedAt: new Date(),
         });
       }
     } catch (error) {

@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
 import { Role } from '../../models/role.enum';
 import { FlowGuideComponent } from '../shared/flow-guide.component';
+import { DailyTaskTabsComponent } from '../shared/daily-task-tabs.component';
 
 interface HandbookBanner {
   title: string;
@@ -40,7 +41,7 @@ const HANDBOOK_BANNERS: Record<string, HandbookBanner> = {
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, FlowGuideComponent, RouterLink, NgComponentOutlet],
+  imports: [CommonModule, FlowGuideComponent, RouterLink, NgComponentOutlet, DailyTaskTabsComponent],
   template: `
     <app-flow-guide featureKey="dashboard"></app-flow-guide>
 
@@ -52,6 +53,8 @@ const HANDBOOK_BANNERS: Record<string, HandbookBanner> = {
       </div>
       <a routerLink="/app/internal-handbook" class="handbook-link">Mo cam nang</a>
     </section>
+
+    <app-daily-task-tabs *ngIf="role"></app-daily-task-tabs>
 
     <section class="dashboard-loader" *ngIf="loading">
       <div class="loader-top">

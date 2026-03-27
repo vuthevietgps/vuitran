@@ -27,6 +27,7 @@ import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { BulkCreateSessionDto } from './dto/bulk-create-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
 import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
+import { SubmitParentFeedbackDto } from './dto/submit-parent-feedback.dto';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('sessions')
@@ -103,14 +104,7 @@ export class SessionsController {
   @Post('general-feedback')
   @Roles(Role.PARENT)
   submitGeneralFeedback(
-    @Body() body: {
-      overallRating: number;
-      teachingQuality?: number;
-      communication?: number;
-      facility?: number;
-      comment?: string;
-      studentId?: string;
-    },
+    @Body() body: SubmitParentFeedbackDto,
     @Req() req: AuthenticatedRequest,
   ) {
     return this.sessionsService.submitParentFeedback(req.user.sub, body);
@@ -249,13 +243,24 @@ export class SessionsController {
     return this.sessionsService.convertTrialSessions(body.studentId, body.classId);
   }
 
-  /** Học viên KHÔNG tiếp tục → chỉ trả lương GV, không charge phụ huynh */
+  /** Học viên KHÔNG tiếp tục → không tính lương GV, không charge phụ huynh */
+  @Post('trial/reject')
+  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING)
+  rejectTrial(
+    @Body() body: { studentId: string; classId: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.sessionsService.markTrialRejectedNoPay(body.studentId, body.classId, req.user.sub);
+  }
+
+  /** Route cũ giữ tương thích nhưng đã map sang nghiệp vụ reject-no-pay */
   @Post('trial/teacher-paid-only')
   @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING)
   trialTeacherPaidOnly(
     @Body() body: { studentId: string; classId: string },
+    @Req() req: AuthenticatedRequest,
   ) {
-    return this.sessionsService.markTrialTeacherPaidOnly(body.studentId, body.classId);
+    return this.sessionsService.markTrialTeacherPaidOnly(body.studentId, body.classId, req.user.sub);
   }
 
   // ── DELETE ──────────────────────────────────────────────────────

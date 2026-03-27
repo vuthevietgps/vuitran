@@ -8,6 +8,7 @@ import { ClassesModule } from '../classes/classes.module';
 import { StudentsModule } from '../students/students.module';
 import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
+import { TrialEnrollment, TrialEnrollmentSchema } from '../trial-enrollments/schemas/trial-enrollment.schema';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
       { name: Attendance.name, schema: AttendanceSchema },
       { name: Session.name, schema: SessionSchema },
       { name: Invoice.name, schema: InvoiceSchema },
+      { name: TrialEnrollment.name, schema: TrialEnrollmentSchema },
     ]),
     ClassesModule,
     StudentsModule,

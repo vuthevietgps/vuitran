@@ -43,6 +43,7 @@ describe('Security and RBAC (e2e)', () => {
   let mongod: MongoMemoryServer;
   let userModel: Model<any>;
   let teacherProfileModel: Model<any>;
+  let materialModel: Model<any>;
   let classModel: Model<any>;
   let approvedTeacherProfileId: string;
   let pendingTeacherProfileId: string;
@@ -175,6 +176,7 @@ describe('Security and RBAC (e2e)', () => {
 
     userModel = moduleRef.get<Model<any>>(getModelToken('User'));
     teacherProfileModel = moduleRef.get<Model<any>>(getModelToken('TeacherProfile'));
+    materialModel = moduleRef.get<Model<any>>(getModelToken('TeachingMaterial'));
     classModel = moduleRef.get<Model<any>>(getModelToken('Classroom'));
 
     const approvedTeacherUser = await upsertUser(approvedTeacher);
@@ -302,7 +304,7 @@ describe('Security and RBAC (e2e)', () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 
-  it('lets DIRECTOR assign managed sales right when creating a teacher account', async () => {
+  it('lets DIRECTOR assign managed sales right when creating a teacher account and auto-approves it', async () => {
     const directorSession = await getPersistentSession(director);
     const createRes = await request(app.getHttpServer())
       .post('/users')
@@ -331,7 +333,8 @@ describe('Security and RBAC (e2e)', () => {
 
     expect(createdProfile).toBeTruthy();
     expect(createdProfile.pricePerSession).toBe(0);
-    expect(createdProfile.status).toBe('PENDING');
+    expect(createdProfile.status).toBe('APPROVED');
+    expect(createdProfile.approvedAt).toBeTruthy();
     expect(Array.isArray(createdProfile.managedSales)).toBe(true);
     expect(createdProfile.managedSales).toHaveLength(2);
 
@@ -346,6 +349,144 @@ describe('Security and RBAC (e2e)', () => {
       .expect(200);
 
     expect(directorTeacherDetail.body.managedSales).toHaveLength(2);
+    expect(directorTeacherDetail.body.status).toBe('APPROVED');
+  });
+
+  it('creates a teacher profile even when DIRECTOR leaves managed sales empty', async () => {
+    const directorSession = await getPersistentSession(director);
+    await request(app.getHttpServer())
+      .post('/users')
+      .set('Cookie', directorSession.cookieHeader)
+      .set('X-XSRF-TOKEN', directorSession.xsrfToken)
+      .send({
+        userCode: 'GV-CREATE-02',
+        email: 'teacher-create-nosales.e2e@school.local',
+        password: 'CreateNoSales123!',
+        fullName: 'Teacher Created Without Sales',
+        role: 'TEACHER',
+      })
+      .expect(201);
+
+    const createdUser: any = await userModel.findOne({ email: 'teacher-create-nosales.e2e@school.local' }).lean();
+    expect(createdUser).toBeTruthy();
+
+    const createdProfile: any = await teacherProfileModel.findOne({ userId: createdUser!._id }).lean();
+    expect(createdProfile).toBeTruthy();
+    expect(createdProfile.managedSales).toEqual([]);
+    expect(createdProfile.status).toBe('APPROVED');
+    expect(createdProfile.approvedAt).toBeTruthy();
+  });
+
+  it('backfills missing teacher profiles into the DIRECTOR teacher list without putting them back into pending approval', async () => {
+    const directorSession = await getPersistentSession(director);
+    const missingProfileTeacher = await upsertUser({
+      email: 'teacher-missing-profile.e2e@school.local',
+      password: 'MissingProfile123!',
+      fullName: 'Teacher Missing Profile',
+      role: 'TEACHER',
+    });
+
+    const beforeBackfill = await teacherProfileModel.findOne({ userId: missingProfileTeacher._id }).lean();
+    expect(beforeBackfill).toBeNull();
+
+    const listRes = await request(app.getHttpServer())
+      .get('/teachers')
+      .set('Cookie', directorSession.cookieHeader)
+      .expect(200);
+
+    expect(
+      listRes.body.some((item: any) => item.userId?.email === 'teacher-missing-profile.e2e@school.local'),
+    ).toBe(true);
+
+    const backfilledProfile: any = await teacherProfileModel.findOne({ userId: missingProfileTeacher._id }).lean();
+    expect(backfilledProfile).toBeTruthy();
+    expect(backfilledProfile.status).toBe('APPROVED');
+    expect(backfilledProfile.approvedAt).toBeTruthy();
+  });
+
+  it('lets non-teacher roles upload shared teaching materials while keeping edit rights with owner/admin only', async () => {
+    const parentSession = await getPersistentSession(parent);
+    const saleSession = await getPersistentSession(sale);
+    const directorSession = await getPersistentSession(director);
+
+    const uploadRes = await request(app.getHttpServer())
+      .post('/teaching-materials/upload')
+      .set('Cookie', parentSession.cookieHeader)
+      .set('X-XSRF-TOKEN', parentSession.xsrfToken)
+      .field('title', 'Parent Shared Material')
+      .field('description', 'Shared by parent')
+      .field('isShared', 'true')
+      .attach('file', Buffer.from('shared teaching material'), 'parent-shared-material.txt')
+      .expect(201);
+
+    expect(uploadRes.body.title).toBe('Parent Shared Material');
+    expect(uploadRes.body.isShared).toBe(true);
+
+    const parentUser: any = await userModel.findOne({ email: parent.email }).lean();
+    const storedMaterial: any = await materialModel.findById(uploadRes.body._id).lean();
+    expect(storedMaterial).toBeTruthy();
+    expect(storedMaterial.teacherId?.toString()).toBe(parentUser?._id?.toString());
+
+    const saleListRes = await request(app.getHttpServer())
+      .get('/teaching-materials')
+      .set('Cookie', saleSession.cookieHeader)
+      .expect(200);
+
+    expect(
+      saleListRes.body.data.some((item: any) => item._id === uploadRes.body._id),
+    ).toBe(true);
+
+    await request(app.getHttpServer())
+      .patch(`/teaching-materials/${uploadRes.body._id}`)
+      .set('Cookie', saleSession.cookieHeader)
+      .set('X-XSRF-TOKEN', saleSession.xsrfToken)
+      .send({ title: 'Sale cannot overwrite this' })
+      .expect(403);
+
+    const directorPatchRes = await request(app.getHttpServer())
+      .patch(`/teaching-materials/${uploadRes.body._id}`)
+      .set('Cookie', directorSession.cookieHeader)
+      .set('X-XSRF-TOKEN', directorSession.xsrfToken)
+      .send({ title: 'Director Reviewed Material' })
+      .expect(200);
+
+    expect(directorPatchRes.body.title).toBe('Director Reviewed Material');
+  });
+
+  it('keeps private teaching materials hidden from other non-admin roles even after opening access to all users', async () => {
+    const parentSession = await getPersistentSession(parent);
+    const saleSession = await getPersistentSession(sale);
+    const directorSession = await getPersistentSession(director);
+
+    const uploadRes = await request(app.getHttpServer())
+      .post('/teaching-materials/upload')
+      .set('Cookie', parentSession.cookieHeader)
+      .set('X-XSRF-TOKEN', parentSession.xsrfToken)
+      .field('title', 'Parent Private Material')
+      .field('description', 'Private by parent')
+      .field('isShared', 'false')
+      .attach('file', Buffer.from('private teaching material'), 'parent-private-material.txt')
+      .expect(201);
+
+    expect(uploadRes.body.isShared).toBe(false);
+
+    const saleListRes = await request(app.getHttpServer())
+      .get('/teaching-materials')
+      .set('Cookie', saleSession.cookieHeader)
+      .expect(200);
+
+    expect(
+      saleListRes.body.data.some((item: any) => item._id === uploadRes.body._id),
+    ).toBe(false);
+
+    const directorListRes = await request(app.getHttpServer())
+      .get('/teaching-materials')
+      .set('Cookie', directorSession.cookieHeader)
+      .expect(200);
+
+    expect(
+      directorListRes.body.data.some((item: any) => item._id === uploadRes.body._id),
+    ).toBe(true);
   });
 
   it('sanitizes teacher profile data for SALE users and hides non-active profiles', async () => {

@@ -256,6 +256,9 @@ export class Session {
   @Prop({ type: String })
   adGroupName?: string;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'TrialEnrollment', index: true })
+  trialEnrollmentId?: Types.ObjectId;
+
   // ── Session type ──
   @Prop({ type: String, enum: SessionType, default: SessionType.REGULAR, index: true })
   sessionType!: SessionType; // Loại buổi học
@@ -345,13 +348,19 @@ export class Session {
   amountCharged!: number; // Số tiền tính cho PH (VNĐ)
 
   @Prop({ type: Number, min: 0, default: 0 })
+  referenceAmountCharged!: number; // Giá trị chuẩn dùng để quy đổi suất học/invoice kể cả khi là buổi tặng
+
+  @Prop({ type: Number, min: 0, default: 0 })
   teacherPayout!: number; // Lương GV cho buổi này (VNĐ)
 
   @Prop({ type: Boolean, default: false })
   isPaid!: boolean; // Đã trừ ví PH chưa
 
   @Prop({ type: Boolean, default: false, index: true })
-  invoiceConsumptionApplied!: boolean; // Đã trừ sessionsRemaining trên invoice chưa
+  isBonusSession!: boolean; // Buổi tặng/khuyến mãi: không trừ ví nhưng vẫn tính lương GV
+
+  @Prop({ type: Boolean, default: false, index: true })
+  invoiceConsumptionApplied!: boolean; // Đã tiêu hao suất học trên invoice chưa
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice' })
   consumedInvoiceId?: Types.ObjectId; // Invoice đầu tiên được consume (trace)
@@ -361,6 +370,15 @@ export class Session {
 
   @Prop({ type: Number, min: 0, default: 0 })
   consumedInvoiceAmount!: number; // Giá trị tiền tương ứng đã trừ trên invoice(s)
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice' })
+  bonusInvoiceId?: Types.ObjectId; // Invoice đầu tiên cấp suất buổi tặng
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  consumedBonusUnits!: number; // Tổng số buổi tặng quy đổi đã dùng
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  consumedBonusAmount!: number; // Giá trị tương đương theo bảng giá của buổi tặng
 
   @Prop({ type: Boolean, default: false })
   isTeacherPaid!: boolean; // Đã tính vào payroll GV chưa
@@ -384,6 +402,9 @@ export class Session {
   /** HS không học tiếp sau trial → vẫn trả lương GV nhưng không trừ ví PH */
   @Prop({ type: Boolean, default: false })
   trialTeacherPaidOnly!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  trialRejectedNoPay!: boolean;
 
   // ── Auto-confirm config ──
   @Prop({ type: Number, min: 1, default: 48 })

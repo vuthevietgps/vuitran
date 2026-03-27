@@ -14,7 +14,10 @@ import {
   PendingMeta,
 } from './shared/teaching-report-pending.component';
 import { TeachingReportCompletedComponent } from './shared/teaching-report-completed.component';
-import { ReportFormValues } from './shared/teaching-report-form.component';
+import {
+  ReportFormValues,
+  teachingReportDraftStorageKey,
+} from './shared/teaching-report-form.component';
 
 @Component({
   selector: 'app-teaching-report',
@@ -506,6 +509,7 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
     this.success.set('');
     try {
       await this.sessionService.submitTeachingReport(event.sessionId, event.data);
+      this.clearDraft(event.sessionId);
       this.success.set('Nộp báo cáo thành công! ✓');
       setTimeout(() => this.success.set(''), 3000);
       await this.applyFilters(false);
@@ -608,6 +612,16 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
 
   private getSelectedTeacherId(): string {
     return this.isTeacher() ? (this.auth.userSignal()?.sub || '') : this.selectedTeacherId;
+  }
+
+  private clearDraft(sessionId: string) {
+    if (typeof window === 'undefined') return;
+
+    try {
+      window.sessionStorage.removeItem(teachingReportDraftStorageKey(sessionId));
+    } catch {
+      // Ignore storage cleanup failures.
+    }
   }
 
   matchedTeacherByCode(): UserItem | null {

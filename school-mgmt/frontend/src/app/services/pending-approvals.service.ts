@@ -31,4 +31,8 @@ export class PendingApprovalsService {
   getPendingTeachers() {
     return firstValueFrom(this.http.get<any>(`${this.base}/teachers`));
   }
+
+  getPendingClassUpdates() {
+    return firstValueFrom(this.http.get<any>(`${this.base}/classes`));
+  }
 }

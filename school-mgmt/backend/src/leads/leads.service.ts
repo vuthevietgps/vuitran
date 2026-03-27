@@ -83,6 +83,7 @@ export class LeadsService {
     const saved = await lead.save();
 
     await this.marketingAttributionService.upsertParentAttribution({
+      referredByUserId: dto.referredByUserId,
       parentPhone: saved.parentPhone,
       parentEmail: saved.parentEmail,
       adGroupId: saved.adGroupId,
@@ -173,6 +174,7 @@ export class LeadsService {
     await lead.save();
 
     await this.marketingAttributionService.upsertParentAttribution({
+      referredByUserId: dto.referredByUserId,
       parentPhone: lead.parentPhone,
       parentEmail: lead.parentEmail,
       adGroupId: lead.adGroupId,

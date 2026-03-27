@@ -16,16 +16,21 @@ export interface ReportFormValues {
   additionalNotes: string;
 }
 
+const TEACHING_REPORT_DRAFT_PREFIX = 'teaching-report-draft:';
+
+export function teachingReportDraftStorageKey(sessionId: string): string {
+  return `${TEACHING_REPORT_DRAFT_PREFIX}${sessionId}`;
+}
+
 @Component({
   selector: 'app-teaching-report-form',
   standalone: true,
   imports: [CommonModule, FormsModule],
   template: `
-    <!-- Template selector -->
     <div class="template-bar" *ngIf="templates.length > 0">
       <label>Dùng template:</label>
       <select (change)="applyTemplate($event)" class="template-select">
-        <option value="">— Chọn template —</option>
+        <option value="">-- Chọn template --</option>
         <optgroup [label]="'Template của bạn'" *ngIf="ownTemplates.length > 0">
           <option *ngFor="let t of ownTemplates" [value]="t._id">{{ t.title }}</option>
         </optgroup>
@@ -36,7 +41,6 @@ export interface ReportFormValues {
     </div>
 
     <div class="form-grid">
-      <!-- lessonContent -->
       <div class="form-group full" [class.has-error]="errors['lessonContent']">
         <label>
           Nội dung học <span class="required">*</span>
@@ -46,73 +50,83 @@ export interface ReportFormValues {
           [(ngModel)]="form.lessonContent"
           rows="4"
           placeholder="Mô tả nội dung đã học trong buổi... (tối thiểu 20 ký tự)"
-          (input)="onDraftInput()">
+          (ngModelChange)="onDraftInput()">
         </textarea>
         <span class="error-msg" *ngIf="errors['lessonContent']">{{ errors['lessonContent'] }}</span>
       </div>
 
-      <!-- studentAttitude -->
       <div class="form-group" [class.has-error]="errors['studentAttitude']">
         <label>
           Thái độ học sinh
           <span class="char-count">{{ form.studentAttitude.length }}/1000</span>
         </label>
-        <textarea [(ngModel)]="form.studentAttitude" rows="2"
-          placeholder="Nhận xét về thái độ, hành vi...">
+        <textarea
+          [(ngModel)]="form.studentAttitude"
+          rows="2"
+          placeholder="Nhận xét về thái độ, hành vi..."
+          (ngModelChange)="onDraftInput()">
         </textarea>
         <span class="error-msg" *ngIf="errors['studentAttitude']">{{ errors['studentAttitude'] }}</span>
       </div>
 
-      <!-- recordingUrl -->
       <div class="form-group" [class.has-error]="errors['recordingUrl']">
         <label>Link ghi hình bài giảng</label>
-        <input type="url" [(ngModel)]="form.recordingUrl"
-          placeholder="https://drive.google.com/...">
+        <input
+          type="url"
+          [(ngModel)]="form.recordingUrl"
+          placeholder="https://drive.google.com/..."
+          (ngModelChange)="onDraftInput()">
         <span class="error-msg" *ngIf="errors['recordingUrl']">{{ errors['recordingUrl'] }}</span>
       </div>
 
-      <!-- teacherComment -->
       <div class="form-group full" [class.has-error]="errors['teacherComment']">
         <label>
           Nhận xét chung
           <span class="char-count">{{ form.teacherComment.length }}/1000</span>
         </label>
-        <textarea [(ngModel)]="form.teacherComment" rows="2"
-          placeholder="Nhận xét tổng quan về buổi học...">
+        <textarea
+          [(ngModel)]="form.teacherComment"
+          rows="2"
+          placeholder="Nhận xét tổng quan về buổi học..."
+          (ngModelChange)="onDraftInput()">
         </textarea>
         <span class="error-msg" *ngIf="errors['teacherComment']">{{ errors['teacherComment'] }}</span>
       </div>
 
-      <!-- homework -->
       <div class="form-group" [class.has-error]="errors['homework']">
         <label>
           Bài tập về nhà
           <span class="char-count">{{ form.homework.length }}/1000</span>
         </label>
-        <textarea [(ngModel)]="form.homework" rows="2"
-          placeholder="Bài tập giao cho HS...">
+        <textarea
+          [(ngModel)]="form.homework"
+          rows="2"
+          placeholder="Bài tập giao cho HS..."
+          (ngModelChange)="onDraftInput()">
         </textarea>
         <span class="error-msg" *ngIf="errors['homework']">{{ errors['homework'] }}</span>
       </div>
 
-      <!-- additionalNotes -->
       <div class="form-group" [class.has-error]="errors['additionalNotes']">
         <label>
           Ghi chú thêm
           <span class="char-count">{{ form.additionalNotes.length }}/500</span>
         </label>
-        <textarea [(ngModel)]="form.additionalNotes" rows="2"
-          placeholder="Ghi chú khác nếu có...">
+        <textarea
+          [(ngModel)]="form.additionalNotes"
+          rows="2"
+          placeholder="Ghi chú khác nếu có..."
+          (ngModelChange)="onDraftInput()">
         </textarea>
         <span class="error-msg" *ngIf="errors['additionalNotes']">{{ errors['additionalNotes'] }}</span>
       </div>
     </div>
 
     <div class="form-actions">
-      <span class="draft-hint" *ngIf="draftSaved()">💾 Đã lưu nháp</span>
+      <span class="draft-hint" *ngIf="draftSaved()">Đã lưu nháp trên trình duyệt</span>
       <button class="btn secondary" type="button" (click)="onCancel()">Hủy</button>
       <button class="btn primary" type="button" (click)="onSubmit()" [disabled]="submitting">
-        {{ submitting ? '⏳ Đang gửi...' : submitLabel }}
+        {{ submitting ? 'Đang gửi...' : submitLabel }}
       </button>
     </div>
   `,
@@ -165,12 +179,11 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy {
   @Input() initialValues: ReportFormValues = emptyForm();
   @Input() templates: ReportTemplate[] = [];
   @Input() submitting = false;
-  @Input() submitLabel = '📤 Nộp báo cáo';
+  @Input() submitLabel = 'Nộp báo cáo';
+  @Input() draftKey = '';
   @Input() validationErrors: Record<string, string> = {};
   @Output() formSubmit = new EventEmitter<ReportFormValues>();
   @Output() formCancel = new EventEmitter<void>();
-  /** Emits debounced draft values for auto-save to parent */
-  @Output() draftChange = new EventEmitter<ReportFormValues>();
 
   form: ReportFormValues = emptyForm();
   errors: Record<string, string> = {};
@@ -188,17 +201,18 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
-    this.form = { ...this.initialValues };
+    this.form = this.loadInitialForm();
     this.errors = { ...this.validationErrors };
 
-    // Debounce draft auto-save: emit to parent 800ms after user stops typing
     this.draft$.pipe(
       debounceTime(800),
-      distinctUntilChanged((a, b) => a.lessonContent === b.lessonContent),
+      distinctUntilChanged((a, b) => JSON.stringify(a) === JSON.stringify(b)),
     ).subscribe((values) => {
-      this.draftChange.emit(values);
-      this.draftSaved.set(true);
-      this.draftTimer = setTimeout(() => this.draftSaved.set(false), 2000);
+      if (this.persistDraft(values)) {
+        this.draftSaved.set(true);
+        if (this.draftTimer) clearTimeout(this.draftTimer);
+        this.draftTimer = setTimeout(() => this.draftSaved.set(false), 2000);
+      }
     });
   }
 
@@ -214,10 +228,11 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy {
   applyTemplate(event: Event) {
     const id = (event.target as HTMLSelectElement).value;
     if (!id) return;
+
     const tpl = this.templates.find((t) => t._id === id);
     if (tpl) {
       this.form.lessonContent = tpl.templateContent;
-      // Reset select to default after applying
+      this.onDraftInput();
       (event.target as HTMLSelectElement).value = '';
     }
   }
@@ -244,14 +259,18 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy {
       }
     }
 
-    if ((this.form.studentAttitude?.length ?? 0) > 1000)
+    if ((this.form.studentAttitude?.length ?? 0) > 1000) {
       e['studentAttitude'] = 'Thái độ học sinh không được vượt quá 1000 ký tự';
-    if ((this.form.teacherComment?.length ?? 0) > 1000)
+    }
+    if ((this.form.teacherComment?.length ?? 0) > 1000) {
       e['teacherComment'] = 'Nhận xét không được vượt quá 1000 ký tự';
-    if ((this.form.homework?.length ?? 0) > 1000)
+    }
+    if ((this.form.homework?.length ?? 0) > 1000) {
       e['homework'] = 'Bài tập về nhà không được vượt quá 1000 ký tự';
-    if ((this.form.additionalNotes?.length ?? 0) > 500)
+    }
+    if ((this.form.additionalNotes?.length ?? 0) > 500) {
       e['additionalNotes'] = 'Ghi chú thêm không được vượt quá 500 ký tự';
+    }
 
     this.errors = e;
     return Object.keys(e).length === 0;
@@ -264,6 +283,39 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy {
 
   onCancel() {
     this.formCancel.emit();
+  }
+
+  private loadInitialForm(): ReportFormValues {
+    const base = { ...this.initialValues };
+    if (!this.draftKey || typeof window === 'undefined') return base;
+
+    try {
+      const raw = window.sessionStorage.getItem(this.draftKey);
+      if (!raw) return base;
+
+      const parsed = JSON.parse(raw) as Partial<ReportFormValues>;
+      return {
+        lessonContent: parsed.lessonContent ?? base.lessonContent,
+        studentAttitude: parsed.studentAttitude ?? base.studentAttitude,
+        recordingUrl: parsed.recordingUrl ?? base.recordingUrl,
+        teacherComment: parsed.teacherComment ?? base.teacherComment,
+        homework: parsed.homework ?? base.homework,
+        additionalNotes: parsed.additionalNotes ?? base.additionalNotes,
+      };
+    } catch {
+      return base;
+    }
+  }
+
+  private persistDraft(values: ReportFormValues): boolean {
+    if (!this.draftKey || typeof window === 'undefined') return false;
+
+    try {
+      window.sessionStorage.setItem(this.draftKey, JSON.stringify(values));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

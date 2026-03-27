@@ -2,6 +2,7 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 import { User } from '../../users/schemas/user.schema';
 import { Student } from '../../students/schemas/student.schema';
+import { Product } from '../../products/schemas/product.schema';
 // NOTE: Không import Invoice để tránh circular dependency
 
 export type ClassDocument = HydratedDocument<Classroom>;
@@ -28,6 +29,28 @@ export enum ClassMode {
 export enum PricingSnapshotSource {
   MANUAL = 'MANUAL',
   INVOICE = 'INVOICE',
+}
+
+export enum ClassUpdateRequestStatus {
+  PENDING = 'PENDING',
+  REJECTED = 'REJECTED',
+}
+
+export enum PendingClassUpdateType {
+  GENERAL = 'GENERAL',
+  DURATION_CHANGE = 'DURATION_CHANGE',
+}
+
+export enum DurationSnapshotSource {
+  INITIAL = 'INITIAL',
+  MANAGER_DIRECT = 'MANAGER_DIRECT',
+  APPROVED_SALE_UPDATE = 'APPROVED_SALE_UPDATE',
+  APPROVED_DURATION_CHANGE = 'APPROVED_DURATION_CHANGE',
+}
+
+export enum StudentConfigSlotType {
+  INITIAL = 'INITIAL',
+  UPDATE = 'UPDATE',
 }
 
 // Sub-schema for class schedule (tham khảo — GV & PH tự thỏa thuận)
@@ -163,6 +186,130 @@ export class SubstituteTeacher {
 
 export const SubstituteTeacherSchema = SchemaFactory.createForClass(SubstituteTeacher);
 
+@Schema({ _id: false })
+export class DurationSnapshot {
+  @Prop({ type: String, enum: DurationSnapshotSource, required: true })
+  source!: DurationSnapshotSource;
+
+  @Prop({ type: String, enum: PendingClassUpdateType, default: PendingClassUpdateType.GENERAL })
+  requestType!: PendingClassUpdateType;
+
+  @Prop({ type: Date, required: true })
+  effectiveAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  effectiveBy?: Types.ObjectId;
+
+  @Prop({ type: Number, min: 15, required: true })
+  baseDuration!: number;
+
+  @Prop({ type: Number, min: 15, required: true })
+  sessionDuration!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  pricePerSession!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerSession!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerStudent!: number;
+}
+
+export const DurationSnapshotSchema = SchemaFactory.createForClass(DurationSnapshot);
+
+@Schema({ _id: false })
+export class StudentTeacherSlot {
+  @Prop({ type: Number, min: 1, max: 3, required: true })
+  slotIndex!: number;
+
+  @Prop({ type: String, enum: StudentConfigSlotType, default: StudentConfigSlotType.INITIAL })
+  slotType!: StudentConfigSlotType;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
+  teacherId!: Types.ObjectId;
+
+  @Prop({ type: Date, required: true })
+  assignedAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  assignedBy?: Types.ObjectId;
+}
+
+export const StudentTeacherSlotSchema = SchemaFactory.createForClass(StudentTeacherSlot);
+
+@Schema({ _id: false })
+export class StudentDurationSlot {
+  @Prop({ type: Number, min: 1, max: 3, required: true })
+  slotIndex!: number;
+
+  @Prop({ type: String, enum: StudentConfigSlotType, default: StudentConfigSlotType.INITIAL })
+  slotType!: StudentConfigSlotType;
+
+  @Prop({ type: Date, required: true })
+  effectiveAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  effectiveBy?: Types.ObjectId;
+
+  @Prop({ type: Number, min: 15, required: true })
+  baseDuration!: number;
+
+  @Prop({ type: Number, min: 15, required: true })
+  sessionDuration!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalSessions!: number;
+}
+
+export const StudentDurationSlotSchema = SchemaFactory.createForClass(StudentDurationSlot);
+
+@Schema({ _id: false })
+export class StudentClassConfig {
+  @Prop({ type: SchemaTypes.ObjectId, ref: Student.name, required: true })
+  studentId!: Types.ObjectId;
+
+  @Prop({ type: [StudentTeacherSlotSchema], default: [] })
+  teacherSlots!: StudentTeacherSlot[];
+
+  @Prop({ type: [StudentDurationSlotSchema], default: [] })
+  durationSlots!: StudentDurationSlot[];
+
+  @Prop({ type: Date, default: Date.now })
+  updatedAt!: Date;
+}
+
+export const StudentClassConfigSchema = SchemaFactory.createForClass(StudentClassConfig);
+
+@Schema({ _id: false })
+export class PendingSaleUpdate {
+  @Prop({ type: String, enum: ClassUpdateRequestStatus, default: ClassUpdateRequestStatus.PENDING })
+  status!: ClassUpdateRequestStatus;
+
+  @Prop({ type: String, enum: PendingClassUpdateType, default: PendingClassUpdateType.GENERAL })
+  requestType!: PendingClassUpdateType;
+
+  @Prop({ type: SchemaTypes.Mixed, required: true })
+  requestedChanges!: Record<string, unknown>;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
+  requestedBy!: Types.ObjectId;
+
+  @Prop({ type: Date, required: true })
+  requestedAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  reviewedBy?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  reviewedAt?: Date;
+
+  @Prop({ type: String, trim: true })
+  rejectionReason?: string;
+}
+
+export const PendingSaleUpdateSchema = SchemaFactory.createForClass(PendingSaleUpdate);
+
 @Schema({ timestamps: true })
 export class Classroom {
   @Prop({ required: true, trim: true })
@@ -184,6 +331,9 @@ export class Classroom {
    */
   @Prop({ type: String, enum: ClassMode, default: ClassMode.ONLINE })
   classMode!: ClassMode;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: Product.name, required: false })
+  productPackage?: Types.ObjectId;
 
   /** Hóa đơn đã duyệt liên kết (SALE tạo lớp từ hóa đơn APPROVED) */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice', required: false })
@@ -266,6 +416,15 @@ export class Classroom {
   /** Sĩ số tối đa (null = không giới hạn) */
   @Prop({ type: Number, min: 1 })
   maxStudents?: number;
+
+  @Prop({ type: PendingSaleUpdateSchema, required: false })
+  pendingSaleUpdate?: PendingSaleUpdate;
+
+  @Prop({ type: [DurationSnapshotSchema], default: [] })
+  durationSnapshots!: DurationSnapshot[];
+
+  @Prop({ type: [StudentClassConfigSchema], default: [] })
+  studentConfigs!: StudentClassConfig[];
 }
 
 export const ClassroomSchema = SchemaFactory.createForClass(Classroom);
@@ -276,4 +435,7 @@ ClassroomSchema.index({ sale: 1 });
 ClassroomSchema.index({ status: 1 });
 ClassroomSchema.index({ students: 1, status: 1 });
 ClassroomSchema.index({ students: 1 });
+ClassroomSchema.index({ 'studentConfigs.studentId': 1 });
+ClassroomSchema.index({ 'studentConfigs.teacherSlots.teacherId': 1 });
+ClassroomSchema.index({ 'pendingSaleUpdate.status': 1, sale: 1 });
 

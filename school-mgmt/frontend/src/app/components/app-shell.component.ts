@@ -20,6 +20,8 @@ import { RoutePrefetchService } from '../services/route-prefetch.service';
 import { Role, ROLE_LABELS } from '../models/role.enum';
 
 const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
+const REPORT_GROUP_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.SALE];
+const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE];
 
 @Component({
   selector: 'app-shell',
@@ -44,7 +46,7 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
             <a [routerLink]="getHandbookRoute()" routerLinkActive="active" [attr.title]="getHandbookLabel()">
               <span class="icon">&#128214;</span><span class="label">{{ getHandbookLabel() }}</span>
             </a>
-            <a routerLink="/app/pending-approvals" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Chờ duyệt">
+            <a routerLink="/app/pending-approvals" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Chờ duyệt">
               <span class="icon">&#128203;</span><span class="label">Chờ duyệt</span>
               <span class="nav-badge" *ngIf="pendingCount > 0">{{ pendingCount }}</span>
             </a>
@@ -145,18 +147,21 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
         <div class="menu-group" [class.open]="menuGroups['learning']" *ngIf="hasRole([Role.PARENT])">
           <button class="menu-group-header" (click)="toggleGroup('learning')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128218;</span>
-            <span class="group-label">Học tập</span>
+            <span class="group-label">Học bạ trực tuyến</span>
             <span class="group-arrow">{{ menuGroups['learning'] ? '&#9650;' : '&#9660;' }}</span>
           </button>
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
-            <a routerLink="/app/student-progress" routerLinkActive="active" title="Tiến trình học">
-              <span class="icon">&#128200;</span><span class="label">Tiến trình học</span>
+            <a routerLink="/app/teaching-materials" routerLinkActive="active" title="Chương trình học">
+              <span class="icon">&#128194;</span><span class="label">Chương trình học</span>
+            </a>
+            <a routerLink="/app/student-progress" routerLinkActive="active" title="Báo cáo giảng dạy chi tiết">
+              <span class="icon">&#128200;</span><span class="label">Báo cáo giảng dạy</span>
             </a>
             <a routerLink="/app/parent-attendance" routerLinkActive="active" title="Lịch sử điểm danh">
               <span class="icon">&#9745;</span><span class="label">Điểm danh</span>
             </a>
-            <a routerLink="/app/sessions" routerLinkActive="active" title="Buổi học">
-              <span class="icon">&#128197;</span><span class="label">Buổi học</span>
+            <a routerLink="/app/sessions" routerLinkActive="active" title="Lớp học">
+              <span class="icon">&#128197;</span><span class="label">Lớp học</span>
             </a>
             <a routerLink="/app/parent-calendar" routerLinkActive="active" title="Lịch học">
               <span class="icon">&#128198;</span><span class="label">Lịch học</span>
@@ -164,7 +169,7 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['teaching']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING, Role.SALE])">
+        <div class="menu-group" [class.open]="menuGroups['teaching']" *ngIf="!hasRole([Role.PARENT]) && hasRole(teachingMaterialsAccessRoles)">
           <button class="menu-group-header" (click)="toggleGroup('teaching')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#127891;</span>
             <span class="group-label">Giảng dạy</span>
@@ -177,7 +182,7 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
             <a routerLink="/app/attendance" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Điểm danh">
               <span class="icon">&#9745;</span><span class="label">Điểm danh</span>
             </a>
-            <a routerLink="/app/teaching-materials" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER])" title="Tài liệu giảng dạy">
+            <a routerLink="/app/teaching-materials" routerLinkActive="active" *ngIf="hasRole(teachingMaterialsAccessRoles)" title="Tài liệu giảng dạy">
               <span class="icon">&#128194;</span><span class="label">Tài liệu GD</span>
             </a>
             <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.TEACHER, Role.ACCOUNTING])" title="Báo cáo giảng dạy">
@@ -217,11 +222,11 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
             <a routerLink="/app/invoices" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])" title="Quản lý hóa đơn">
               <span class="icon">&#128196;</span><span class="label">Quản lý hóa đơn</span>
             </a>
-            <a routerLink="/app/parent-invoices" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Hóa đơn của tôi">
-              <span class="icon">&#128196;</span><span class="label">Hóa đơn của tôi</span>
+            <a routerLink="/app/parent-invoices" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Hóa đơn">
+              <span class="icon">&#128196;</span><span class="label">Hóa đơn</span>
             </a>
-            <a routerLink="/app/wallets" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.PARENT])" title="Quản lý ví">
-              <span class="icon">&#128176;</span><span class="label">Quản lý ví</span>
+            <a routerLink="/app/wallets" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.PARENT])" title="Ví và giao dịch">
+              <span class="icon">&#128176;</span><span class="label">Ví & Giao dịch</span>
             </a>
             <a routerLink="/app/payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER])" title="Thanh toán lương giáo viên">
               <span class="icon">&#128181;</span><span class="label">Lương GV (session)</span>
@@ -253,7 +258,7 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['reports']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER])">
+        <div class="menu-group" [class.open]="menuGroups['reports']" *ngIf="hasRole(reportGroupRoles)">
           <button class="menu-group-header" (click)="toggleGroup('reports')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128202;</span>
             <span class="group-label">Báo cáo</span>
@@ -266,7 +271,7 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
             <a routerLink="/app/student-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])" title="Báo cáo học sinh">
               <span class="icon">&#128203;</span><span class="label">BC học sinh</span>
             </a>
-            <a routerLink="/app/comprehensive-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])" title="Báo cáo tổng hợp">
+            <a routerLink="/app/comprehensive-report" routerLinkActive="active" *ngIf="hasRole(reportAccessRoles)" title="Báo cáo tổng hợp">
               <span class="icon">&#128200;</span><span class="label">BC tổng hợp</span>
             </a>
             <a routerLink="/app/export-reports" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Xuất báo cáo">
@@ -278,19 +283,19 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
         <div class="menu-group" [class.open]="menuGroups['system']">
           <button class="menu-group-header" (click)="toggleGroup('system')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#9881;</span>
-            <span class="group-label">Hệ thống</span>
+            <span class="group-label">{{ hasRole([Role.PARENT]) ? 'Hỗ trợ' : 'Hệ thống' }}</span>
             <span class="group-arrow">{{ menuGroups['system'] ? '&#9650;' : '&#9660;' }}</span>
           </button>
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
             <a routerLink="/app/tickets" routerLinkActive="active" title="Hỗ trợ và ticket">
-              <span class="icon">&#127915;</span><span class="label">Hỗ trợ & Ticket</span>
+              <span class="icon">&#127915;</span><span class="label">Ticket & Hỗ trợ</span>
             </a>
             <a
               routerLink="/app/parent-chat"
               routerLinkActive="active"
               *ngIf="hasRole([Role.PARENT])"
-              title="Chat hỗ trợ phụ huynh">
-              <span class="icon">&#128172;</span><span class="label">Chat hỗ trợ</span>
+              title="Chatbot phụ huynh">
+              <span class="icon">&#128172;</span><span class="label">Chatbot</span>
             </a>
             <a
               routerLink="/app/messages"
@@ -435,6 +440,9 @@ const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
 })
 export class AppShellComponent implements OnInit, OnDestroy {
   Role = Role;
+  readonly reportGroupRoles = REPORT_GROUP_ROLES;
+  readonly reportAccessRoles = REPORT_ACCESS_ROLES;
+  readonly teachingMaterialsAccessRoles = Object.values(Role) as Role[];
   sidebarCollapsed = false;
   unreadNotifCount = 0;
   pendingCount = 0;
@@ -505,11 +513,13 @@ export class AppShellComponent implements OnInit, OnDestroy {
       const { count } = await this.notifSvc.getUnreadCount();
       this.unreadNotifCount = count;
     } catch {}
-    if (this.hasRole([Role.DIRECTOR])) {
+    if (this.hasRole([Role.DIRECTOR, Role.OPS])) {
       try {
         const summary = await this.pendingSvc.getSummary();
         this.pendingCount = summary.totalPending || 0;
       } catch {}
+    } else {
+      this.pendingCount = 0;
     }
   }
 
@@ -596,3 +606,4 @@ export class AppShellComponent implements OnInit, OnDestroy {
     this.menuGroups[group] = !this.menuGroups[group];
   }
 }
+

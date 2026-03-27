@@ -4,6 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
+  INVOICE_COURSE_STATUS_LABELS,
+  InvoiceCourseStatus,
   InvoiceItem,
   InvoiceService,
   InvoiceStatus,
@@ -17,10 +19,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 
 interface InvoiceForm {
   invoiceNumber: string;
+  courseStatus: InvoiceCourseStatus;
   studentId: string;
   classType: 'ONLINE' | 'OFFLINE' | '';
   saleId: string;
   sessions: number;
+  bonusSessions: number;
   paymentRound: number;
   amount: number;
   paymentDate: string;
@@ -32,49 +36,49 @@ interface InvoiceForm {
   selector: 'app-invoices',
   standalone: true,
   imports: [CommonModule, FormsModule, FlowGuideComponent],
-  template: `
+    template: `
   <header class="page-header">
     <div>
-      <h2>Quản lý hóa đơn</h2>
-      <p>Theo dõi thanh toán và doanh thu theo loại lớp học.</p>
+      <h2>Qu\u1ea3n l\u00fd h\u00f3a \u0111\u01a1n</h2>
+      <p>Theo d\u00f5i thanh to\u00e1n v\u00e0 doanh thu theo lo\u1ea1i l\u1edbp h\u1ecdc.</p>
     </div>
-    <button class="primary" (click)="openModal()" *ngIf="activeTab === 'invoices'">+ Thêm hóa đơn</button>
+    <button class="primary" (click)="openModal()" *ngIf="activeTab === 'invoices'">+ Th\u00eam h\u00f3a \u0111\u01a1n</button>
   </header>
 
   <app-flow-guide featureKey="invoices"></app-flow-guide>
 
   <!-- Tab bar -->
   <div class="tab-bar">
-    <button [class.active]="activeTab === 'invoices'" (click)="activeTab = 'invoices'">📄 Hóa đơn</button>
+    <button [class.active]="activeTab === 'invoices'" (click)="activeTab = 'invoices'">H\u00f3a \u0111\u01a1n</button>
     <button [class.active]="activeTab === 'topups'" (click)="activeTab = 'topups'; loadPendingTopUps()" *ngIf="canApproveInvoices">
-      💳 Yêu cầu nạp ví <span *ngIf="pendingTopUps().length" class="badge-count">{{pendingTopUps().length}}</span>
+      Y\u00eau c\u1ea7u n\u1ea1p v\u00ed <span *ngIf="pendingTopUps().length" class="badge-count">{{pendingTopUps().length}}</span>
     </button>
   </div>
 
-  <!-- ───── INVOICES TAB ───── -->
+  <!-- INVOICES TAB -->
   <ng-container *ngIf="activeTab === 'invoices'">
 
     <!-- Stats cards -->
     <div class="stats-bar">
       <div class="stat-card">
-        <div class="stat-label">Tổng hóa đơn</div>
+        <div class="stat-label">T\u1ed5ng h\u00f3a \u0111\u01a1n</div>
         <div class="stat-value">{{ summary().total }}</div>
       </div>
       <div class="stat-card blue">
-        <div class="stat-label">🌐 Doanh thu Online</div>
+        <div class="stat-label">Doanh thu Online</div>
         <div class="stat-value">{{ formatCurrency(summary().onlineAmount) }}</div>
       </div>
       <div class="stat-card orange">
-        <div class="stat-label">🏫 Doanh thu Offline</div>
+        <div class="stat-label">Doanh thu Offline</div>
         <div class="stat-value">{{ formatCurrency(summary().offlineAmount) }}</div>
       </div>
       <div class="stat-card green">
-        <div class="stat-label">✅ Đã duyệt</div>
+        <div class="stat-label">\u0110\u00e3 duy\u1ec7t</div>
         <div class="stat-value">{{ formatCurrency(summary().approvedAmount) }}</div>
       </div>
       <div class="stat-card yellow">
-        <div class="stat-label">⏳ Chờ duyệt</div>
-        <div class="stat-value">{{ summary().pendingCount }} hóa đơn</div>
+        <div class="stat-label">Ch\u1edd duy\u1ec7t</div>
+        <div class="stat-value">{{ summary().pendingCount }} h\u00f3a \u0111\u01a1n</div>
       </div>
     </div>
 
@@ -83,77 +87,88 @@ interface InvoiceForm {
       <div class="filter-row">
         <input
           class="filter-input"
-          placeholder="🔍 Tìm số hóa đơn, tên học sinh..."
+          placeholder="T\u00ecm s\u1ed1 h\u00f3a \u0111\u01a1n, t\u00ean h\u1ecdc sinh..."
           [ngModel]="keyword()"
-          (ngModelChange)="keyword.set($event)"
+          (ngModelChange)="onKeywordChange($event)"
         />
         <input
           class="filter-input"
-          placeholder="👨‍👩‍👧 Tìm tên / SĐT phụ huynh..."
+          placeholder="T\u00ecm t\u00ean / S\u0110T ph\u1ee5 huynh..."
           [ngModel]="parentFilter()"
-          (ngModelChange)="parentFilter.set($event)"
+          (ngModelChange)="onParentFilterChange($event)"
         />
         <input
           class="filter-input"
-          placeholder="👤 Tìm tên sale..."
+          placeholder="T\u00ecm t\u00ean sale..."
           [ngModel]="saleFilter()"
-          (ngModelChange)="saleFilter.set($event)"
+          (ngModelChange)="onSaleFilterChange($event)"
         />
       </div>
       <div class="filter-row">
-        <select [ngModel]="classTypeFilter()" (ngModelChange)="classTypeFilter.set($event)">
-          <option value="">Tất cả loại lớp</option>
-          <option value="ONLINE">🌐 Online</option>
-          <option value="OFFLINE">🏫 Offline</option>
+        <select [ngModel]="classTypeFilter()" (ngModelChange)="onClassTypeFilterChange($event)">
+          <option value="">T\u1ea5t c\u1ea3 lo\u1ea1i l\u1edbp</option>
+          <option value="ONLINE">Online</option>
+          <option value="OFFLINE">Offline</option>
         </select>
-        <select [ngModel]="statusFilter()" (ngModelChange)="statusFilter.set($event)">
-          <option value="">Tất cả trạng thái</option>
-          <option value="PENDING_APPROVAL">Chờ duyệt</option>
-          <option value="APPROVED">Đã duyệt</option>
-          <option value="REJECTED">Từ chối</option>
-          <option value="CANCELLED">Đã hủy</option>
+        <select [ngModel]="statusFilter()" (ngModelChange)="onStatusFilterChange($event)">
+          <option value="">T\u1ea5t c\u1ea3 tr\u1ea1ng th\u00e1i</option>
+          <option value="PENDING_APPROVAL">Ch\u1edd duy\u1ec7t</option>
+          <option value="APPROVED">\u0110\u00e3 duy\u1ec7t</option>
+          <option value="REJECTED">T\u1eeb ch\u1ed1i</option>
+          <option value="CANCELLED">\u0110\u00e3 h\u1ee7y</option>
+        </select>
+        <select [ngModel]="courseStatusFilter()" (ngModelChange)="onCourseStatusFilterChange($event)">
+          <option value="">T\u1ea5t c\u1ea3 t\u00ecnh tr\u1ea1ng kh\u00f3a h\u1ecdc</option>
+          <option *ngFor="let option of courseStatusOptions" [value]="option.value">{{ option.label }}</option>
         </select>
         <label class="date-wrap">
-          <span>Từ ngày</span>
-          <input type="date" [ngModel]="dateFrom()" (ngModelChange)="dateFrom.set($event)" />
+          <span>T\u1eeb ng\u00e0y</span>
+          <input type="date" [ngModel]="dateFrom()" (ngModelChange)="onDateFromChange($event)" />
         </label>
         <label class="date-wrap">
-          <span>Đến ngày</span>
-          <input type="date" [ngModel]="dateTo()" (ngModelChange)="dateTo.set($event)" />
+          <span>\u0110\u1ebfn ng\u00e0y</span>
+          <input type="date" [ngModel]="dateTo()" (ngModelChange)="onDateToChange($event)" />
         </label>
-        <button (click)="reload()">🔄 Làm mới</button>
-        <button class="ghost" (click)="clearFilters()" *ngIf="hasActiveFilters()">✕ Xóa lọc</button>
+        <button (click)="reload()">L\u00e0m m\u1edbi</button>
+        <button class="ghost" (click)="clearFilters()" *ngIf="hasActiveFilters()">X\u00f3a l\u1ecdc</button>
       </div>
     </section>
 
     <!-- Result count -->
     <div class="result-meta">
-      Hiển thị <strong>{{ filtered().length }}</strong> / {{ items().length }} hóa đơn
+      Hi\u1ec3n th\u1ecb <strong>{{ visibleInvoices().length }}</strong> / {{ filtered().length }} h\u00f3a \u0111\u01a1n
+      <span class="result-meta-total" *ngIf="items().length !== filtered().length">
+        (t\u1ed5ng {{ items().length }})
+      </span>
     </div>
 
     <!-- Table -->
-    <div class="table-wrap">
+    <p class="lazy-hint" *ngIf="hasMoreInvoices()">Cu\u1ed9n xu\u1ed1ng \u0111\u1ec3 t\u1ea3i th\u00eam h\u00f3a \u0111\u01a1n.</p>
+    <div class="table-wrap invoice-table-wrap" (scroll)="onInvoiceTableScroll($event)">
       <table class="data" *ngIf="filtered().length; else empty">
         <thead>
           <tr>
-            <th>Ngày TT</th>
-            <th>Số hóa đơn</th>
-            <th>Học sinh</th>
-            <th>Phụ huynh</th>
-            <th>Loại lớp</th>
-            <th>Số buổi</th>
-            <th>Lần TT</th>
-            <th>Tổng tiền</th>
-            <th>Sale phụ trách</th>
-            <th>Trạng thái</th>
-            <th>Chứng từ</th>
-            <th>Hành động</th>
+            <th>Ng\u00e0y TT</th>
+            <th>S\u1ed1 h\u00f3a \u0111\u01a1n</th>
+            <th>H\u1ecdc sinh</th>
+            <th>Ph\u1ee5 huynh</th>
+            <th>Lo\u1ea1i l\u1edbp</th>
+            <th>S\u1ed1 bu\u1ed5i</th>
+            <th>L\u1ea7n TT</th>
+            <th>T\u1ed5ng ti\u1ec1n</th>
+            <th>Sale ph\u1ee5 tr\u00e1ch</th>
+            <th>Tr\u1ea1ng th\u00e1i</th>
+            <th>Ch\u1ee9ng t\u1eeb</th>
+            <th>H\u00e0nh \u0111\u1ed9ng</th>
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let invoice of filtered()">
+          <tr *ngFor="let invoice of visibleInvoices()">
             <td>{{ formatDate(invoice.paymentDate) }}</td>
-            <td><strong>{{ invoice.invoiceNumber }}</strong></td>
+            <td>
+              <strong>{{ invoice.invoiceNumber }}</strong>
+              <div class="invoice-substatus">{{ getCourseStatusText(invoice.courseStatus) }}</div>
+            </td>
             <td>
               <div>{{ invoice.studentId.fullName }}</div>
               <small class="muted-text">{{ invoice.studentId.studentCode }}</small>
@@ -163,16 +178,16 @@ interface InvoiceForm {
               <small class="muted-text">{{ invoice.studentId.parentPhone }}</small>
             </td>
             <td>
-              <span *ngIf="invoice.classType === 'ONLINE'" class="chip chip-blue">🌐 Online</span>
-              <span *ngIf="invoice.classType === 'OFFLINE'" class="chip chip-orange">🏫 Offline</span>
-              <span *ngIf="!invoice.classType" class="muted-text">—</span>
+              <span *ngIf="invoice.classType === 'ONLINE'" class="chip chip-blue">Online</span>
+              <span *ngIf="invoice.classType === 'OFFLINE'" class="chip chip-orange">Offline</span>
+              <span *ngIf="!invoice.classType" class="muted-text">-</span>
             </td>
-            <td class="center">{{ invoice.sessions || '—' }}</td>
-            <td class="center">{{ invoice.paymentRound || '—' }}</td>
+            <td class="center">{{ formatRegisteredSessions(invoice) }}</td>
+            <td class="center">{{ invoice.paymentRound || '-' }}</td>
             <td class="right"><strong>{{ formatCurrency(invoice.amount) }}</strong></td>
             <td>
               <span *ngIf="invoice.saleId">{{ invoice.saleId.fullName }}</span>
-              <span *ngIf="!invoice.saleId" class="muted-text">—</span>
+              <span *ngIf="!invoice.saleId" class="muted-text">-</span>
             </td>
             <td>
               <span [ngClass]="['status', getStatusClass(invoice.status)]">
@@ -185,135 +200,148 @@ interface InvoiceForm {
                 <img
                   *ngIf="invoice.receiptImage"
                   [src]="getImageUrl(invoice.receiptImage)"
-                  alt="Chứng từ gốc"
+                  alt="Ch\u1ee9ng t\u1eeb g\u1ed1c"
                   class="receipt-thumb"
-                  title="Chứng từ gốc"
+                  title="Ch\u1ee9ng t\u1eeb g\u1ed1c"
                   (click)="showImageModal(getImageUrl(invoice.receiptImage))"
                 />
-                <span class="proof-label proof-label-approval">HD doi ung</span>
+                <span class="proof-label proof-label-approval">HD \u0111\u1ed1i \u1ee9ng</span>
                 <img
                   *ngIf="invoice.approvalImage"
                   [src]="getImageUrl(invoice.approvalImage)"
-                  alt="Ảnh xác nhận duyệt"
+                  alt="\u1ea2nh x\u00e1c nh\u1eadn duy\u1ec7t"
                   class="receipt-thumb approval-thumb"
-                  title="Ảnh xác nhận duyệt"
+                  title="\u1ea2nh x\u00e1c nh\u1eadn duy\u1ec7t"
                   (click)="showImageModal(getImageUrl(invoice.approvalImage))"
                 />
-                <span *ngIf="!invoice.receiptImage && !invoice.approvalImage" class="muted-text">—</span>
+                <span *ngIf="!invoice.receiptImage && !invoice.approvalImage" class="muted-text">-</span>
               </div>
             </td>
             <td class="actions-cell">
-              <button class="ghost" (click)="edit(invoice)">Sửa</button>
+              <ng-container *ngIf="canEditInvoice(invoice)">
+              <button class="ghost" (click)="edit(invoice)">S\u1eeda</button>
+              </ng-container>
               <button
                 class="ghost success"
                 *ngIf="canApproveInvoices && invoice.status === 'PENDING_APPROVAL'"
                 (click)="openApproveModal(invoice)">
-                Duyệt
+                Duy\u1ec7t
               </button>
               <button
                 class="ghost danger"
                 *ngIf="canApproveInvoices && invoice.status === 'PENDING_APPROVAL'"
                 (click)="reject(invoice)">
-                Từ chối
+                T\u1eeb ch\u1ed1i
               </button>
-              <button class="ghost danger" (click)="remove(invoice)" *ngIf="canDeleteInvoices">Xóa</button>
+              <button class="ghost danger" (click)="remove(invoice)" *ngIf="canDeleteInvoices">X\u00f3a</button>
             </td>
           </tr>
         </tbody>
       </table>
       <ng-template #empty>
-        <p class="empty-msg">Không có hóa đơn nào phù hợp với bộ lọc.</p>
+        <p class="empty-msg">Kh\u00f4ng c\u00f3 h\u00f3a \u0111\u01a1n n\u00e0o ph\u00f9 h\u1ee3p v\u1edbi b\u1ed9 l\u1ecdc.</p>
       </ng-template>
     </div>
   </ng-container>
 
-  <!-- ───── TOPUPS TAB ───── -->
+  <!-- TOPUPS TAB -->
   <ng-container *ngIf="activeTab === 'topups'">
     <div class="topup-header">
-      <h3>Yêu cầu nạp tiền vào ví từ phụ huynh</h3>
-      <button class="ghost" (click)="loadPendingTopUps()">🔄 Làm mới</button>
+      <h3>Y\u00eau c\u1ea7u n\u1ea1p ti\u1ec1n v\u00e0o v\u00ed t\u1eeb ph\u1ee5 huynh</h3>
+      <button class="ghost" (click)="loadPendingTopUps()">L\u00e0m m\u1edbi</button>
     </div>
-    <div *ngIf="loadingTopUps()" class="hint">Đang tải...</div>
+    <div *ngIf="loadingTopUps()" class="hint">\u0110ang t\u1ea3i...</div>
     <table class="data" *ngIf="!loadingTopUps() && pendingTopUps().length; else emptyTopUps">
       <thead>
         <tr>
-          <th>Phụ huynh</th>
-          <th>Số tiền</th>
-          <th>Phương thức</th>
-          <th>Mã GD</th>
-          <th>Chứng từ</th>
-          <th>Thời gian</th>
-          <th>Hành động</th>
+          <th>Ph\u1ee5 huynh</th>
+          <th>S\u1ed1 ti\u1ec1n</th>
+          <th>Ph\u01b0\u01a1ng th\u1ee9c</th>
+          <th>M\u00e3 GD</th>
+          <th>Ch\u1ee9ng t\u1eeb</th>
+          <th>Th\u1eddi gian</th>
+          <th>H\u00e0nh \u0111\u1ed9ng</th>
         </tr>
       </thead>
       <tbody>
         <tr *ngFor="let req of pendingTopUps()">
           <td>
-            <strong>{{req.userId?.fullName || '—'}}</strong><br/>
+            <strong>{{req.userId?.fullName || '-'}}</strong><br/>
             <small>{{req.userId?.phone || req.userId?.email || ''}}</small>
           </td>
           <td class="right"><strong>{{formatCurrency(req.amount)}}</strong></td>
           <td><span class="chip">{{methodLabel(req.paymentMethod)}}</span></td>
-          <td>{{req.transactionRef || '—'}}</td>
+          <td>{{req.transactionRef || '-'}}</td>
           <td>
             <a *ngIf="req.receiptImageUrl" [href]="getImageUrl(req.receiptImageUrl)" target="_blank" rel="noopener">
-              <img [src]="getImageUrl(req.receiptImageUrl)" alt="Chứng từ" class="receipt-thumb" />
+              <img [src]="getImageUrl(req.receiptImageUrl)" alt="Ch\u1ee9ng t\u1eeb" class="receipt-thumb" />
             </a>
-            <span *ngIf="!req.receiptImageUrl" class="muted-text">Không có</span>
+            <span *ngIf="!req.receiptImageUrl" class="muted-text">Kh\u00f4ng c\u00f3</span>
           </td>
           <td>{{req.createdAt | date:'dd/MM/yyyy HH:mm'}}</td>
           <td class="actions-cell">
-            <button class="ghost success" (click)="approveTopUpRequest(req)">✅ Duyệt</button>
-            <button class="ghost danger" (click)="rejectTopUpRequest(req)">❌ Từ chối</button>
+            <button class="ghost success" (click)="approveTopUpRequest(req)">Duy\u1ec7t</button>
+            <button class="ghost danger" (click)="rejectTopUpRequest(req)">T\u1eeb ch\u1ed1i</button>
           </td>
         </tr>
       </tbody>
     </table>
     <ng-template #emptyTopUps>
-      <p *ngIf="!loadingTopUps()" class="empty-msg">Không có yêu cầu nạp tiền nào đang chờ duyệt.</p>
+      <p *ngIf="!loadingTopUps()" class="empty-msg">Kh\u00f4ng c\u00f3 y\u00eau c\u1ea7u n\u1ea1p ti\u1ec1n n\u00e0o \u0111ang ch\u1edd duy\u1ec7t.</p>
     </ng-template>
   </ng-container>
 
-  <!-- ───── INVOICE FORM MODAL ───── -->
+  <!-- INVOICE FORM MODAL -->
   <div class="modal-backdrop" *ngIf="showModal()">
     <div class="modal">
-      <h3>{{ editingInvoice ? 'Sửa hóa đơn' : 'Thêm hóa đơn mới' }}</h3>
+      <h3>{{ editingInvoice ? 'S\u1eeda h\u00f3a \u0111\u01a1n' : 'Th\u00eam h\u00f3a \u0111\u01a1n m\u1edbi' }}</h3>
       <form (ngSubmit)="submit()" #f="ngForm">
 
-        <label>Số hóa đơn <span class="req">*</span>
+        <label>S\u1ed1 h\u00f3a \u0111\u01a1n <span class="req">*</span>
           <input name="invoiceNumber" [(ngModel)]="form.invoiceNumber" required placeholder="VD: HD20240001" />
         </label>
 
-        <label>Học sinh <span class="req">*</span>
+        <label>T\u00ecnh tr\u1ea1ng kh\u00f3a h\u1ecdc
+          <select name="courseStatus" [(ngModel)]="form.courseStatus">
+            <option *ngFor="let option of courseStatusOptions" [ngValue]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+
+        <label>H\u1ecdc sinh <span class="req">*</span>
           <select name="studentId" [(ngModel)]="form.studentId" required (ngModelChange)="onStudentChange()">
-            <option value="">-- Chọn học sinh --</option>
+            <option value="">-- Ch\u1ecdn h\u1ecdc sinh --</option>
             <option *ngFor="let s of students()" [value]="s._id">
               {{ s.fullName }} ({{ s.studentCode }})
             </option>
           </select>
         </label>
 
-        <!-- Auto-loaded parent info -->
         <div class="parent-info-box" *ngIf="selectedStudent">
-          <span class="parent-info-label">Phụ huynh:</span>
+          <span class="parent-info-label">Ph\u1ee5 huynh:</span>
           <strong>{{ selectedStudent.parentName }}</strong>
-          <span class="parent-info-phone"> — {{ selectedStudent.parentPhone }}</span>
+          <span class="parent-info-phone"> - {{ selectedStudent.parentPhone }}</span>
         </div>
 
         <div class="form-row">
-          <label>Loại lớp học <span class="req">*</span>
+          <label>Lo\u1ea1i l\u1edbp h\u1ecdc <span class="req">*</span>
             <select name="classType" [(ngModel)]="form.classType" required>
-              <option value="">-- Chọn loại lớp --</option>
-              <option value="ONLINE">🌐 Online</option>
-              <option value="OFFLINE">🏫 Offline</option>
+              <option value="">-- Ch\u1ecdn lo\u1ea1i l\u1edbp --</option>
+              <option value="ONLINE">Online</option>
+              <option value="OFFLINE">Offline</option>
             </select>
           </label>
-          <label>Số buổi đăng ký
-            <input name="sessions" type="number" min="1" [(ngModel)]="form.sessions" placeholder="VD: 20" />
-          </label>
+          <div class="field-stack">
+            <label>S\u1ed1 bu\u1ed5i \u0111\u0103ng k\u00fd
+              <input name="sessions" type="number" min="1" [(ngModel)]="form.sessions" placeholder="VD: 20" />
+            </label>
+            <label>Bu\u1ed5i t\u1eb7ng
+              <input name="bonusSessions" type="number" min="0" [(ngModel)]="form.bonusSessions" placeholder="VD: 1" />
+            </label>
+          </div>
         </div>
+        <p class="hint">Bu\u1ed5i t\u1eb7ng kh\u00f4ng c\u1ed9ng th\u00eam v\u00e0o v\u00ed. T\u1ed5ng bu\u1ed5i h\u1ecdc th\u1ef1c t\u1ebf = s\u1ed1 bu\u1ed5i \u0111\u0103ng k\u00fd + bu\u1ed5i t\u1eb7ng, v\u00e0 bu\u1ed5i t\u1eb7ng v\u1eabn t\u00ednh l\u01b0\u01a1ng gi\u00e1o vi\u00ean.</p>
 
-        <label>Lần thanh toán (tùy chọn)
+        <label>L\u1ea7n thanh to\u00e1n (t\u00f9y ch\u1ecdn)
           <input
             name="paymentRound"
             type="number"
@@ -323,46 +351,45 @@ interface InvoiceForm {
           />
         </label>
 
-        <label>Tổng tiền (VND) <span class="req">*</span>
+        <label>T\u1ed5ng ti\u1ec1n (VND) <span class="req">*</span>
           <input name="amount" type="number" min="0" [(ngModel)]="form.amount" required placeholder="VD: 3800000" />
         </label>
 
-        <label>Sale phụ trách
-          <div *ngIf="isSale" class="readonly-field">{{ currentUserName }} (bạn)</div>
+        <label>Sale ph\u1ee5 tr\u00e1ch
+          <div *ngIf="isSale" class="readonly-field">{{ currentUserName }} (b\u1ea1n)</div>
           <select *ngIf="!isSale" name="saleId" [(ngModel)]="form.saleId">
-            <option value="">-- Không có / Chọn sale --</option>
+            <option value="">-- Kh\u00f4ng c\u00f3 / Ch\u1ecdn sale --</option>
             <option *ngFor="let s of sales()" [value]="s._id">{{ s.fullName }}</option>
           </select>
         </label>
 
-        <label>Ngày thanh toán <span class="req">*</span>
+        <label>Ng\u00e0y thanh to\u00e1n <span class="req">*</span>
           <input name="paymentDate" type="date" [(ngModel)]="form.paymentDate" required />
         </label>
-        <p class="hint">Hoa don moi se o trang thai cho duyet. Muon duyet va cong vi thi phai co hoa don sale upload va hoa don doi ung cua nguoi duyet.</p>
+        <p class="hint">H\u00f3a \u0111\u01a1n m\u1edbi s\u1ebd \u1edf tr\u1ea1ng th\u00e1i ch\u1edd duy\u1ec7t. Mu\u1ed1n duy\u1ec7t v\u00e0 c\u1ed9ng v\u00ed th\u00ec ph\u1ea3i c\u00f3 h\u00f3a \u0111\u01a1n sale upload v\u00e0 h\u00f3a \u0111\u01a1n \u0111\u1ed1i \u1ee9ng c\u1ee7a ng\u01b0\u1eddi duy\u1ec7t.</p>
+        <p class="hint">Sau khi duy\u1ec7t, v\u00ed ph\u1ee5 huynh s\u1ebd \u0111\u01b0\u1ee3c c\u1ed9ng ti\u1ec1n.</p>
 
-        <p class="hint">Hóa đơn mới sẽ ở trạng thái chờ duyệt. Sau khi duyệt, ví phụ huynh sẽ được cộng tiền.</p>
-
-        <label>Mô tả
+        <label>M\u00f4 t\u1ea3
           <textarea
             name="description"
             [(ngModel)]="form.description"
             rows="2"
-            placeholder="Mô tả hóa đơn (tùy chọn)"></textarea>
+            placeholder="M\u00f4 t\u1ea3 h\u00f3a \u0111\u01a1n (t\u00f9y ch\u1ecdn)"></textarea>
         </label>
 
-        <label>Ảnh chứng từ (tùy chọn)
+        <label>\u1ea2nh ch\u1ee9ng t\u1eeb (t\u00f9y ch\u1ecdn)
           <input name="receiptImage" type="file" accept="image/*" (change)="handleFileChange($event)" />
         </label>
 
         <div class="upload-status">
-          <span *ngIf="uploading()">Đang tải ảnh...</span>
+          <span *ngIf="uploading()">\u0110ang t\u1ea3i \u1ea3nh...</span>
           <span class="error" *ngIf="uploadError()">{{ uploadError() }}</span>
           <img *ngIf="form.receiptImage && !uploading()" [src]="getImageUrl(form.receiptImage)" alt="Preview" class="preview" />
         </div>
 
         <div class="actions">
-          <button type="submit" class="primary" [disabled]="uploading()">Lưu</button>
-          <button type="button" (click)="closeModal()">Hủy</button>
+          <button type="submit" class="primary" [disabled]="uploading()">L\u01b0u</button>
+          <button type="button" (click)="closeModal()">H\u1ee7y</button>
         </div>
         <p class="error" *ngIf="error()">{{ error() }}</p>
       </form>
@@ -372,37 +399,37 @@ interface InvoiceForm {
   <!-- Approve modal -->
   <div class="modal-backdrop" *ngIf="showApproveModal()">
     <div class="modal approve-modal">
-      <h3>Xác nhận duyệt hóa đơn</h3>
+      <h3>X\u00e1c nh\u1eadn duy\u1ec7t h\u00f3a \u0111\u01a1n</h3>
       <p class="hint" *ngIf="approvingInvoice()">
-        Hóa đơn <strong>{{ approvingInvoice()!.invoiceNumber }}</strong> sẽ cộng
-        <strong>{{ formatCurrency(approvingInvoice()!.amount) }}</strong> vào ví phụ huynh.
+        H\u00f3a \u0111\u01a1n <strong>{{ approvingInvoice()!.invoiceNumber }}</strong> s\u1ebd c\u1ed9ng
+        <strong>{{ formatCurrency(approvingInvoice()!.amount) }}</strong> v\u00e0o v\u00ed ph\u1ee5 huynh.
       </p>
 
-      <label>Ảnh xác nhận duyệt <span class="req">*</span>
+      <label>\u1ea2nh x\u00e1c nh\u1eadn duy\u1ec7t <span class="req">*</span>
         <div class="proof-compare" *ngIf="approvingInvoice()">
           <div class="proof-panel">
-            <span class="proof-label">Hoa don sale upload</span>
+            <span class="proof-label">H\u00f3a \u0111\u01a1n sale upload</span>
             <img
               *ngIf="approvingInvoice()!.receiptImage; else missingSaleInvoice"
               [src]="getImageUrl(approvingInvoice()!.receiptImage!)"
-              alt="Hoa don sale upload"
+              alt="H\u00f3a \u0111\u01a1n sale upload"
               class="preview" />
             <ng-template #missingSaleInvoice>
-              <p class="error">Chua co hoa don sale upload. Khong the duyet cho den khi sale bo sung anh hoa don goc.</p>
+              <p class="error">Ch\u01b0a c\u00f3 h\u00f3a \u0111\u01a1n sale upload. Kh\u00f4ng th\u1ec3 duy\u1ec7t cho \u0111\u1ebfn khi sale b\u1ed5 sung \u1ea3nh h\u00f3a \u0111\u01a1n g\u1ed1c.</p>
             </ng-template>
           </div>
         </div>
-        <span class="hint">Hoa don doi ung do nguoi duyet upload de doi chieu doc lap voi hoa don sale upload.</span>
+        <span class="hint">H\u00f3a \u0111\u01a1n \u0111\u1ed1i \u1ee9ng do ng\u01b0\u1eddi duy\u1ec7t upload \u0111\u1ec3 \u0111\u1ed1i chi\u1ebfu \u0111\u1ed9c l\u1eadp v\u1edbi h\u00f3a \u0111\u01a1n sale upload.</span>
         <input type="file" accept="image/*" (change)="handleApproveImageChange($event)" />
       </label>
 
       <div class="upload-status">
-        <span *ngIf="approveUploading()">Đang tải ảnh xác nhận...</span>
+        <span *ngIf="approveUploading()">\u0110ang t\u1ea3i \u1ea3nh x\u00e1c nh\u1eadn...</span>
         <span class="error" *ngIf="approveUploadError()">{{ approveUploadError() }}</span>
         <img
           *ngIf="approveImage && !approveUploading()"
           [src]="getImageUrl(approveImage)"
-          alt="Ảnh xác nhận"
+          alt="\u1ea2nh x\u00e1c nh\u1eadn"
           class="preview" />
       </div>
 
@@ -412,9 +439,9 @@ interface InvoiceForm {
           class="primary"
           [disabled]="approveUploading() || !approveImage || !approvingInvoice()?.receiptImage"
           (click)="confirmApprove()">
-          Duyệt hóa đơn
+          Duy\u1ec7t h\u00f3a \u0111\u01a1n
         </button>
-        <button type="button" (click)="closeApproveModal()">Hủy</button>
+        <button type="button" (click)="closeApproveModal()">H\u1ee7y</button>
       </div>
     </div>
   </div>
@@ -423,7 +450,7 @@ interface InvoiceForm {
   <div class="modal-backdrop" *ngIf="modalImage()" (click)="closeImageModal()">
     <div class="image-modal">
       <span class="close" (click)="closeImageModal()">&times;</span>
-      <img [src]="modalImage()" alt="Chứng từ" />
+      <img [src]="modalImage()" alt="Ch\u1ee9ng t\u1eeb" />
     </div>
   </div>
   `,
@@ -452,13 +479,23 @@ interface InvoiceForm {
     .date-wrap { display:flex; flex-direction:column; gap:2px; font-size:12px; color:#64748b; }
     .date-wrap input { padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; }
     .result-meta { font-size:13px; color:#64748b; margin-bottom:8px; }
+    .result-meta-total { margin-left:4px; }
+    .invoice-substatus { margin-top:4px; font-size:12px; color:#475569; }
 
     /* Table */
-    .table-wrap { overflow-x:auto; }
+    .lazy-hint { margin:0 0 8px; font-size:12px; color:#64748b; }
+    .table-wrap { overflow:auto; max-height:72vh; border:1px solid #e2e8f0; border-radius:8px; background:#fff; }
     input, select, textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; width:100%; box-sizing:border-box; }
     .data { width:100%; border-collapse:collapse; background:#fff; font-size:13px; white-space:nowrap; }
     th, td { padding:8px 10px; border:1px solid #e2e8f0; vertical-align:middle; }
     thead { background:#f1f5f9; }
+    .data thead th {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #f1f5f9;
+      box-shadow: 0 1px 0 #e2e8f0;
+    }
     .center { text-align:center; }
     .right { text-align:right; }
 
@@ -509,6 +546,7 @@ interface InvoiceForm {
     .modal form { display:flex; flex-direction:column; gap:12px; }
     .modal label { font-size:13px; color:#374151; display:flex; flex-direction:column; gap:4px; }
     .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .field-stack { display:flex; flex-direction:column; gap:12px; }
     .req { color:#ef4444; }
 
     /* Parent info */
@@ -549,6 +587,7 @@ export class InvoicesComponent {
   saleFilter = signal('');
   classTypeFilter = signal('');
   statusFilter = signal('');
+  courseStatusFilter = signal('');
   dateFrom = signal('');
   dateTo = signal('');
 
@@ -571,6 +610,16 @@ export class InvoicesComponent {
   currentUserName = '';
   editingInvoice: InvoiceItem | null = null;
   approvingInvoice = signal<InvoiceItem | null>(null);
+  readonly invoicePageSize = 40;
+  readonly invoicePageStep = 40;
+  readonly invoiceScrollThreshold = 140;
+  readonly courseStatusOptions = Object.entries(INVOICE_COURSE_STATUS_LABELS).map(([value, label]) => ({
+    value: value as InvoiceCourseStatus,
+    label,
+  }));
+  invoiceVisibleCount = signal(this.invoicePageSize);
+  visibleInvoices = computed(() => this.filtered().slice(0, this.invoiceVisibleCount()));
+  hasMoreInvoices = computed(() => this.filtered().length > this.visibleInvoices().length);
 
   pendingTopUps = signal<any[]>([]);
   loadingTopUps = signal(false);
@@ -640,6 +689,11 @@ export class InvoicesComponent {
       result = result.filter(i => i.status === st);
     }
 
+    const courseStatus = this.courseStatusFilter();
+    if (courseStatus) {
+      result = result.filter(i => (i.courseStatus || 'NEW') === courseStatus);
+    }
+
     const from = this.dateFrom();
     if (from) {
       const fromDate = new Date(from);
@@ -677,8 +731,49 @@ export class InvoicesComponent {
   hasActiveFilters = computed(() =>
     !!this.keyword() || !!this.parentFilter() || !!this.saleFilter() ||
     !!this.classTypeFilter() || !!this.statusFilter() ||
+    !!this.courseStatusFilter() ||
     !!this.dateFrom() || !!this.dateTo()
   );
+
+  onKeywordChange(value: string): void {
+    this.keyword.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onParentFilterChange(value: string): void {
+    this.parentFilter.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onSaleFilterChange(value: string): void {
+    this.saleFilter.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onClassTypeFilterChange(value: string): void {
+    this.classTypeFilter.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onStatusFilterChange(value: string): void {
+    this.statusFilter.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onCourseStatusFilterChange(value: string): void {
+    this.courseStatusFilter.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onDateFromChange(value: string): void {
+    this.dateFrom.set(value);
+    this.resetInvoicePaging();
+  }
+
+  onDateToChange(value: string): void {
+    this.dateTo.set(value);
+    this.resetInvoicePaging();
+  }
 
   clearFilters(): void {
     this.keyword.set('');
@@ -686,13 +781,16 @@ export class InvoicesComponent {
     this.saleFilter.set('');
     this.classTypeFilter.set('');
     this.statusFilter.set('');
+    this.courseStatusFilter.set('');
     this.dateFrom.set('');
     this.dateTo.set('');
+    this.resetInvoicePaging();
   }
 
   async reload(): Promise<void> {
     const data = await this.invoiceService.list();
     this.items.set(data);
+    this.resetInvoicePaging();
   }
 
   async loadLookups(): Promise<void> {
@@ -722,13 +820,18 @@ export class InvoicesComponent {
   }
 
   edit(invoice: InvoiceItem): void {
+    if (!this.canEditInvoice(invoice)) {
+      return;
+    }
     this.editingInvoice = invoice;
     this.form = {
       invoiceNumber: invoice.invoiceNumber,
+      courseStatus: invoice.courseStatus || 'NEW',
       studentId: invoice.studentId._id,
       classType: (invoice.classType as 'ONLINE' | 'OFFLINE') || '',
       saleId: invoice.saleId?._id || '',
       sessions: invoice.sessions || 0,
+      bonusSessions: invoice.bonusSessions || 0,
       paymentRound: invoice.paymentRound || 0,
       amount: invoice.amount,
       paymentDate: invoice.paymentDate.split('T')[0],
@@ -745,14 +848,31 @@ export class InvoicesComponent {
     this.showModal.set(false);
   }
 
+  onInvoiceTableScroll(event: Event): void {
+    const container = event.currentTarget as HTMLElement | null;
+    if (!container || !this.hasMoreInvoices()) return;
+
+    const nearBottom =
+      container.scrollTop + container.clientHeight >= container.scrollHeight - this.invoiceScrollThreshold;
+    if (nearBottom) {
+      this.loadNextInvoiceBatch();
+    }
+  }
+
   async submit(): Promise<void> {
+    if (this.editingInvoice && !this.canEditInvoice(this.editingInvoice)) {
+      this.error.set('H\u00f3a \u0111\u01a1n \u0111\u00e3 duy\u1ec7t ho\u1eb7c kh\u00f4ng c\u00f2n thu\u1ed9c quy\u1ec1n s\u1eeda c\u1ee7a b\u1ea1n');
+      return;
+    }
+
     if (!this.form.classType) {
-      this.error.set('Vui lòng chọn loại lớp học (Online hoặc Offline)');
+      this.error.set('Vui l\u00f2ng ch\u1ecdn lo\u1ea1i l\u1edbp h\u1ecdc (Online ho\u1eb7c Offline)');
       return;
     }
 
     const payload: InvoiceUpsertPayload = {
       invoiceNumber: this.form.invoiceNumber.trim(),
+      courseStatus: this.form.courseStatus,
       studentId: this.form.studentId,
       classType: this.form.classType,
       amount: Number(this.form.amount),
@@ -760,6 +880,7 @@ export class InvoicesComponent {
     };
 
     if (this.form.sessions > 0) payload.sessions = Number(this.form.sessions);
+    if (this.form.bonusSessions > 0) payload.bonusSessions = Number(this.form.bonusSessions);
     if (this.form.paymentRound > 0) payload.paymentRound = Number(this.form.paymentRound);
     if (this.form.saleId) payload.saleId = this.form.saleId;
     if (this.form.receiptImage) payload.receiptImage = this.form.receiptImage.trim();
@@ -770,7 +891,7 @@ export class InvoicesComponent {
       : await this.invoiceService.create(payload);
 
     if (!result.ok) {
-      this.error.set(result.message || (this.editingInvoice ? 'Không thể cập nhật hóa đơn' : 'Không thể tạo hóa đơn'));
+      this.error.set(result.message || (this.editingInvoice ? 'Kh\u00f4ng th\u1ec3 c\u1eadp nh\u1eadt h\u00f3a \u0111\u01a1n' : 'Kh\u00f4ng th\u1ec3 t\u1ea1o h\u00f3a \u0111\u01a1n'));
       return;
     }
 
@@ -778,7 +899,7 @@ export class InvoicesComponent {
     await this.reload();
   }
 
-    openApproveModal(invoice: InvoiceItem): void {
+  openApproveModal(invoice: InvoiceItem): void {
     this.approvingInvoice.set(invoice);
     this.approveImage = '';
     this.approveUploadError.set('');
@@ -806,7 +927,7 @@ export class InvoicesComponent {
     this.approveUploading.set(false);
 
     if (!result.ok || !result.url) {
-      this.approveUploadError.set(result.message || 'Tai hoa don doi ung that bai');
+      this.approveUploadError.set(result.message || 'T\u1ea3i h\u00f3a \u0111\u01a1n \u0111\u1ed1i \u1ee9ng th\u1ea5t b\u1ea1i');
       return;
     }
 
@@ -816,46 +937,48 @@ export class InvoicesComponent {
   async confirmApprove(): Promise<void> {
     const invoice = this.approvingInvoice();
     if (!invoice) return;
+    this.approveUploadError.set('');
 
     if (!invoice.receiptImage) {
-      this.approveUploadError.set('Vui long bo sung hoa don sale upload truoc khi duyet');
+      this.approveUploadError.set('Vui l\u00f2ng b\u1ed5 sung h\u00f3a \u0111\u01a1n sale upload tr\u01b0\u1edbc khi duy\u1ec7t');
       return;
     }
 
     if (!this.approveImage) {
-      this.approveUploadError.set('Vui long tai hoa don doi ung truoc khi duyet');
+      this.approveUploadError.set('Vui l\u00f2ng t\u1ea3i h\u00f3a \u0111\u01a1n \u0111\u1ed1i \u1ee9ng tr\u01b0\u1edbc khi duy\u1ec7t');
       return;
     }
 
-    if (!confirm(`Duyet hoa don ${invoice.invoiceNumber}? Vi phu huynh chi duoc cong sau khi doi chieu du hoa don sale va hoa don doi ung.`)) return;
+    if (!confirm(`Duy\u1ec7t h\u00f3a \u0111\u01a1n ${invoice.invoiceNumber}? V\u00ed ph\u1ee5 huynh ch\u1ec9 \u0111\u01b0\u1ee3c c\u1ed9ng sau khi \u0111\u1ed1i chi\u1ebfu \u0111\u1ee7 h\u00f3a \u0111\u01a1n sale v\u00e0 h\u00f3a \u0111\u01a1n \u0111\u1ed1i \u1ee9ng.`)) return;
 
     const result = await this.invoiceService.approve(invoice._id, 'APPROVE', undefined, this.approveImage);
     if (!result.ok) {
-      this.approveUploadError.set(result.message || 'Khong the duyet hoa don');
+      this.approveUploadError.set(result.message || 'Kh\u00f4ng th\u1ec3 duy\u1ec7t h\u00f3a \u0111\u01a1n');
       return;
     }
 
     this.closeApproveModal();
     await this.reload();
   }
+
   async reject(invoice: InvoiceItem): Promise<void> {
-    const reason = prompt(`Lý do từ chối hóa đơn ${invoice.invoiceNumber}:`, '');
+    const reason = prompt(`L\u00fd do t\u1eeb ch\u1ed1i h\u00f3a \u0111\u01a1n ${invoice.invoiceNumber}:`, '');
     if (reason === null) return;
 
     const result = await this.invoiceService.approve(invoice._id, 'REJECT', reason.trim() || undefined);
     if (!result.ok) {
-      alert(result.message || 'Không thể từ chối hóa đơn');
+      alert(result.message || 'Kh\u00f4ng th\u1ec3 t\u1eeb ch\u1ed1i h\u00f3a \u0111\u01a1n');
       return;
     }
     await this.reload();
   }
 
   async remove(invoice: InvoiceItem): Promise<void> {
-    if (!confirm(`Xóa hóa đơn ${invoice.invoiceNumber}?`)) return;
+    if (!confirm(`X\u00f3a h\u00f3a \u0111\u01a1n ${invoice.invoiceNumber}?`)) return;
 
     const result = await this.invoiceService.remove(invoice._id);
     if (!result.ok) {
-      alert(result.message || 'Không thể xóa hóa đơn');
+      alert(result.message || 'Kh\u00f4ng th\u1ec3 x\u00f3a h\u00f3a \u0111\u01a1n');
       return;
     }
     await this.reload();
@@ -873,7 +996,7 @@ export class InvoicesComponent {
     this.uploading.set(false);
 
     if (!result.ok || !result.url) {
-      this.uploadError.set(result.message || 'Tải ảnh thất bại');
+      this.uploadError.set(result.message || 'T\u1ea3i \u1ea3nh th\u1ea5t b\u1ea1i');
       return;
     }
     this.form.receiptImage = result.url;
@@ -884,20 +1007,46 @@ export class InvoicesComponent {
   }
 
   formatDate(dateStr: string): string {
-    if (!dateStr) return '—';
+    if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString('vi-VN');
+  }
+
+  formatRegisteredSessions(invoice: InvoiceItem): string {
+    const sessions = Number(invoice.sessions || 0);
+    const bonusSessions = Number(invoice.bonusSessions || 0);
+    if (sessions <= 0 && bonusSessions <= 0) {
+      return '-';
+    }
+    if (bonusSessions <= 0) {
+      return String(sessions);
+    }
+    return `${sessions} + ${bonusSessions}`;
+  }
+
+  loadNextInvoiceBatch(): void {
+    if (!this.hasMoreInvoices()) return;
+    this.invoiceVisibleCount.update((count) => count + this.invoicePageStep);
+  }
+
+  private resetInvoicePaging(): void {
+    this.invoiceVisibleCount.set(this.invoicePageSize);
   }
 
   getStatusText(status: InvoiceStatus | string): string {
     const map: Record<string, string> = {
-      PENDING_APPROVAL: 'Chờ duyệt',
-      APPROVED: 'Đã duyệt',
-      REJECTED: 'Từ chối',
-      CANCELLED: 'Đã hủy',
-      PAID: 'Đã thanh toán',
-      PENDING: 'Chờ thanh toán',
+      PENDING_APPROVAL: 'Ch\u1edd duy\u1ec7t',
+      APPROVED: '\u0110\u00e3 duy\u1ec7t',
+      REJECTED: 'T\u1eeb ch\u1ed1i',
+      CANCELLED: '\u0110\u00e3 h\u1ee7y',
+      PAID: '\u0110\u00e3 thanh to\u00e1n',
+      PENDING: 'Ch\u1edd thanh to\u00e1n',
     };
     return map[status] || status;
+  }
+
+  getCourseStatusText(status?: InvoiceCourseStatus | string): string {
+    if (!status) return INVOICE_COURSE_STATUS_LABELS.NEW;
+    return INVOICE_COURSE_STATUS_LABELS[status as InvoiceCourseStatus] || String(status);
   }
 
   getStatusClass(status: InvoiceStatus | string): string {
@@ -910,6 +1059,15 @@ export class InvoicesComponent {
       PENDING: 'pending-approval',
     };
     return map[status] || 'pending-approval';
+  }
+
+  canEditInvoice(invoice: InvoiceItem): boolean {
+    const role = this.auth.userSignal()?.role;
+    if (role === 'SALE') {
+      return invoice.createdBy?._id === this.currentUserId
+        && invoice.status === 'PENDING_APPROVAL';
+    }
+    return role === 'DIRECTOR' || role === 'ACCOUNTING';
   }
 
   getImageUrl(imagePath: string): string {
@@ -928,10 +1086,12 @@ export class InvoicesComponent {
   private blankForm(): InvoiceForm {
     return {
       invoiceNumber: '',
+      courseStatus: 'NEW',
       studentId: '',
       classType: '',
       saleId: '',
       sessions: 0,
+      bonusSessions: 0,
       paymentRound: 0,
       amount: 0,
       paymentDate: new Date().toISOString().split('T')[0],
@@ -940,7 +1100,7 @@ export class InvoicesComponent {
     };
   }
 
-  // ── Pending top-up management ──
+  // Pending top-up management
 
   async loadPendingTopUps(): Promise<void> {
     this.loadingTopUps.set(true);
@@ -959,13 +1119,13 @@ export class InvoicesComponent {
   async approveTopUpRequest(req: any): Promise<void> {
     const isBankTransfer = req.paymentMethod === 'BANK_TRANSFER';
     if (isBankTransfer && !req.receiptImageUrl) {
-      alert('Yêu cầu chuyển khoản thiếu ảnh biên lai, không thể duyệt.');
+      alert('Y\u00eau c\u1ea7u chuy\u1ec3n kho\u1ea3n thi\u1ebfu \u1ea3nh bi\u00ean lai, kh\u00f4ng th\u1ec3 duy\u1ec7t.');
       return;
     }
 
     let notes = '';
     if (isBankTransfer) {
-      const input = prompt('Mã sao kê / ghi chú xác nhận (tuỳ chọn):');
+      const input = prompt('M\u00e3 sao k\u00ea / ghi ch\u00fa x\u00e1c nh\u1eadn (t\u00f9y ch\u1ecdn):');
       if (input === null) return;
       notes = input;
     }
@@ -982,38 +1142,38 @@ export class InvoicesComponent {
           { withCredentials: true },
         ),
       );
-      alert(`Đã duyệt yêu cầu nạp ${this.formatCurrency(req.amount)} cho ${req.userId?.fullName || ''}. Ví phụ huynh đã được cộng tiền.`);
+      alert(`\u0110\u00e3 duy\u1ec7t y\u00eau c\u1ea7u n\u1ea1p ${this.formatCurrency(req.amount)} cho ${req.userId?.fullName || ''}. V\u00ed ph\u1ee5 huynh \u0111\u00e3 \u0111\u01b0\u1ee3c c\u1ed9ng ti\u1ec1n.`);
       await this.loadPendingTopUps();
     } catch (err: any) {
-      alert(err?.error?.message || 'Duyệt thất bại');
+      alert(err?.error?.message || 'Duy\u1ec7t th\u1ea5t b\u1ea1i');
     }
   }
 
   async rejectTopUpRequest(req: any): Promise<void> {
-    const reason = prompt(`Lý do từ chối yêu cầu nạp tiền của ${req.userId?.fullName || ''}:`);
+    const reason = prompt(`L\u00fd do t\u1eeb ch\u1ed1i y\u00eau c\u1ea7u n\u1ea1p ti\u1ec1n c\u1ee7a ${req.userId?.fullName || ''}:`);
     if (reason === null) return;
 
     try {
       await firstValueFrom(
         this.http.post(
           `${environment.apiBase}/wallets/top-up/${req._id}/reject`,
-          { reason: reason.trim() || 'Không duyệt' },
+          { reason: reason.trim() || 'Kh\u00f4ng duy\u1ec7t' },
           { withCredentials: true },
         ),
       );
-      alert('Đã từ chối yêu cầu nạp tiền.');
+      alert('\u0110\u00e3 t\u1eeb ch\u1ed1i y\u00eau c\u1ea7u n\u1ea1p ti\u1ec1n.');
       await this.loadPendingTopUps();
     } catch (err: any) {
-      alert(err?.error?.message || 'Từ chối thất bại');
+      alert(err?.error?.message || 'T\u1eeb ch\u1ed1i th\u1ea5t b\u1ea1i');
     }
   }
 
   methodLabel(method: string): string {
     const map: Record<string, string> = {
-      BANK_TRANSFER: 'Chuyển khoản',
-      CASH: 'Tiền mặt',
+      BANK_TRANSFER: 'Chuy\u1ec3n kho\u1ea3n',
+      CASH: 'Ti\u1ec1n m\u1eb7t',
       MOMO: 'MoMo',
-      SYSTEM: 'Hệ thống',
+      SYSTEM: 'H\u1ec7 th\u1ed1ng',
     };
     return map[method] || method;
   }

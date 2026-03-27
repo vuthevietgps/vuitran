@@ -693,6 +693,78 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
     expect(emptyWalletAfter.balance).toBe(0);
   });
 
+  it('treats remaining bonus sessions as complimentary attendance without wallet deduction', async () => {
+    await invoiceModel.updateOne(
+      { _id: new Types.ObjectId(invoiceId) },
+      {
+        $set: {
+          sessionsRemaining: 0,
+          bonusSessions: 1,
+          bonusSessionsRemaining: 1,
+        },
+      },
+    );
+
+    await walletModel.updateOne(
+      { userId: new Types.ObjectId(parentId) },
+      { $set: { balance: 1_234_567 } },
+    );
+
+    const bonusSession = await sessionModel.create({
+      classId: new Types.ObjectId(classId),
+      studentId: new Types.ObjectId(studentId),
+      teacherId: new Types.ObjectId(teacherId),
+      parentUserId: new Types.ObjectId(parentId),
+      sessionType: 'REGULAR',
+      scheduledDate: utcDaysAgo(1),
+      durationMinutes: 60,
+      amountCharged: 200_000,
+      referenceAmountCharged: 200_000,
+      teacherPayout: 100_000,
+      status: 'TEACHER_COMPLETED',
+      confirmation: { teacherCompletedAt: utcDaysAgo(1) },
+      autoConfirmAfterHours: 48,
+      createdBy: new Types.ObjectId(teacherId),
+    });
+    const bonusSessionId = String(bonusSession._id);
+
+    const finalizeRes = await authWrite(
+      request(app.getHttpServer()).post(`/sessions/${bonusSessionId}/finalize`),
+      opsSession,
+    ).send();
+
+    expect(finalizeRes.status).toBe(201);
+
+    const storedSession = await sessionModel.findById(bonusSessionId).lean() as any;
+    expect(storedSession.status).toBe('FINALIZED');
+    expect(storedSession.isPaid).toBe(false);
+    expect(storedSession.isBonusSession).toBe(true);
+    expect(storedSession.amountCharged).toBe(0);
+    expect(storedSession.referenceAmountCharged).toBe(200_000);
+    expect(storedSession.teacherPayout).toBe(100_000);
+    expect(storedSession.invoiceConsumptionApplied).toBe(true);
+    expect(storedSession.consumedBonusUnits).toBe(1);
+    expect(storedSession.consumedBonusAmount).toBe(200_000);
+    expect(storedSession.bonusInvoiceId?.toString()).toBe(invoiceId);
+
+    const walletAfter = await walletModel
+      .findOne({ userId: new Types.ObjectId(parentId) })
+      .lean() as any;
+    expect(walletAfter.balance).toBe(1_234_567);
+
+    const deductEntry = await ledgerModel
+      .findOne({
+        sessionId: new Types.ObjectId(bonusSessionId),
+        type: 'SESSION_DEDUCT',
+      })
+      .lean();
+    expect(deductEntry).toBeNull();
+
+    const invoiceAfter = await invoiceModel.findById(invoiceId).lean() as any;
+    expect(invoiceAfter.sessionsRemaining).toBe(0);
+    expect(invoiceAfter.bonusSessionsRemaining).toBe(0);
+  });
+
   // ─────────────────────────────────────────────────────────────────────────
   // EDGE CASE 3: Khóa báo cáo — không cho sửa khi lương đã APPROVED
   // ─────────────────────────────────────────────────────────────────────────

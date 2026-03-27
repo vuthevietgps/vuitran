@@ -22,6 +22,7 @@
     "test:financial-control-payroll": "ts-node scripts/test-financial-control-payroll.ts",
     "test:financial-control-payroll-recalculation": "ts-node scripts/test-financial-control-payroll-recalculation.ts",
     "test:attendance-payroll-financial-control": "ts-node scripts/test-attendance-payroll-financial-control.ts",
+    "sync:purchased-sessions": "ts-node scripts/sync-purchased-sessions.ts",
     "test:loans-activate": "ts-node scripts/test-loans-activate-status.ts",
     "test:loans-payment": "ts-node scripts/test-loans-payment-partial.ts",
     "test:class-attendance-pricing-workflow": "node scripts/test-class-attendance-pricing-workflow.js",

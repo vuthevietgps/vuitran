@@ -12,6 +12,8 @@ export interface SessionItem {
   scheduledDate: string;
   scheduledStartTime: string;
   scheduledEndTime: string;
+  attendedAt?: string | null;
+  attendanceStatus?: string | null;
   durationMinutes?: number;
   amountCharged: number;
   teacherPayout: number;
@@ -67,6 +69,17 @@ export interface SessionStats {
   byStatus: Record<string, { count: number; totalCharged: number; totalPayout: number }>;
 }
 
+export interface SessionParentConfirmPayload {
+  rating?: number;
+  parentNotes?: string;
+  parentRating?: number;
+  overallRating?: number;
+  teachingQualityRating?: number;
+  communicationRating?: number;
+  concerns?: string;
+  isSatisfied?: boolean;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SessionService {
   private http = inject(HttpClient);
@@ -120,10 +133,20 @@ export class SessionService {
     }
   }
 
-  async parentConfirm(id: string, payload: any): Promise<boolean> {
+  async parentConfirm(id: string, payload: SessionParentConfirmPayload): Promise<boolean> {
+    const normalizedPayload: SessionParentConfirmPayload = { ...payload };
+    if (normalizedPayload.rating !== undefined) {
+      if (normalizedPayload.parentRating === undefined) {
+        normalizedPayload.parentRating = normalizedPayload.rating;
+      }
+      if (normalizedPayload.overallRating === undefined) {
+        normalizedPayload.overallRating = normalizedPayload.rating;
+      }
+      delete normalizedPayload.rating;
+    }
     try {
       await firstValueFrom(
-        this.http.post(`${environment.apiBase}/sessions/${id}/confirm`, payload, {
+        this.http.post(`${environment.apiBase}/sessions/${id}/confirm`, normalizedPayload, {
           withCredentials: true,
         }),
       );

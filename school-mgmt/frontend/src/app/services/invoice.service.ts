@@ -11,6 +11,23 @@ export type InvoiceStatus =
   | 'PAID'
   | 'PENDING';
 
+export type InvoiceCourseStatus =
+  | 'NEW'
+  | 'CONTINUE_1'
+  | 'CONTINUE_2'
+  | 'CONTINUE_3'
+  | 'CONTINUE_4'
+  | 'CONTINUE_5';
+
+export const INVOICE_COURSE_STATUS_LABELS: Record<InvoiceCourseStatus, string> = {
+  NEW: 'Kh\u00f3a m\u1edbi',
+  CONTINUE_1: 'Kh\u00f3a ti\u1ebfp l\u1ea7n 1',
+  CONTINUE_2: 'Kh\u00f3a ti\u1ebfp l\u1ea7n 2',
+  CONTINUE_3: 'Kh\u00f3a ti\u1ebfp l\u1ea7n 3',
+  CONTINUE_4: 'Kh\u00f3a ti\u1ebfp l\u1ea7n 4',
+  CONTINUE_5: 'Kh\u00f3a ti\u1ebfp l\u1ea7n 5',
+};
+
 export interface InvoiceItem {
   _id: string;
   invoiceNumber: string;
@@ -28,12 +45,22 @@ export interface InvoiceItem {
     email: string;
   };
   sessions?: number;
+  bonusSessions?: number;
+  bonusSessionsRemaining?: number;
   paymentRound?: number;
+  courseStatus?: InvoiceCourseStatus;
   amount: number;
+  pricePerSession?: number;
+  referenceDuration?: number;
   paymentDate: string;
   receiptImage?: string;
   approvalImage?: string;
   description?: string;
+  classId?: {
+    _id: string;
+    name: string;
+    code: string;
+  } | string | null;
   status: InvoiceStatus;
   createdBy: {
     _id: string;
@@ -50,7 +77,9 @@ export interface InvoiceUpsertPayload {
   classType?: 'ONLINE' | 'OFFLINE';
   saleId?: string;
   sessions?: number;
+  bonusSessions?: number;
   paymentRound?: number;
+  courseStatus?: InvoiceCourseStatus;
   amount: number;
   paymentDate: string;
   receiptImage?: string;
@@ -166,8 +195,26 @@ export class InvoiceService {
   }
 
   private fail(error: any, fallback = 'Khong the thuc hien thao tac'): InvoiceMutationResult {
-    const rawMessage = error?.error?.message;
-    const message = Array.isArray(rawMessage) ? rawMessage.join(', ') : rawMessage || fallback;
+    const message = this.normalizeMessage(error?.error?.message)
+      || this.normalizeMessage(error?.message)
+      || fallback;
     return { ok: false, message };
+  }
+
+  private normalizeMessage(value: any): string | undefined {
+    if (!value) return undefined;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((item) => this.normalizeMessage(item))
+        .filter((item): item is string => !!item);
+      return normalized.length ? normalized.join(', ') : undefined;
+    }
+    if (typeof value === 'object') {
+      return this.normalizeMessage(value.message)
+        || this.normalizeMessage(value.error)
+        || undefined;
+    }
+    return String(value);
   }
 }

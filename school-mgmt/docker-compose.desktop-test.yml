@@ -1,0 +1,69 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["mongod", "--bind_ip_all", "--replSet", "rs0"]
+    volumes:
+      - test_mongo_data:/data/db
+
+  mongo-init:
+    image: mongo:7
+    restart: "no"
+    depends_on:
+      mongo:
+        condition: service_started
+    volumes:
+      - ./docker/mongo-init-replica.sh:/scripts/mongo-init-replica.sh:ro
+    entrypoint: ["sh", "/scripts/mongo-init-replica.sh"]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${TEST_REDIS_PORT:-6380}:6379"
+    volumes:
+      - test_redis_data:/data
+    command: redis-server --appendonly yes
+
+  backend:
+    image: ${BACKEND_TEST_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      MONGODB_URI: mongodb://mongo:27017/school-mgmt?replicaSet=rs0
+      CORS_ORIGIN: http://localhost:${TEST_FRONTEND_PORT:-4301}
+      FRONTEND_URL: http://localhost:${TEST_FRONTEND_PORT:-4301}
+      JWT_SECRET: ${JWT_SECRET:-replace_with_strong_jwt_secret_for_local}
+      JWT_EXPIRES: ${JWT_EXPIRES:-7d}
+      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMe123!}
+      ADMIN_FULLNAME: ${ADMIN_FULLNAME:-Director Admin}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Demo123456!}
+      DEMO_SYNC_EXISTING: ${DEMO_SYNC_EXISTING:-true}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    ports:
+      - "${TEST_BACKEND_PORT:-4300}:3000"
+    volumes:
+      - test_backend_uploads:/app/uploads
+
+  frontend:
+    image: ${FRONTEND_TEST_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${TEST_FRONTEND_PORT:-4301}:80"
+
+volumes:
+  test_backend_uploads:
+  test_redis_data:
+  test_mongo_data:

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DashboardService } from './dashboard.service';
 import { DashboardController } from './dashboard.controller';
+import { AdsModule } from '../ads/ads.module';
 
 import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { Wallet, WalletSchema } from '../wallets/schemas/wallet.schema';
@@ -17,9 +18,11 @@ import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.s
 import { Expense, ExpenseSchema } from '../expenses/schemas/expense.schema';
 import { Order, OrderSchema } from '../orders/schemas/order.schema';
 import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
+import { TrialEnrollment, TrialEnrollmentSchema } from '../trial-enrollments/schemas/trial-enrollment.schema';
 
 @Module({
   imports: [
+    AdsModule,
     MongooseModule.forFeature([
       { name: Session.name, schema: SessionSchema },
       { name: Wallet.name, schema: WalletSchema },
@@ -35,6 +38,7 @@ import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
       { name: Expense.name, schema: ExpenseSchema },
       { name: Order.name, schema: OrderSchema },
       { name: Lead.name, schema: LeadSchema },
+      { name: TrialEnrollment.name, schema: TrialEnrollmentSchema },
     ]),
   ],
   controllers: [DashboardController],

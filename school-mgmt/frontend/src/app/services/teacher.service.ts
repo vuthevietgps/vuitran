@@ -203,6 +203,12 @@ export class TeacherService {
     );
   }
 
+  async approve(id: string): Promise<TeacherProfile> {
+    return firstValueFrom(
+      this.http.post<TeacherProfile>(`${this.base}/${id}/approve`, {}, { withCredentials: true }),
+    );
+  }
+
   // ── Teaching Materials ──────────────────────────────────────
 
   /** Lấy danh sách tài liệu */

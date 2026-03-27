@@ -9,6 +9,10 @@ import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/inv
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
+import {
+  getCurrentDurationForStudent,
+  getCurrentTeacherIdForStudent,
+} from '../classes/student-config.utils';
 
 type StudentLean = Student & { _id: Types.ObjectId };
 
@@ -65,11 +69,14 @@ export class StudentsService {
       studentCode: student.studentCode,
       fullName: student.fullName,
       age: student.age,
+      grade: student.grade,
       studentBirthMonth: student.studentBirthMonth,
       parentBirthMonth: student.parentBirthMonth,
       parentUserId: student.parentUserId?.toString?.() || '',
       parentName: student.parentName,
       parentPhone: student.parentPhone,
+      saleId: student.saleId?.toString?.() || '',
+      saleName: student.saleName || '',
       faceImage: student.faceImage,
       approvalStatus: (student as any).approvalStatus || 'PENDING',
       productPackage: productPackage && typeof productPackage === 'object'
@@ -214,6 +221,15 @@ export class StudentsService {
     const getPairKey = (studentId: any, classId: any): string =>
       `${studentId?.toString?.() || ''}_${classId?.toString?.() || ''}`;
 
+    const resolvePairSaleId = (student: any, cls: any): string =>
+      student?.saleId?.toString?.() ||
+      ((cls as any)?.sale as any)?._id?.toString?.() ||
+      ((cls as any)?.sale as any)?.toString?.() ||
+      '';
+
+    const resolvePairSaleName = (student: any, cls: any): string =>
+      student?.saleName || ((cls as any)?.sale as any)?.fullName || '';
+
     const resolveDataStatus = (cls: any, pairInvoices: any[]): string => {
       const latestInvoice = pairInvoices[0];
       if (latestInvoice?.status === InvoiceStatus.CANCELLED) {
@@ -237,18 +253,13 @@ export class StudentsService {
       }
       classFilter._id = new Types.ObjectId(classId);
     }
-    if (actor?.role === Role.SALE) {
-      const actorId = this.getActorId(actor);
-      if (actorId) {
-        classFilter.sale = new Types.ObjectId(actorId);
-      }
-    }
 
     const classes = await this.classroomModel
       .find(classFilter)
       .populate('teacher', 'userCode fullName email')
       .populate('sale', 'fullName email')
       .populate('invoiceId', 'invoiceNumber')
+      .populate('studentConfigs.teacherSlots.teacherId', 'userCode fullName email')
       .populate(
         'students',
         'studentCode fullName age grade dateOfBirth studentBirthMonth parentBirthMonth parentName parentPhone faceImage productPackage saleId saleName approvalStatus payments',
@@ -262,9 +273,14 @@ export class StudentsService {
     type Pair = { student: any; cls: any };
     const pairs: Pair[] = [];
     const normalizedTerm = searchTerm?.trim().toLowerCase() || '';
+    const saleActorId = actor?.role === Role.SALE ? this.getActorId(actor) : null;
     for (const cls of classes) {
       const students = (cls.students || []) as any[];
       for (const student of students) {
+        if (saleActorId && resolvePairSaleId(student, cls) !== saleActorId) {
+          continue;
+        }
+
         if (normalizedTerm) {
           const match =
             student.fullName?.toLowerCase().includes(normalizedTerm) ||
@@ -283,7 +299,9 @@ export class StudentsService {
       return { maxSessions: 0, rows: [] };
     }
 
-    const classIds = classes.map((c) => (c as any)._id);
+    const classIds = Array.from(
+      new Set(pairs.map(({ cls }) => (cls as any)._id?.toString()).filter(Boolean)),
+    ).map((id) => new Types.ObjectId(id as string));
     const classById = new Map(classes.map((c) => [(c as any)._id.toString(), c]));
     const uniqueStudentIds = Array.from(
       new Set(pairs.map(({ student }) => student?._id?.toString()).filter(Boolean)),
@@ -411,11 +429,20 @@ export class StudentsService {
       const teacherSalaryType = classMode === 'OFFLINE' ? 'PER_STUDENT' : 'PER_SESSION';
 
       const classTeacher = (cls as any).teacher as any;
-      const classTeacherCode = classTeacher?.userCode || classTeacher?.email || '';
-      const classTeacherName = classTeacher?.fullName || '';
+      const currentTeacherId = getCurrentTeacherIdForStudent(cls, student._id?.toString?.() || '');
+      const configuredTeacher = ((cls as any).studentConfigs || [])
+        .flatMap((config: any) => config?.teacherSlots || [])
+        .map((slot: any) => slot?.teacherId)
+        .find((teacher: any) => teacher?._id?.toString?.() === currentTeacherId) as any;
+      const displayTeacher = configuredTeacher || classTeacher;
+      const classTeacherCode = displayTeacher?.userCode || displayTeacher?.email || '';
+      const classTeacherName = displayTeacher?.fullName || '';
       const teacherCodeAndName = [classTeacherCode, classTeacherName].filter(Boolean).join(' - ');
-      const totalSessions = toSafeNumber((cls as any).totalSessions, 0);
-      const sessionsCompleted = toSafeNumber((cls as any).sessionsCompleted, 0);
+      const currentDuration = getCurrentDurationForStudent(cls, student._id?.toString?.() || '');
+      const totalSessions = toSafeNumber(currentDuration.totalSessions, toSafeNumber((cls as any).totalSessions, 0));
+      const sessionsCompleted = sessions.length;
+      const saleId = resolvePairSaleId(student, cls);
+      const saleName = resolvePairSaleName(student, cls);
 
       maxSessions = Math.max(maxSessions, sessions.length, totalSessions);
 
@@ -450,8 +477,8 @@ export class StudentsService {
         pricePerSession: cls.pricePerSession || 0,
         totalSessions,
         sessionsCompleted,
-        saleId: student.saleId?.toString?.() || ((cls as any).sale as any)?._id?.toString?.() || '',
-        saleName: student.saleName || ((cls as any).sale as any)?.fullName || '',
+        saleId,
+        saleName,
         dataStatus: resolveDataStatus(cls, pairInvoices),
         attendedCount,
         absentCount,

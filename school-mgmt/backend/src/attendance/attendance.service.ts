@@ -21,17 +21,31 @@ import { UserDocument } from '../users/schemas/user.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Classroom, ClassDocument, ClassMode } from '../classes/schemas/class.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Session, SessionDocument } from '../sessions/schemas/session.schema';
+import { Session, SessionDocument, SessionStatus, SessionType } from '../sessions/schemas/session.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
+import {
+  TrialEnrollment,
+  TrialEnrollmentDocument,
+  TrialEnrollmentStatus,
+} from '../trial-enrollments/schemas/trial-enrollment.schema';
 import { Role } from '../common/interfaces/role.enum';
 import { ClassesService } from '../classes/classes.service';
 import { randomBytes } from 'crypto';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
+import {
+  getCurrentDurationForStudent,
+  getCurrentTeacherIdForStudent,
+  getTeacherOwnedStudentIds,
+} from '../classes/student-config.utils';
 import { validateAndProcessBase64Image } from '../common/utils/image-validation.utils';
 import { normalizeDate, dayRange, buildDateFilter } from '../common/utils/date.utils';
 
-type StudentLean = Student & { _id: Types.ObjectId };
+type StudentLean = Student & {
+  _id: Types.ObjectId;
+  isTrial?: boolean;
+  trialEnrollmentId?: Types.ObjectId;
+};
 type ClassLean = Classroom & { _id: Types.ObjectId };
 const OFFLINE_MIN_TEACHER_PAYOUT = 200_000;
 
@@ -45,6 +59,8 @@ export class AttendanceService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(TrialEnrollment.name)
+    private readonly trialEnrollmentModel: Model<TrialEnrollmentDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly classesService: ClassesService,
   ) {}
@@ -74,6 +90,106 @@ export class AttendanceService {
     status?: AttendanceStatus | null,
   ): AttendanceStatus | null {
     return status ?? null;
+  }
+
+  private async loadTrialStudentsForClass(classId: Types.ObjectId): Promise<StudentLean[]> {
+    const enrollments = await this.trialEnrollmentModel
+      .find({
+        classId,
+        status: {
+          $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
+        },
+        studentId: { $exists: true, $ne: null },
+      })
+      .populate('studentId', 'fullName age parentName studentCode faceImage parentPhone')
+      .lean();
+
+    return enrollments
+      .map((enrollment: any) => {
+        const student = enrollment.studentId;
+        if (!student?._id) return null;
+        return {
+          ...student,
+          _id: student._id,
+          isTrial: true,
+          trialEnrollmentId: enrollment._id,
+        } as StudentLean;
+      })
+      .filter((student): student is StudentLean => !!student);
+  }
+
+  private async findActiveTrialEnrollment(
+    classId: Types.ObjectId,
+    studentId: Types.ObjectId,
+    mongoSession?: ClientSession,
+  ) {
+    let query = this.trialEnrollmentModel.findOne({
+      classId,
+      studentId,
+      status: {
+        $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
+      },
+    });
+    if (mongoSession) {
+      query = query.session(mongoSession);
+    }
+    return query.sort({ createdAt: -1 }).lean();
+  }
+
+  private async isStudentAllowedInClass(
+    classroom: ClassLean,
+    studentId: string,
+    mongoSession?: ClientSession,
+  ): Promise<boolean> {
+    const inRoster = classroom.students?.some((s: any) => s.toString() === studentId);
+    if (inRoster) return true;
+    if (!Types.ObjectId.isValid(studentId)) return false;
+    const activeTrial = await this.findActiveTrialEnrollment(
+      classroom._id as Types.ObjectId,
+      new Types.ObjectId(studentId),
+      mongoSession,
+    );
+    return !!activeTrial;
+  }
+
+  private async syncTrialUsage(classId: Types.ObjectId, studentId: Types.ObjectId): Promise<void> {
+    const enrollment = await this.trialEnrollmentModel
+      .findOne({
+        classId,
+        studentId,
+        status: {
+          $in: [
+            TrialEnrollmentStatus.PENDING_TRIAL,
+            TrialEnrollmentStatus.WAITING_DECISION,
+            TrialEnrollmentStatus.CONVERTED,
+          ],
+        },
+      })
+      .sort({ createdAt: -1 });
+
+    if (!enrollment) return;
+
+    const used = await this.sessionModel.countDocuments({
+      classId,
+      studentId,
+      sessionType: SessionType.TRIAL,
+      status: { $nin: [SessionStatus.CANCELLED, SessionStatus.RESCHEDULED] },
+      trialEnrollmentId: enrollment._id,
+    });
+
+    let nextStatus = enrollment.status;
+    if (
+      nextStatus === TrialEnrollmentStatus.PENDING_TRIAL &&
+      used >= (enrollment.maxTrialSessions || 2)
+    ) {
+      nextStatus = TrialEnrollmentStatus.WAITING_DECISION;
+    }
+
+    if (used !== enrollment.trialSessionsUsed || nextStatus !== enrollment.status) {
+      enrollment.trialSessionsUsed = used;
+      enrollment.status = nextStatus as any;
+      await enrollment.save();
+    }
   }
 
   /**
@@ -147,6 +263,34 @@ export class AttendanceService {
     return new Types.ObjectId(this.getUserId(user));
   }
 
+  private getVisibleStudentIdsForTeacher(
+    classroom: ClassLean,
+    teacherId: string,
+    fallbackToAllForSubstitute = false,
+  ): Set<string> {
+    const ownedStudentIds = getTeacherOwnedStudentIds(classroom, teacherId);
+    if (ownedStudentIds.length > 0) {
+      return new Set(ownedStudentIds);
+    }
+
+    if (fallbackToAllForSubstitute) {
+      const isSubstituteTeacher = Array.isArray((classroom as any)?.substituteTeachers)
+        && (classroom as any).substituteTeachers.some(
+          (item: any) => item?.teacherId?.toString?.() === teacherId,
+        );
+      if (isSubstituteTeacher) {
+        const allStudentIds = Array.isArray(classroom?.students)
+          ? classroom.students
+              .map((student: any) => student?._id?.toString?.() || student?.toString?.())
+              .filter((studentId: string | undefined): studentId is string => !!studentId)
+          : [];
+        return new Set(allStudentIds);
+      }
+    }
+
+    return new Set<string>();
+  }
+
   private assertClassAccess(
     classroom: ClassLean | null,
     user: JwtPayload,
@@ -174,6 +318,8 @@ export class AttendanceService {
         });
         if (activeSub) return;
       }
+
+      if (this.getVisibleStudentIdsForTeacher(classroom, uid).size > 0) return;
 
       throw new ForbiddenException(
         'Ban khong phu trach lop hoc nay va khong co quyen day thay cho ngay nay',
@@ -218,17 +364,27 @@ export class AttendanceService {
     classroom: ClassLean,
     user: JwtPayload,
     date: Date,
+    studentId: string,
   ): Types.ObjectId {
+    const assignedTeacherId = getCurrentTeacherIdForStudent(classroom, studentId);
+
     if (this.isTeacher(user)) {
-      return new Types.ObjectId(this.getUserId(user));
+      const actorTeacherId = this.getUserId(user);
+      const activeSubstitute = this.getSubstituteInfo(classroom, user, date);
+      if (activeSubstitute) {
+        return new Types.ObjectId(actorTeacherId);
+      }
+      if (assignedTeacherId && assignedTeacherId !== actorTeacherId) {
+        throw new ForbiddenException('Ban khong phu trach hoc sinh nay trong lop hoc');
+      }
+      return new Types.ObjectId(actorTeacherId);
     }
 
-    const classTeacherId = (classroom as any).teacher?.toString();
-    if (!classTeacherId) {
+    if (!assignedTeacherId) {
       throw new BadRequestException('Lop hoc chua co giao vien phu trach');
     }
 
-    return new Types.ObjectId(classTeacherId);
+    return new Types.ObjectId(assignedTeacherId);
   }
 
   /**
@@ -435,8 +591,12 @@ export class AttendanceService {
       const mongoSession = outerSession ?? await this.connection.startSession();
       const ownsTransaction = !outerSession;
       const range = dayRange(date);
+      const durationConfig = getCurrentDurationForStudent(classroom, studentId.toString());
       const duration =
-        (classroom as any).sessionDuration ?? (classroom as any).baseDuration ?? 60;
+        durationConfig.sessionDuration
+        || (classroom as any).sessionDuration
+        || (classroom as any).baseDuration
+        || 60;
 
       let teacherPayout: number;
       if (substitutePayRate !== undefined) {
@@ -446,6 +606,13 @@ export class AttendanceService {
       } else {
         teacherPayout = (classroom as any).teacherPayPerSession ?? 0;
       }
+
+      const activeTrialEnrollment = await this.findActiveTrialEnrollment(
+        classId,
+        studentId,
+        mongoSession,
+      );
+      const isTrialSession = !!activeTrialEnrollment;
 
       try {
         if (ownsTransaction) {
@@ -471,6 +638,15 @@ export class AttendanceService {
           existingSession.status = 'TEACHER_COMPLETED' as any;
           existingSession.confirmation = existingSession.confirmation ?? ({} as any);
           existingSession.confirmation.teacherCompletedAt = new Date();
+          if (isTrialSession && existingSession.sessionType !== SessionType.TRIAL) {
+            existingSession.sessionType = SessionType.TRIAL as any;
+          }
+          if (
+            activeTrialEnrollment &&
+            existingSession.trialEnrollmentId?.toString() !== activeTrialEnrollment._id.toString()
+          ) {
+            (existingSession as any).trialEnrollmentId = activeTrialEnrollment._id as any;
+          }
           if (existingSession.teacherId?.toString() !== teacherId.toString()) {
             existingSession.teacherId = teacherId as any;
           }
@@ -483,6 +659,17 @@ export class AttendanceService {
           !existingSession.hasTeachingReport &&
           !existingSession.isTeacherPaid
         ) {
+          if (isTrialSession && existingSession.sessionType !== SessionType.TRIAL) {
+            existingSession.sessionType = SessionType.TRIAL as any;
+            shouldSave = true;
+          }
+          if (
+            activeTrialEnrollment &&
+            existingSession.trialEnrollmentId?.toString() !== activeTrialEnrollment._id.toString()
+          ) {
+            (existingSession as any).trialEnrollmentId = activeTrialEnrollment._id as any;
+            shouldSave = true;
+          }
           if (existingSession.teacherId?.toString() !== teacherId.toString()) {
             existingSession.teacherId = teacherId as any;
             shouldSave = true;
@@ -535,7 +722,11 @@ export class AttendanceService {
               studentId,
               teacherId,
               parentUserId: (student as any)?.parentUserId,
-              sessionType: 'REGULAR',
+              sessionType: isTrialSession ? SessionType.TRIAL : SessionType.REGULAR,
+              trialEnrollmentId: activeTrialEnrollment?._id,
+              trialConverted: false,
+              trialTeacherPaidOnly: false,
+              trialRejectedNoPay: false,
               scheduledDate: date,
               durationMinutes: duration,
               sessionNumber,
@@ -595,6 +786,9 @@ export class AttendanceService {
           if (cancelled) {
             cancelled.status = 'TEACHER_COMPLETED' as any;
             cancelled.teacherId = teacherId;
+            cancelled.sessionType = isTrialSession ? (SessionType.TRIAL as any) : cancelled.sessionType;
+            (cancelled as any).trialEnrollmentId = activeTrialEnrollment?._id as any;
+            (cancelled as any).trialRejectedNoPay = false;
             cancelled.durationMinutes = duration;
             cancelled.amountCharged = amountCharged;
             cancelled.teacherPayout = teacherPayout;
@@ -721,6 +915,7 @@ export class AttendanceService {
 
       await attendance.deleteOne({ session: mongoSession });
       await mongoSession.commitTransaction();
+      await this.syncTrialUsage(classObjectId, studentObjectId);
       return true;
     } catch (err) {
       if (mongoSession.inTransaction()) {
@@ -745,7 +940,39 @@ export class AttendanceService {
       .findById(classroom._id)
       .populate('students', 'fullName age parentName studentCode faceImage parentPhone')
       .lean();
-    return ((cls as any)?.students as StudentLean[]) || [];
+    const rosterStudents = (((cls as any)?.students as StudentLean[]) || []).map((student) => ({
+      ...student,
+      isTrial: false,
+    }));
+    const trialStudents = await this.loadTrialStudentsForClass(classroom._id as Types.ObjectId);
+
+    const merged = new Map<string, StudentLean>();
+    rosterStudents.forEach((student) => merged.set(student._id.toString(), student));
+    trialStudents.forEach((student) => {
+      if (!merged.has(student._id.toString())) {
+        merged.set(student._id.toString(), student);
+      }
+    });
+
+    const students = [...merged.values()];
+    if (!this.isTeacher(user)) {
+      return students;
+    }
+
+    const teacherId = this.getUserId(user);
+    const isActiveSubstitute = !!(date && this.getSubstituteInfo(cls as ClassLean, user, date));
+    if (isActiveSubstitute) {
+      return students;
+    }
+
+    const visibleStudentIds = this.getVisibleStudentIdsForTeacher(cls as ClassLean, teacherId);
+    const isClassTeacher = (cls as any)?.teacher?.toString?.() === teacherId;
+    return students.filter((student) => {
+      if (student.isTrial) {
+        return isClassTeacher;
+      }
+      return visibleStudentIds.has(student._id.toString());
+    });
   }
 
   // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
@@ -863,6 +1090,7 @@ export class AttendanceService {
       );
 
       await mongoSession.commitTransaction();
+      await this.syncTrialUsage(classObjectId, studentObjectId);
       return { attendance, sessionCreated };
     } catch (err) {
       if (mongoSession.inTransaction()) {
@@ -884,16 +1112,19 @@ export class AttendanceService {
     const normalizedStatus = this.normalizeInteractiveAttendanceStatus(dto.status);
 
     // Validate student belongs to this class
-    const studentInClass = classroom.students?.some(
-      (s: any) => s.toString() === dto.studentId,
-    );
-    if (!studentInClass) {
+    const studentAllowed = await this.isStudentAllowedInClass(classroom, dto.studentId);
+    if (!studentAllowed) {
       throw new BadRequestException('HÃƒÂ¡Ã‚Â»Ã‚Âc sinh khÃƒÆ’Ã‚Â´ng thuÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp nÃƒÆ’Ã‚Â y');
     }
 
     // Check nÃƒÂ¡Ã‚ÂºÃ‚Â¿u lÃƒÆ’Ã‚Â  GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ lÃƒÂ¡Ã‚ÂºÃ‚Â¥y payRate riÃƒÆ’Ã‚Âªng
     const subInfo = this.getSubstituteInfo(classroom, user, date);
-    const attendanceTeacherId = this.resolveAttendanceTeacherId(classroom, user, date);
+    const attendanceTeacherId = this.resolveAttendanceTeacherId(
+      classroom,
+      user,
+      date,
+      dto.studentId,
+    );
     const opsCheckerId = this.getOpsCheckerId(user);
 
     const result = normalizedStatus
@@ -961,7 +1192,6 @@ export class AttendanceService {
 
     // Check nÃƒÂ¡Ã‚ÂºÃ‚Â¿u lÃƒÆ’Ã‚Â  GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ lÃƒÂ¡Ã‚ÂºÃ‚Â¥y payRate riÃƒÆ’Ã‚Âªng
     const subInfo = this.getSubstituteInfo(classroom, user, date);
-    const attendanceTeacherId = this.resolveAttendanceTeacherId(classroom, user, date);
     const opsCheckerId = this.getOpsCheckerId(user);
 
     // Load allowed students ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â only students from orders for this class
@@ -993,6 +1223,12 @@ export class AttendanceService {
         submittedIds.add(item.studentId);
         const normalizedStatus = this.normalizeBulkAttendanceStatus(item.status);
         if (normalizedStatus) {
+          const attendanceTeacherId = this.resolveAttendanceTeacherId(
+            classroom,
+            user,
+            date,
+            item.studentId,
+          );
           const result = await this.processOneStudent({
             classId: dto.classId,
             studentId: item.studentId,
@@ -1030,6 +1266,12 @@ export class AttendanceService {
         if (submittedIds.has(sid)) continue; // Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ xÃƒÂ¡Ã‚Â»Ã‚Â­ lÃƒÆ’Ã‚Â½ ÃƒÂ¡Ã‚Â»Ã…Â¸ trÃƒÆ’Ã‚Âªn
 
         try {
+          const attendanceTeacherId = this.resolveAttendanceTeacherId(
+            classroom,
+            user,
+            date,
+            sid,
+          );
           const result = await this.processOneStudent({
             classId: dto.classId,
             studentId: sid,
@@ -1123,6 +1365,8 @@ export class AttendanceService {
           age: (student as any).age,
           parentName: (student as any).parentName,
           studentCode: (student as any).studentCode,
+          isTrial: !!(student as any).isTrial,
+          trialEnrollmentId: (student as any).trialEnrollmentId?.toString?.() || null,
         },
         attendance: existing
           ? {
@@ -1197,7 +1441,12 @@ export class AttendanceService {
 
       // Check neu la GV day thay -> lay payRate rieng
       const subInfo = this.getSubstituteInfo(classroom, user, attendance.date);
-      const attendanceTeacherId = this.resolveAttendanceTeacherId(classroom, user, attendance.date);
+      const attendanceTeacherId = this.resolveAttendanceTeacherId(
+        classroom,
+        user,
+        attendance.date,
+        attendance.studentId.toString(),
+      );
       const opsCheckerId = this.getOpsCheckerId(user);
 
       const prevStatus = attendance.status;
@@ -1330,16 +1579,19 @@ export class AttendanceService {
     const date = normalizeDate(dto.date);
     this.assertClassAccess(classroom, user, date);
 
-    const studentInClass = classroom.students?.some(
-      (s: any) => s.toString() === dto.studentId,
-    );
-    if (!studentInClass) {
+    const studentAllowed = await this.isStudentAllowedInClass(classroom, dto.studentId);
+    if (!studentAllowed) {
       throw new BadRequestException('Hoc sinh khong thuoc lop nay');
     }
 
     // GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay: kiÃƒÂ¡Ã‚Â»Ã†â€™m tra quyÃƒÂ¡Ã‚Â»Ã‚Ân tÃƒÂ¡Ã‚ÂºÃ‚Â¡o link
     const subInfo = this.getSubstituteInfo(classroom, user, date);
-    const attendanceTeacherId = this.resolveAttendanceTeacherId(classroom, user, date);
+    const attendanceTeacherId = this.resolveAttendanceTeacherId(
+      classroom,
+      user,
+      date,
+      dto.studentId,
+    );
     if (subInfo && !subInfo.canCreateLink) {
       throw new ForbiddenException('GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay khÃƒÆ’Ã‚Â´ng Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c OPS cÃƒÂ¡Ã‚ÂºÃ‚Â¥p quyÃƒÂ¡Ã‚Â»Ã‚Ân tÃƒÂ¡Ã‚ÂºÃ‚Â¡o link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh');
     }
@@ -1495,6 +1747,8 @@ export class AttendanceService {
         await attendance.save();
       }
 
+      await this.syncTrialUsage(attendance.classId, attendance.studentId);
+
       if ((classroom as any).classMode === ClassMode.OFFLINE) {
         await this.recomputeOfflineTeacherPayoutForDay({
           classId: attendance.classId,
@@ -1547,7 +1801,7 @@ export class AttendanceService {
     const [data, total] = await Promise.all([
       this.attendanceModel
         .find(filter)
-        .populate('studentId', 'fullName age parentName faceImage studentCode')
+        .populate('studentId', 'fullName age parentName faceImage studentCode totalPurchasedSessions')
         .populate('classId', 'name code')
         .populate('teacherId', 'fullName email')
         .sort({ date: -1, attendedAt: -1, updatedAt: -1 })
@@ -1583,10 +1837,49 @@ export class AttendanceService {
         $or: [
           { teacher: teacherId },
           { 'substituteTeachers.teacherId': teacherId },
+          { 'studentConfigs.teacherSlots.teacherId': teacherId },
         ],
       })
       .populate('students', 'fullName age parentName studentCode parentPhone')
       .lean();
+
+    return classes
+      .map((cls: any) => {
+        const visibleStudentIds = this.getVisibleStudentIdsForTeacher(
+          cls as ClassLean,
+          teacherId.toString(),
+          true,
+        );
+        const students = (cls.students || [])
+          .filter((student: any) => visibleStudentIds.has(student?._id?.toString?.() || ''))
+          .map((student: any) => ({
+            studentId: student._id.toString(),
+            fullName: student.fullName || '',
+            studentCode: student.studentCode || '',
+            age: student.age,
+            parentName: student.parentName || '',
+            parentPhone: student.parentPhone || '',
+          }))
+          .sort((left: any, right: any) =>
+            left.fullName.localeCompare(right.fullName, 'vi', { sensitivity: 'base' }),
+          );
+
+        if (!students.length) {
+          return null;
+        }
+
+        return {
+          classId: cls._id.toString(),
+          classCode: cls.code || '',
+          className: cls.name || `LÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºp ${cls.code}`,
+          studentCount: students.length,
+          students,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .sort((left: any, right: any) =>
+        left.classCode.localeCompare(right.classCode, 'vi', { sensitivity: 'base' }),
+      );
 
     return classes.map((cls: any) => ({
       classId: cls._id.toString(),
@@ -1727,6 +2020,7 @@ export class AttendanceService {
       filter.$or = [
         { teacher: teacherId },
         { 'substituteTeachers.teacherId': teacherId },
+        { 'studentConfigs.teacherSlots.teacherId': teacherId },
       ];
     }
 
@@ -1735,26 +2029,48 @@ export class AttendanceService {
       .populate('students', 'fullName age parentName studentCode parentPhone')
       .lean();
 
-    return classes.map((cls: any) => ({
-      classId: cls._id.toString(),
-      classCode: cls.code || '',
-      className: cls.name || `LÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp ${cls.code}`,
-      studentCount: cls.students?.length || 0,
-      students: (cls.students || [])
-        .map((s: any) => ({
-          studentId: s._id.toString(),
-          fullName: s.fullName || '',
-          studentCode: s.studentCode || '',
-          age: s.age,
-          parentName: s.parentName || '',
-          parentPhone: s.parentPhone || '',
-        }))
-        .sort((a: any, b: any) =>
-          a.fullName.localeCompare(b.fullName, 'vi', { sensitivity: 'base' }),
-        ),
-    })).sort((a: any, b: any) =>
-      a.classCode.localeCompare(b.classCode, 'vi', { sensitivity: 'base' }),
-    );
+    return classes
+      .map((cls: any) => {
+        const students = this.isTeacher(user)
+          ? (cls.students || [])
+              .filter((student: any) =>
+                this.getVisibleStudentIdsForTeacher(
+                  cls as ClassLean,
+                  this.getUserId(user),
+                  true,
+                ).has(student?._id?.toString?.() || ''),
+              )
+          : (cls.students || []);
+
+        const mappedStudents = students
+          .map((student: any) => ({
+            studentId: student._id.toString(),
+            fullName: student.fullName || '',
+            studentCode: student.studentCode || '',
+            age: student.age,
+            parentName: student.parentName || '',
+            parentPhone: student.parentPhone || '',
+          }))
+          .sort((left: any, right: any) =>
+            left.fullName.localeCompare(right.fullName, 'vi', { sensitivity: 'base' }),
+          );
+
+        if (this.isTeacher(user) && !mappedStudents.length) {
+          return null;
+        }
+
+        return {
+          classId: cls._id.toString(),
+          classCode: cls.code || '',
+          className: cls.name || `LÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp ${cls.code}`,
+          studentCount: mappedStudents.length,
+          students: mappedStudents,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .sort((left: any, right: any) =>
+        left.classCode.localeCompare(right.classCode, 'vi', { sensitivity: 'base' }),
+      );
   }
 }
 

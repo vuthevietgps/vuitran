@@ -543,8 +543,9 @@ async function main() {
       token: auth.director.token,
       expectedStatus: [200],
     });
-    ensure(Array.isArray(res.data), 'Report must be an array');
-    const hit = res.data.find(
+    const reportItems = Array.isArray(res.data?.data) ? res.data.data : [];
+    ensure(Array.isArray(reportItems), 'Report payload must contain data array');
+    const hit = reportItems.find(
       (r) =>
         normalizeId(r.classId && r.classId._id) === chosenClass.classId &&
         normalizeId(r.studentId && r.studentId._id) === chosenStudent.studentId,

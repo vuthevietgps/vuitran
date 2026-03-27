@@ -91,6 +91,27 @@ export class PaymentFrame {
 export const PaymentFrameSchema = SchemaFactory.createForClass(PaymentFrame);
 
 @Schema({ _id: false })
+export class OrderCommunicationSummary {
+  @Prop({ type: String, trim: true })
+  saleMessage?: string;
+
+  @Prop({ type: String, trim: true })
+  parentMessage?: string;
+
+  @Prop({ type: String, trim: true })
+  teacherMessage?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  parentRecipientId?: Types.ObjectId;
+
+  @Prop({ type: [SchemaTypes.ObjectId], ref: 'User', default: [] })
+  teacherRecipientIds?: Types.ObjectId[];
+
+  @Prop({ type: Date })
+  generatedAt?: Date;
+}
+
+@Schema({ _id: false })
 export class ProcessedResults {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Student' })
   studentId?: Types.ObjectId;
@@ -100,6 +121,9 @@ export class ProcessedResults {
 
   @Prop({ type: [SchemaTypes.ObjectId], ref: 'Classroom', default: [] })
   classIds?: Types.ObjectId[];
+
+  @Prop({ type: SchemaTypes.Mixed })
+  communicationSummary?: OrderCommunicationSummary;
 }
 
 export const ProcessedResultsSchema = SchemaFactory.createForClass(ProcessedResults);

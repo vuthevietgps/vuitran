@@ -144,7 +144,7 @@
       <p>
         {{ hasActiveFilters()
           ? 'Thu doi bo loc hoac bo bớt dieu kien tim kiem de thay nhieu ket qua hon.'
-          : 'Tai len bo tai lieu dau tien de giao vien va AI co du lieu su dung.' }}
+          : 'Tai len bo tai lieu dau tien de moi user va AI co du lieu su dung.' }}
       </p>
       <button class="btn primary" type="button" (click)="hasActiveFilters() ? resetFilters() : openUploadModal()">
         {{ hasActiveFilters() ? 'Dat lai bo loc' : 'Tai len tai lieu' }}
@@ -310,7 +310,7 @@
 
           <label class="checkbox-row">
             <input type="checkbox" name="isShared" [(ngModel)]="materialFormData.isShared" />
-            <span>Chia se voi giao vien khac</span>
+            <span>Chia se voi user khac</span>
           </label>
 
           <div class="loading-inline" *ngIf="uploading()">

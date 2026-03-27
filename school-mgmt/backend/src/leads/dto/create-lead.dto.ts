@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, Min, ValidateNested } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, Min, ValidateNested, IsMongoId } from 'class-validator';
 import { Type } from 'class-transformer';
 import { LeadSource } from '../schemas/lead.schema';
 import { TrackingAttributionDto } from '../../marketing-attribution/dto/tracking-attribution.dto';
@@ -44,6 +44,10 @@ export class CreateLeadDto {
   @IsString()
   @IsOptional()
   referredBy?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  referredByUserId?: string;
 
   @IsNumber()
   @Min(0)

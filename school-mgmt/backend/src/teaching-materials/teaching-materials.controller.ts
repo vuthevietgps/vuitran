@@ -26,6 +26,8 @@ import { Role } from '../common/interfaces/role.enum';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { MaterialFileCategory } from './schemas/teaching-material.schema';
 
+const MATERIAL_ACCESS_ROLES = Object.values(Role) as Role[];
+
 // Setup upload directory
 const uploadPath = join(process.cwd(), 'uploads', 'materials');
 if (!existsSync(uploadPath)) mkdirSync(uploadPath, { recursive: true });
@@ -85,7 +87,7 @@ export class TeachingMaterialsController {
    * POST /teaching-materials/upload
    */
   @Post('upload')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: materialsStorage,
@@ -108,7 +110,7 @@ export class TeachingMaterialsController {
    * GET /teaching-materials
    */
   @Get()
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   findAll(
     @Req() req: AuthenticatedRequest,
     @Query('subject') subject?: string,
@@ -137,7 +139,7 @@ export class TeachingMaterialsController {
    * GET /teaching-materials/stats
    */
   @Get('stats')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   getStats(@Req() req: AuthenticatedRequest) {
     return this.service.getStats(req.user);
   }
@@ -147,7 +149,7 @@ export class TeachingMaterialsController {
    * GET /teaching-materials/:id
    */
   @Get(':id')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   findOne(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.findOne(id, req.user);
   }
@@ -157,7 +159,7 @@ export class TeachingMaterialsController {
    * PATCH /teaching-materials/:id
    */
   @Patch(':id')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   update(
     @Param('id') id: string,
     @Body() dto: UpdateTeachingMaterialDto,
@@ -167,7 +169,7 @@ export class TeachingMaterialsController {
   }
 
   @Post(':id/reprocess')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   reprocess(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.reprocess(id, req.user);
   }
@@ -177,7 +179,7 @@ export class TeachingMaterialsController {
    * DELETE /teaching-materials/:id
    */
   @Delete(':id')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.remove(id, req.user);
   }
@@ -187,7 +189,7 @@ export class TeachingMaterialsController {
    * POST /teaching-materials/:id/download
    */
   @Post(':id/download')
-  @Roles(Role.TEACHER, Role.OPS, Role.DIRECTOR)
+  @Roles(...MATERIAL_ACCESS_ROLES)
   download(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.incrementDownload(id, req.user);
   }

@@ -27,6 +27,15 @@ export enum ClassType {
   OFFLINE = 'OFFLINE',
 }
 
+export enum InvoiceCourseStatus {
+  NEW = 'NEW',
+  CONTINUE_1 = 'CONTINUE_1',
+  CONTINUE_2 = 'CONTINUE_2',
+  CONTINUE_3 = 'CONTINUE_3',
+  CONTINUE_4 = 'CONTINUE_4',
+  CONTINUE_5 = 'CONTINUE_5',
+}
+
 export type InvoiceDocument = HydratedDocument<Invoice>;
 
 @Schema({ timestamps: true })
@@ -69,8 +78,19 @@ export class Invoice {
   @Prop({ type: Number, min: 0, required: false })
   sessions?: number;
 
+  /** Số buổi tặng thêm theo chương trình khuyến mãi */
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusSessions?: number;
+
   @Prop({ type: Number, min: 1, required: false })
   paymentRound?: number;
+
+  @Prop({
+    type: String,
+    enum: Object.values(InvoiceCourseStatus),
+    default: InvoiceCourseStatus.NEW,
+  })
+  courseStatus!: string;
 
   /** Giá mỗi buổi tại thời điểm lập hóa đơn (cho referenceDuration phút) */
   @Prop({ type: Number, min: 0, required: false })
@@ -95,6 +115,10 @@ export class Invoice {
   /** Số buổi quy đổi còn lại (theo referenceDuration) */
   @Prop({ type: Number, min: 0, required: false })
   sessionsRemaining?: number;
+
+  /** Số buổi tặng còn lại (không cộng ví, chỉ dùng để học bù/khuyến mãi) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusSessionsRemaining?: number;
 
   @Prop({ required: true, min: 0 })
   amount!: number; // Tổng số tiền = sessions * pricePerSession (hoặc nhập tự do)
@@ -157,3 +181,4 @@ InvoiceSchema.index({ studentId: 1, classId: 1, status: 1 }); // Attendance + wa
 InvoiceSchema.index({ saleId: 1 });
 InvoiceSchema.index({ status: 1 });
 InvoiceSchema.index({ classId: 1 });
+InvoiceSchema.index({ courseStatus: 1 });

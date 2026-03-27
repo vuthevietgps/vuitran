@@ -40,6 +40,7 @@ import { LandingPagesModule } from './landing-pages/landing-pages.module';
 import { ReportTemplatesModule } from './report-templates/report-templates.module';
 import { ReportsModule } from './reports/reports.module';
 import { TasksModule } from './tasks/tasks.module';
+import { TrialEnrollmentsModule } from './trial-enrollments/trial-enrollments.module';
 
 const redisEnabled = (process.env.REDIS_ENABLED ?? 'true').toLowerCase() !== 'false';
 
@@ -153,6 +154,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     ReportTemplatesModule,
     ReportsModule,
     TasksModule,
+    TrialEnrollmentsModule,
   ],
   providers: [
     AdminSeeder,

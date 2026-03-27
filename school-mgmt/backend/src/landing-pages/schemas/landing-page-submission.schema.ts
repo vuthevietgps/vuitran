@@ -67,6 +67,9 @@ export class LandingPageSubmission {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
   adGroupId?: Types.ObjectId;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  referredByUserId?: Types.ObjectId;
+
   @Prop({ type: String, trim: true })
   adGroupName?: string;
 

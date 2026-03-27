@@ -97,6 +97,20 @@ export class DashboardController {
     return this.dashboardService.getParentDashboard(req.user.sub);
   }
 
+  @Get('daily-tasks')
+  @Roles(
+    Role.DIRECTOR,
+    Role.ACCOUNTING,
+    Role.OPS,
+    Role.TEACHER,
+    Role.PARENT,
+    Role.SALE,
+    Role.ADSMANAGER,
+  )
+  getDailyTasks(@Req() req: AuthenticatedRequest) {
+    return this.dashboardService.getDailyTasks(req.user.role, req.user.sub);
+  }
+
   // ── KPI & Teacher Performance ─────────────────────────────────
 
   @Get('director/teacher-kpi')

@@ -183,7 +183,7 @@ function randomCode(prefix) {
   return `${prefix}${stamp}${rand}`.toUpperCase();
 }
 
-async function waitFor(description, fn, maxAttempts = 15, intervalMs = 400) {
+async function waitFor(description, fn, maxAttempts = 30, intervalMs = 500) {
   let lastError = null;
   for (let i = 1; i <= maxAttempts; i += 1) {
     try {

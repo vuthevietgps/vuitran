@@ -638,6 +638,40 @@ describe('Scenario 3: Crisis Management - Parent Complaint (e2e)', () => {
   //  các transaction HELD và EXCLUDED vào totalFinalSalary
   // ═══════════════════════════════════════════════════════════════════════════
 
+  it('Edge case 2b (legacy rating payload): parent confirm accepts rating alias from older frontend', async () => {
+    const legacyPayloadSession = await sessionModel.create({
+      classId: new Types.ObjectId(classId),
+      studentId: new Types.ObjectId(studentId),
+      teacherId: new Types.ObjectId(teacherId),
+      parentUserId: new Types.ObjectId(parentId),
+      sessionType: 'REGULAR',
+      scheduledDate: utcDaysAgo(1),
+      durationMinutes: 60,
+      amountCharged: 150_000,
+      teacherPayout: 80_000,
+      status: 'TEACHER_COMPLETED',
+      confirmation: { teacherCompletedAt: utcDaysAgo(1) },
+      autoConfirmAfterHours: 48,
+      createdBy: new Types.ObjectId(teacherId),
+    });
+    const legacySessionId = String(legacyPayloadSession._id);
+
+    const res = await authWrite(
+      request(app.getHttpServer()).post(`/sessions/${legacySessionId}/confirm`),
+      parentSession,
+    ).send({
+      rating: 1,
+      parentNotes: 'Frontend cu van gui truong rating',
+    });
+    expect([200, 201]).toContain(res.status);
+
+    const sessionDoc = await sessionModel.findById(legacySessionId).lean() as any;
+    expect(sessionDoc.status).toBe('PARENT_CONFIRMED');
+    expect(sessionDoc.parentRating).toBe(1);
+    expect(sessionDoc.parentFeedback.overallRating).toBe(1);
+    expect(sessionDoc.parentFeedback.parentNotes).toBe('Frontend cu van gui truong rating');
+  });
+
   it('Edge case 3 (payroll summary bypass hold): HELD/EXCLUDED excluded from totalFinalSalary', async () => {
     // mainSessionId's PayrollTx hiện là EXCLUDED (sau Bước 3)
     const now          = new Date();

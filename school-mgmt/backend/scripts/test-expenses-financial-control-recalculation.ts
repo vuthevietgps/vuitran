@@ -473,6 +473,7 @@ async function main() {
     createModel(() => state.orders) as any,
     createModel(() => state.leads) as any,
     createModel(() => state.students) as any,
+    empty as any,
     mockConnection as any,
     payrollAggregate as any,
     expenseAggregate as any,

@@ -29,6 +29,71 @@ export class InvoicesService {
     return String(actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? '');
   }
 
+  private getRemainingStudySessions(invoice: Partial<InvoiceDocument> | any): number {
+    return Number(invoice?.sessionsRemaining || 0) + Number(invoice?.bonusSessionsRemaining || 0);
+  }
+
+  private isPurchasedSessionsSourceStatus(status?: string | null): boolean {
+    return status === InvoiceStatus.APPROVED || status === InvoiceStatus.PAID;
+  }
+
+  private getPurchasedSessionsForInvoice(invoice?: Partial<InvoiceDocument> | null): number {
+    if (!invoice || invoice.invoiceType !== InvoiceType.TUITION) {
+      return 0;
+    }
+
+    return Math.max(0, Number(invoice.sessions || 0)) + Math.max(0, Number(invoice.bonusSessions || 0));
+  }
+
+  private getInvoiceStudentId(invoice?: Partial<InvoiceDocument> | null): string | null {
+    const studentId = invoice?.studentId as Types.ObjectId | string | undefined;
+    if (!studentId) {
+      return null;
+    }
+    return studentId.toString();
+  }
+
+  private async applyPurchasedSessionsDelta(
+    studentId: string | null,
+    delta: number,
+    mongoSession?: import('mongoose').ClientSession,
+  ): Promise<void> {
+    if (!studentId || delta === 0) {
+      return;
+    }
+
+    await this.studentModel.updateOne(
+      { _id: new Types.ObjectId(studentId) },
+      {
+        $inc: { totalPurchasedSessions: delta },
+      },
+      mongoSession ? { session: mongoSession } : {},
+    );
+  }
+
+  private async syncPurchasedSessionsSnapshot(
+    before: Partial<InvoiceDocument> | null,
+    after: Partial<InvoiceDocument> | null,
+    mongoSession?: import('mongoose').ClientSession,
+  ): Promise<void> {
+    const beforeStudentId = this.getInvoiceStudentId(before);
+    const afterStudentId = this.getInvoiceStudentId(after);
+    const beforeTotal = before && this.isPurchasedSessionsSourceStatus(before.status)
+      ? this.getPurchasedSessionsForInvoice(before)
+      : 0;
+    const afterTotal = after && this.isPurchasedSessionsSourceStatus(after.status)
+      ? this.getPurchasedSessionsForInvoice(after)
+      : 0;
+
+    if (beforeStudentId && afterStudentId && beforeStudentId === afterStudentId) {
+      await this.applyPurchasedSessionsDelta(afterStudentId, afterTotal - beforeTotal, mongoSession);
+      return;
+    }
+
+    await this.applyPurchasedSessionsDelta(beforeStudentId, -beforeTotal, mongoSession);
+    await this.applyPurchasedSessionsDelta(afterStudentId, afterTotal, mongoSession);
+  }
+
   private assertSaleInvoiceAccess(invoice: any, actor?: JwtPayload): void {
     if (actor?.role !== Role.SALE) return;
     const actorId = this.getActorId(actor);
@@ -125,13 +190,13 @@ export class InvoicesService {
 
     // Auto-calculate amount if sessions + pricePerSession provided
     let amount = dto.amount;
-    if (dto.sessions && dto.pricePerSession && !dto.amount) {
+    if (dto.sessions && dto.pricePerSession && (amount === undefined || amount === null)) {
       amount = dto.sessions * dto.pricePerSession;
     }
 
     // If classId provided but no pricePerSession, get from class
     let pricePerSession = dto.pricePerSession;
-    if (classroom && !pricePerSession) {
+    if (classroom && (pricePerSession === undefined || pricePerSession === null)) {
       pricePerSession = classroom.pricePerSession || 0;
     }
 
@@ -141,7 +206,7 @@ export class InvoicesService {
       (classroom?.baseDuration || classroom?.sessionDuration || 60);
 
     // â”€â”€ Auto-compute pricePerSession from amount + sessions if needed â”€â”€
-    if (!pricePerSession && amount && dto.sessions) {
+    if ((pricePerSession === undefined || pricePerSession === null) && amount != null && dto.sessions) {
       pricePerSession = Math.round(amount / dto.sessions);
     }
 
@@ -158,6 +223,8 @@ export class InvoicesService {
     // Má»i hÃ³a Ä‘Æ¡n Ä‘á»u pháº£i chá» duyá»‡t
     const status = InvoiceStatus.PENDING_APPROVAL;
 
+    const bonusSessions = Math.max(0, Number(dto.bonusSessions || 0));
+
     const entity = new this.invoiceModel({
       ...dto,
       paymentRound,
@@ -166,6 +233,8 @@ export class InvoicesService {
       referenceDuration,
       perMinuteRate,
       sessionsRemaining: dto.sessions, // Ban Ä‘áº§u = sessions mua
+      bonusSessions,
+      bonusSessionsRemaining: bonusSessions,
       invoiceType: dto.invoiceType || InvoiceType.TUITION,
       status,
       saleId,
@@ -227,71 +296,122 @@ export class InvoicesService {
   }
 
   async update(id: string, dto: UpdateInvoiceDto, actor?: JwtPayload) {
-    const invoice = await this.invoiceModel.findById(id);
-    if (!invoice) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
+    const mongoSession = await this.connection.startSession();
 
-    // SALE chá»‰ Ä‘Æ°á»£c sá»­a hÃ³a Ä‘Æ¡n PENDING_APPROVAL do mÃ¬nh táº¡o
-    if (actor?.role === Role.SALE) {
-      if (invoice.createdBy.toString() !== this.getActorId(actor)) {
-        throw new ForbiddenException('Báº¡n khÃ´ng cÃ³ quyá»n sá»­a hÃ³a Ä‘Æ¡n nÃ y');
-      }
-      if (invoice.status !== InvoiceStatus.PENDING_APPROVAL) {
-        throw new ForbiddenException('KhÃ´ng thá»ƒ sá»­a hÃ³a Ä‘Æ¡n Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½');
-      }
-      // SALE khÃ´ng Ä‘Æ°á»£c tá»± Ä‘á»•i status
-      delete (dto as any).status;
-      delete (dto as any).saleId;
-      delete (dto as any).studentId;
-      delete (dto as any).classId;
-    }
+    try {
+      mongoSession.startTransaction();
 
-    if (dto.invoiceNumber) {
-      const existingInvoice = await this.invoiceModel.findOne({ 
-        invoiceNumber: dto.invoiceNumber,
-        _id: { $ne: id }
-      });
-      if (existingInvoice) {
-        throw new ConflictException('Sá»‘ hÃ³a Ä‘Æ¡n Ä‘Ã£ tá»“n táº¡i');
-      }
-    }
+      const invoice = await this.invoiceModel.findById(id).session(mongoSession);
+      if (!invoice) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
 
-    // Recalculate derived financial fields when relevant fields change
-    const updateData: any = { ...dto };
-    if (updateData.studentId !== undefined || updateData.saleId !== undefined) {
-      const resolved = await this.resolveInvoiceSaleOwner(
-        {
-          studentId: updateData.studentId ?? invoice.studentId.toString(),
-          saleId: updateData.saleId,
-        },
-        actor as JwtPayload,
+      // SALE can edit pending invoices they created.
+      // If the invoice was auto-generated from an order, the sale owner can still
+      // upload the sale receipt while financial fields remain locked.
+      if (actor?.role === Role.SALE) {
+        const actorId = this.getActorId(actor);
+        const isCreator = invoice.createdBy.toString() === actorId;
+        const isOwner = invoice.saleId?.toString?.() === actorId;
+
+        if (!isCreator && !isOwner) {
+          throw new ForbiddenException('Báº¡n khÃ´ng cÃ³ quyá»n sá»­a hÃ³a Ä‘Æ¡n nÃ y');
+        }
+        if (invoice.status !== InvoiceStatus.PENDING_APPROVAL) {
+          throw new ForbiddenException('KhÃ´ng thá»ƒ sá»­a hÃ³a Ä‘Æ¡n Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½');
+        }
+        if (!isCreator) {
+          const limitedPatch: Record<string, unknown> = {};
+          if (dto.receiptImage !== undefined) limitedPatch.receiptImage = dto.receiptImage;
+          if (dto.description !== undefined) limitedPatch.description = dto.description;
+          dto = limitedPatch as UpdateInvoiceDto;
+        }
+        delete (dto as any).status;
+        delete (dto as any).saleId;
+        delete (dto as any).studentId;
+        delete (dto as any).classId;
+      }
+
+      if (dto.invoiceNumber) {
+        const existingInvoice = await this.invoiceModel.findOne({ 
+          invoiceNumber: dto.invoiceNumber,
+          _id: { $ne: id }
+        }).session(mongoSession);
+        if (existingInvoice) {
+          throw new ConflictException('Sá»‘ hÃ³a Ä‘Æ¡n Ä‘Ã£ tá»“n táº¡i');
+        }
+      }
+
+      const safeNum = (v: any) => v == null ? 0 : Number(v);
+      const isFinancialChanged = 
+        (dto.amount !== undefined && safeNum(dto.amount) !== safeNum(invoice.amount)) ||
+        (dto.sessions !== undefined && safeNum(dto.sessions) !== safeNum(invoice.sessions)) ||
+        (dto.bonusSessions !== undefined && safeNum(dto.bonusSessions) !== safeNum(invoice.bonusSessions)) ||
+        (dto.pricePerSession !== undefined && safeNum(dto.pricePerSession) !== safeNum(invoice.pricePerSession)) ||
+        (dto.studentId !== undefined && dto.studentId.toString() !== invoice.studentId.toString()) ||
+        (dto.classId !== undefined && dto.classId?.toString() !== invoice.classId?.toString());
+
+      if (
+        (invoice.status === InvoiceStatus.APPROVED || (invoice.status as any) === 'PAID') &&
+        isFinancialChanged
+      ) {
+        throw new BadRequestException('Không thể sửa thông tin tài chính hay học sinh của hóa đơn đã duyệt. Vui lòng hủy hóa đơn và tạo lại.');
+      }
+
+      // Recalculate derived financial fields when relevant fields change
+      const updateData: any = { ...dto };
+      if (updateData.studentId !== undefined || updateData.saleId !== undefined) {
+        const resolved = await this.resolveInvoiceSaleOwner(
+          {
+            studentId: updateData.studentId ?? invoice.studentId.toString(),
+            saleId: updateData.saleId,
+          },
+          actor as JwtPayload,
+        );
+        updateData.studentId = new Types.ObjectId(updateData.studentId ?? invoice.studentId.toString());
+        if (resolved.saleId) {
+          updateData.saleId = resolved.saleId;
+        } else {
+          delete updateData.saleId;
+        }
+      }
+      const sessions = dto.sessions ?? invoice.sessions;
+      const bonusSessions = dto.bonusSessions ?? invoice.bonusSessions;
+      const referenceDuration = dto.referenceDuration ?? invoice.referenceDuration;
+      const pricePerSession = dto.pricePerSession ?? invoice.pricePerSession;
+
+      if (sessions !== undefined && sessions >= 0) {
+        const usedSessions = safeNum(invoice.sessions) - safeNum(invoice.sessionsRemaining);
+        updateData.sessionsRemaining = Math.max(0, safeNum(sessions) - usedSessions);
+      }
+      if (bonusSessions !== undefined && bonusSessions >= 0) {
+        const usedBonusSessions = safeNum(invoice.bonusSessions) - safeNum(invoice.bonusSessionsRemaining);
+        updateData.bonusSessionsRemaining = Math.max(0, safeNum(bonusSessions) - usedBonusSessions);
+      }
+      if (sessions && referenceDuration && referenceDuration > 0 && pricePerSession != null) {
+        updateData.perMinuteRate = pricePerSession / referenceDuration;
+      }
+
+      const updated = await this.invoiceModel.findByIdAndUpdate(
+        id,
+        updateData,
+        { new: true, session: mongoSession },
       );
-      updateData.studentId = new Types.ObjectId(updateData.studentId ?? invoice.studentId.toString());
-      if (resolved.saleId) {
-        updateData.saleId = resolved.saleId;
-      } else {
-        delete updateData.saleId;
-      }
-    }
-    const sessions = dto.sessions ?? invoice.sessions;
-    const amount = dto.amount ?? invoice.amount;
-    const referenceDuration = dto.referenceDuration ?? invoice.referenceDuration;
-    const pricePerSession = dto.pricePerSession ?? invoice.pricePerSession;
+      if (!updated) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
 
-    if (sessions && sessions > 0) {
-      const usedSessions = (invoice.sessions || 0) - (invoice.sessionsRemaining || 0);
-      updateData.sessionsRemaining = sessions - usedSessions;
-    }
-    if (sessions && referenceDuration && referenceDuration > 0 && pricePerSession != null) {
-      updateData.perMinuteRate = pricePerSession / referenceDuration;
+      await this.syncPurchasedSessionsSnapshot(invoice, updated, mongoSession);
+
+      await mongoSession.commitTransaction();
+    } catch (err) {
+      await mongoSession.abortTransaction();
+      throw err;
+    } finally {
+      mongoSession.endSession();
     }
 
-    const updated = await this.invoiceModel.findByIdAndUpdate(id, updateData, { new: true })
-      .populate('studentId', 'fullName parentName parentPhone')
+    return this.invoiceModel.findById(id)
+      .populate('studentId', 'fullName parentName parentPhone totalPurchasedSessions')
       .populate('createdBy', 'fullName email')
       .populate('approvedBy', 'fullName email')
       .lean();
-    if (!updated) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
-    return updated;
   }
 
   /** Duyá»‡t hoáº·c tá»« chá»‘i hÃ³a Ä‘Æ¡n (DIRECTOR / ACCOUNTING) */
@@ -305,7 +425,7 @@ export class InvoicesService {
 
     const existingInvoice = await this.invoiceModel
       .findById(id)
-      .select('_id invoiceNumber status receiptImage')
+      .select('_id invoiceNumber status receiptImage studentId invoiceType sessions bonusSessions')
       .lean();
     if (!existingInvoice) {
       throw new NotFoundException('HÃƒÂ³a Ã„â€˜Ã†Â¡n khÃƒÂ´ng tÃ¡Â»â€œn tÃ¡ÂºÂ¡i');
@@ -336,6 +456,7 @@ export class InvoicesService {
               approvedAt: now,
               approvalImage,
               paymentDate: { $ifNull: ['$paymentDate', now] },
+              updatedAt: now,
             },
           }],
           { new: true, session: mongoSession },
@@ -357,6 +478,8 @@ export class InvoicesService {
         ) {
           await this.topUpWalletForInvoice(invoice, actor, mongoSession);
         }
+
+        await this.syncPurchasedSessionsSnapshot(existingInvoice as any, invoice, mongoSession);
 
         await mongoSession.commitTransaction();
       } catch (err) {
@@ -519,7 +642,7 @@ export class InvoicesService {
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     const totalSessionsRemaining = invoices
       .filter((i) => i.status === 'APPROVED')
-      .reduce((sum, i) => sum + (i.sessionsRemaining || 0), 0);
+      .reduce((sum, i) => sum + this.getRemainingStudySessions(i), 0);
 
     return {
       children: grouped,
@@ -644,6 +767,11 @@ export class InvoicesService {
         }, { session: mongoSession });
       }
 
+      await this.syncPurchasedSessionsSnapshot(invoice, {
+        ...invoice.toObject(),
+        status: InvoiceStatus.CANCELLED,
+      } as Partial<InvoiceDocument>, mongoSession);
+
       await mongoSession.commitTransaction();
 
       this.logger.log(
@@ -666,4 +794,3 @@ export class InvoicesService {
   }
 
 }
-

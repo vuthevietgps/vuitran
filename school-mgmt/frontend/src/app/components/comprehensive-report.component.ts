@@ -9,6 +9,7 @@ import {
   StudentService,
 } from '../services/student.service';
 import { ClassItem, ClassService } from '../services/class.service';
+import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-comprehensive-report',
@@ -30,7 +31,7 @@ import { ClassItem, ClassService } from '../services/class.service';
           </select>
         </div>
 
-        <div class="filter-item">
+        <div class="filter-item" *ngIf="!isSale()">
           <label>Sale</label>
           <select [ngModel]="selectedSaleId()" (ngModelChange)="onSaleFilterChange($event)">
             <option value="">Tat ca sale</option>
@@ -111,7 +112,7 @@ import { ClassItem, ClassService } from '../services/class.service';
                   <th>Ngay sinh me</th>
                   <th>Ma lop</th>
                   <th>Ma GV + ten GV</th>
-                  <th>Luong GV</th>
+                  <th *ngIf="showTeacherSalary()">Luong GV</th>
                   <th>So Hoa Don</th>
                   <th>Tong buoi</th>
                   <th>Da Hoc</th>
@@ -133,7 +134,7 @@ import { ClassItem, ClassService } from '../services/class.service';
                   <td>{{ formatMonthBirth(row.parentBirthMonth) }}</td>
                   <td class="class-code">{{ row.classCode || '-' }}</td>
                   <td [title]="row.teacherCodeAndName || row.teacherName">{{ row.teacherCodeAndName || row.teacherName || '-' }}</td>
-                  <td class="number-cell">{{ formatTeacherSalary(row) }}</td>
+                  <td *ngIf="showTeacherSalary()" class="number-cell">{{ formatTeacherSalary(row) }}</td>
                   <td>{{ row.invoiceNumber || '-' }}</td>
                   <td class="number-cell">{{ row.totalSessions || '-' }}</td>
                   <td class="number-cell">{{ row.sessionsCompleted || 0 }}</td>
@@ -400,6 +401,7 @@ import { ClassItem, ClassService } from '../services/class.service';
 export class ComprehensiveReportComponent implements OnInit {
   private studentService = inject(StudentService);
   private classService = inject(ClassService);
+  private auth = inject(AuthService);
 
   readonly sessionColumnCount = 20;
   readonly dataStatusOptions = [
@@ -682,13 +684,15 @@ export class ComprehensiveReportComponent implements OnInit {
       'Ngay sinh me',
       'Ma lop',
       'Ma GV + ten GV',
-      'Luong GV',
       'So Hoa Don',
       'Tong buoi',
       'Da Hoc',
       'Sale',
       'Tinh Trang Data',
     ];
+    if (this.showTeacherSalary()) {
+      headers.splice(11, 0, 'Luong GV');
+    }
     for (let i = 1; i <= max; i++) {
       headers.push(`Buoi ${i}`);
     }
@@ -707,13 +711,15 @@ export class ComprehensiveReportComponent implements OnInit {
         this.csvEscape(this.formatMonthBirth(row.parentBirthMonth)),
         this.csvEscape(row.classCode || ''),
         this.csvEscape(row.teacherCodeAndName || row.teacherName || ''),
-        this.csvEscape(this.formatTeacherSalary(row)),
         this.csvEscape(row.invoiceNumber || ''),
         row.totalSessions || '',
         row.sessionsCompleted || 0,
         this.csvEscape(row.saleName || ''),
         this.csvEscape(this.getDataStatusLabel(row.dataStatus)),
       ];
+      if (this.showTeacherSalary()) {
+        cells.splice(11, 0, this.csvEscape(this.formatTeacherSalary(row)));
+      }
 
       for (let i = 0; i < max; i++) {
         cells.push(this.csvEscape(this.formatSessionForExport(row.sessions[i])));
@@ -734,6 +740,14 @@ export class ComprehensiveReportComponent implements OnInit {
 
   private getRowSessionSpan(row: ComprehensiveReportRow): number {
     return Math.max(Number(row.totalSessions || 0), Array.isArray(row.sessions) ? row.sessions.length : 0);
+  }
+
+  isSale(): boolean {
+    return this.auth.userSignal()?.role === 'SALE';
+  }
+
+  showTeacherSalary(): boolean {
+    return this.auth.userSignal()?.role !== 'PARENT';
   }
 
   private getSaleKey(row: ComprehensiveReportRow): string {

@@ -1,4 +1,4 @@
-import { Component, OnInit, signal, computed } from '@angular/core';
+﻿import { Component, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
@@ -11,9 +11,11 @@ interface StudentInvoice {
   invoiceNumber: string;
   classId: { _id: string; name: string };
   sessions: number;
+  bonusSessions?: number;
   pricePerSession: number;
   amount: number;
   sessionsRemaining: number;
+  bonusSessionsRemaining?: number;
   status: string;
   createdAt: string;
 }
@@ -100,10 +102,10 @@ const STATUS_COLORS: Record<string, string> = {
         <tr *ngFor="let inv of child.invoices">
           <td><code>{{inv.invoiceNumber}}</code></td>
           <td>{{inv.classId.name || '-'}}</td>
-          <td class="center">{{inv.sessions}}</td>
+          <td class="center">{{formatRegisteredSessions(inv)}}</td>
           <td class="right">{{inv.pricePerSession | number}}đ</td>
           <td class="right"><strong>{{inv.amount | number}}đ</strong></td>
-          <td class="center">{{inv.sessionsRemaining}}</td>
+          <td class="center">{{formatRemainingSessions(inv)}}</td>
           <td>
             <span class="badge"
               [style.background]="statusColor(inv.status) + '20'"
@@ -174,6 +176,16 @@ export class ParentInvoicesComponent implements OnInit {
   statusLabel(s: string) { return STATUS_LABELS[s] || s; }
   statusColor(s: string) { return STATUS_COLORS[s] || '#64748b'; }
 
+  formatRegisteredSessions(inv: StudentInvoice): string {
+    const sessions = Number(inv.sessions || 0);
+    const bonusSessions = Number(inv.bonusSessions || 0);
+    return bonusSessions > 0 ? `${sessions} + ${bonusSessions}` : String(sessions);
+  }
+
+  formatRemainingSessions(inv: StudentInvoice): number {
+    return Number(inv.sessionsRemaining || 0) + Number(inv.bonusSessionsRemaining || 0);
+  }
+
   async loadData() {
     this.loading.set(true);
     this.error.set('');
@@ -191,3 +203,4 @@ export class ParentInvoicesComponent implements OnInit {
     }
   }
 }
+

@@ -8,6 +8,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { AssignStudentsDto } from './dto/assign-students.dto';
 import { UpdateCurriculumDto } from './dto/update-curriculum.dto';
+import { UpdateStudentConfigDto } from './dto/update-student-config.dto';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
@@ -45,9 +46,13 @@ export class ClassesController {
   }
 
   @Patch(':id')
-  @Roles(Role.DIRECTOR, Role.OPS)
-  update(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateClassDto) {
-    return this.classesService.update(id, dto);
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
+  update(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateClassDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.classesService.update(id, dto, req.user);
   }
 
   @Delete(':id')
@@ -64,6 +69,36 @@ export class ClassesController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.classesService.assignStudentsBySale(id, dto, req.user);
+  }
+
+  @Patch(':id/students/:studentId/config')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE)
+  updateStudentConfig(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Param('studentId', ParseMongoIdPipe) studentId: string,
+    @Body() dto: UpdateStudentConfigDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.classesService.updateStudentConfig(id, studentId, dto, req.user);
+  }
+
+  @Post(':id/pending-sale-update/approve')
+  @Roles(Role.DIRECTOR, Role.OPS)
+  approvePendingSaleUpdate(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.classesService.approvePendingSaleUpdate(id, req.user);
+  }
+
+  @Post(':id/pending-sale-update/reject')
+  @Roles(Role.DIRECTOR, Role.OPS)
+  rejectPendingSaleUpdate(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() body: { reason?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.classesService.rejectPendingSaleUpdate(id, body?.reason, req.user);
   }
 
   // ── CURRICULUM (Chương trình học) ──────────────────────────────────

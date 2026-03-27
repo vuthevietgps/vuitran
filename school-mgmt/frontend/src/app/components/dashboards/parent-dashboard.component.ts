@@ -1,312 +1,339 @@
-import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { Component, OnInit, computed, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
+
 import { DashboardService } from '../../services/dashboard.service';
+
+interface QuickLink {
+  title: string;
+  description: string;
+  route: string;
+  cta: string;
+}
+
+interface DashboardWallet {
+  balance: number;
+  totalTopUp: number;
+  totalDeducted: number;
+  totalRefunded: number;
+  status: string;
+}
+
+interface DashboardChild {
+  _id?: string;
+  fullName?: string;
+  name?: string;
+  grade?: string;
+  subjects?: string[];
+}
+
+interface DashboardEntityRef {
+  _id?: string;
+  fullName?: string;
+  name?: string;
+  code?: string;
+  studentCode?: string;
+}
+
+interface DashboardSessionItem {
+  scheduledDate?: string;
+  scheduledStartTime?: string;
+  status?: string;
+  teacherId?: DashboardEntityRef | null;
+  studentId?: DashboardEntityRef | null;
+  classId?: DashboardEntityRef | null;
+}
+
+interface DashboardInvoiceItem {
+  invoiceNumber?: string;
+  status?: string;
+  amount?: number;
+  paymentDate?: string;
+  studentId?: DashboardEntityRef | null;
+  classId?: DashboardEntityRef | null;
+}
+
+interface DashboardAttendanceItem {
+  date?: string;
+  status?: string;
+  notes?: string;
+  teacherId?: DashboardEntityRef | null;
+  studentId?: DashboardEntityRef | null;
+  classId?: DashboardEntityRef | null;
+}
+
+interface DashboardTransactionItem {
+  type?: string;
+  status?: string;
+  amount?: number;
+  description?: string;
+  createdAt?: string;
+}
+
+interface ParentDashboardData {
+  wallet: DashboardWallet | null;
+  children: {
+    total: number;
+    list: DashboardChild[];
+  };
+  sessions: {
+    total: number;
+    byStatus: Record<string, number>;
+    upcomingCount: number;
+    needsConfirmation: number;
+  };
+  recentSessions: DashboardSessionItem[];
+  recentTransactions: DashboardTransactionItem[];
+  invoices: {
+    total: number;
+    totalPaid: number;
+    list: DashboardInvoiceItem[];
+  };
+  attendance: {
+    total: number;
+    byStatus: Record<string, number>;
+    recentList: DashboardAttendanceItem[];
+  };
+  tickets: {
+    myTickets: number;
+    openTickets: number;
+  };
+}
+
+interface HighlightItem {
+  name: string;
+  code?: string;
+}
+
+const FINANCE_LINKS: QuickLink[] = [
+  {
+    title: 'H\u00f3a \u0111\u01a1n',
+    description: 'Theo d\u00f5i l\u1ecbch s\u1eed h\u1ecdc ph\u00ed v\u00e0 t\u00ecnh tr\u1ea1ng thanh to\u00e1n theo t\u1eebng con.',
+    route: '/app/parent-invoices',
+    cta: 'M\u1edf h\u00f3a \u0111\u01a1n',
+  },
+  {
+    title: 'V\u00ed & giao d\u1ecbch',
+    description: 'Xem s\u1ed1 d\u01b0, n\u1ea1p v\u00ed v\u00e0 ki\u1ec3m tra ti\u1ec1n v\u00e0o, ti\u1ec1n ra g\u1ea7n \u0111\u00e2y.',
+    route: '/app/wallets',
+    cta: 'M\u1edf v\u00ed',
+  },
+];
+
+const LEARNING_LINKS: QuickLink[] = [
+  {
+    title: 'Ch\u01b0\u01a1ng tr\u00ecnh h\u1ecdc',
+    description: 'Xem khung ch\u01b0\u01a1ng tr\u00ecnh, t\u00e0i li\u1ec7u v\u00e0 n\u1ed9i dung h\u1ecdc c\u1ee7a t\u1eebng giai \u0111o\u1ea1n.',
+    route: '/app/teaching-materials',
+    cta: 'M\u1edf ch\u01b0\u01a1ng tr\u00ecnh',
+  },
+  {
+    title: 'L\u1edbp h\u1ecdc',
+    description: 'Theo d\u00f5i l\u1edbp, l\u1ecbch h\u1ecdc s\u1eafp t\u1edbi v\u00e0 t\u00ecnh tr\u1ea1ng x\u00e1c nh\u1eadn bu\u1ed5i h\u1ecdc.',
+    route: '/app/sessions',
+    cta: 'M\u1edf l\u1edbp h\u1ecdc',
+  },
+  {
+    title: 'B\u00e1o c\u00e1o gi\u1ea3ng d\u1ea1y chi ti\u1ebft',
+    description: 'Xem nh\u1eadn x\u00e9t, b\u00e0i t\u1eadp, ti\u1ebfn \u0111\u1ed9 v\u00e0 \u0111\u00e1nh gi\u00e1 c\u1ee7a gi\u00e1o vi\u00ean.',
+    route: '/app/student-progress',
+    cta: 'M\u1edf h\u1ecdc b\u1ea1',
+  },
+];
+
+const SUPPORT_LINKS: QuickLink[] = [
+  {
+    title: 'Ticket h\u1ed7 tr\u1ee3',
+    description: 'T\u1ea1o y\u00eau c\u1ea7u, theo d\u00f5i tr\u1ea1ng th\u00e1i x\u1eed l\u00fd v\u00e0 trao \u0111\u1ed5i tr\u1ef1c ti\u1ebfp.',
+    route: '/app/tickets',
+    cta: 'M\u1edf ticket',
+  },
+  {
+    title: 'Chatbot',
+    description: 'H\u1ecfi nhanh v\u1ec1 ti\u1ebfn \u0111\u1ed9, l\u1ecbch h\u1ecdc, b\u00e0i t\u1eadp; case nh\u1ea1y c\u1ea3m s\u1ebd chuy\u1ec3n th\u00e0nh ticket.',
+    route: '/app/parent-chat',
+    cta: 'M\u1edf chatbot',
+  },
+];
+
+const SESSION_STATUS_LABELS: Record<string, string> = {
+  SCHEDULED: '\u0110\u00e3 l\u00ean l\u1ecbch',
+  TEACHER_COMPLETED: 'Ch\u1edd x\u00e1c nh\u1eadn',
+  PARENT_CONFIRMED: 'Ph\u1ee5 huynh x\u00e1c nh\u1eadn',
+  FINALIZED: 'Ho\u00e0n t\u1ea5t',
+  CANCELLED: '\u0110\u00e3 h\u1ee7y',
+  NO_SHOW: 'V\u1eafng',
+  RESCHEDULED: 'D\u1eddi l\u1ecbch',
+};
+
+const TRANSACTION_LABELS: Record<string, string> = {
+  TOP_UP: 'N\u1ea1p ti\u1ec1n',
+  SESSION_DEDUCT: 'Tr\u1eeb bu\u1ed5i h\u1ecdc',
+  REFUND: 'Ho\u00e0n ti\u1ec1n',
+  ADJUSTMENT: '\u0110i\u1ec1u ch\u1ec9nh',
+  BONUS: 'Th\u01b0\u1edfng',
+  TRANSFER_OUT: 'Chuy\u1ec3n \u0111i',
+  TRANSFER_IN: 'Nh\u1eadn chuy\u1ec3n',
+};
+
+const INVOICE_STATUS_LABELS: Record<string, string> = {
+  APPROVED: '\u0110\u00e3 thanh to\u00e1n',
+  PAID: '\u0110\u00e3 thanh to\u00e1n',
+  PENDING: 'Ch\u1edd x\u1eed l\u00fd',
+  PENDING_APPROVAL: 'Ch\u1edd duy\u1ec7t',
+  CANCELLED: '\u0110\u00e3 h\u1ee7y',
+  REJECTED: 'T\u1eeb ch\u1ed1i',
+};
+
+const ATTENDANCE_LABELS: Record<string, string> = {
+  PRESENT: 'C\u00f3 m\u1eb7t',
+  ABSENT: 'V\u1eafng',
+  LATE: '\u0110i mu\u1ed9n',
+  EXCUSED: 'Xin ph\u00e9p',
+};
 
 @Component({
   selector: 'app-parent-dashboard',
   standalone: true,
-  imports: [CommonModule],
-  template: `
-  <div class="dashboard">
-    <h2>Dashboard Phụ huynh</h2>
-
-    <div *ngIf="loading()" class="loading">Đang tải dữ liệu...</div>
-    <div *ngIf="error()" class="error">{{ error() }}</div>
-
-    <div *ngIf="data()" class="grid">
-      <!-- Wallet -->
-      <div class="card highlight blue">
-        <h4>Ví tiền</h4>
-        <div *ngIf="!data()!.wallet" class="empty">Chưa có ví</div>
-        <div *ngIf="data()!.wallet as w">
-          <div class="value">{{ w.balance | number:'1.0-0' }}đ</div>
-          <span class="badge" [attr.data-status]="w.status">{{ w.status === 'ACTIVE' ? 'Hoạt động' : w.status }}</span>
-        </div>
-      </div>
-      <div class="card highlight green">
-        <h4>Tổng nạp</h4>
-        <div class="value">{{ data()!.wallet?.totalTopUp || 0 | number:'1.0-0' }}đ</div>
-      </div>
-      <div class="card highlight purple">
-        <h4>Buổi cần xác nhận</h4>
-        <div class="value">{{ data()!.sessions.needsConfirmation }}</div>
-        <small>Tổng buổi: {{ data()!.sessions.total }}</small>
-      </div>
-      <div class="card highlight orange">
-        <h4>Con em</h4>
-        <div class="value">{{ data()!.children.total }}</div>
-        <small>Ticket mở: {{ data()!.tickets.openTickets }}</small>
-      </div>
-
-      <!-- Children list -->
-      <div class="card wide">
-        <h4>👨‍👧‍👦 Danh sách con em</h4>
-        <div *ngIf="data()!.children.list.length === 0" class="empty">Chưa có học sinh nào</div>
-        <div class="children-list">
-          <div *ngFor="let child of data()!.children.list" class="child-card">
-            <strong>{{ child.name }}</strong>
-            <span *ngIf="child.grade">Lớp {{ child.grade }}</span>
-            <span *ngIf="child.subjects?.length">{{ child.subjects.join(', ') }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Session stats -->
-      <div class="card">
-        <h4>📊 Thống kê buổi học</h4>
-        <div class="status-list">
-          <div *ngFor="let item of objectEntries(data()!.sessions.byStatus)" class="status-item">
-            <span class="badge" [attr.data-status]="item[0]">{{ statusLabel(item[0]) }}</span>
-            <span class="count">{{ item[1] }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- Wallet summary -->
-      <div class="card" *ngIf="data()!.wallet">
-        <h4>💰 Chi tiết ví</h4>
-        <div class="stat-row">
-          <div class="stat"><span class="num green-text">{{ data()!.wallet.totalTopUp | number:'1.0-0' }}đ</span><span class="lbl">Đã nạp</span></div>
-          <div class="stat"><span class="num red-text">{{ data()!.wallet.totalDeducted | number:'1.0-0' }}đ</span><span class="lbl">Đã trừ</span></div>
-          <div class="stat"><span class="num">{{ data()!.wallet.totalRefunded | number:'1.0-0' }}đ</span><span class="lbl">Hoàn trả</span></div>
-        </div>
-      </div>
-
-      <!-- Upcoming sessions -->
-      <div class="card full">
-        <h4>📅 Lịch học sắp tới</h4>
-        <div *ngIf="data()!.recentSessions.length === 0" class="empty">Không có buổi học sắp tới</div>
-        <table *ngIf="data()!.recentSessions.length > 0" class="data-table">
-          <thead><tr><th>Ngày giờ</th><th>Giáo viên</th><th>Học sinh</th><th>Lớp</th><th>Trạng thái</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let s of data()!.recentSessions">
-              <td>{{ s.scheduledDate | date:'dd/MM/yyyy' }} {{ s.scheduledStartTime }}</td>
-              <td>{{ s.teacherId?.fullName || 'N/A' }}</td>
-              <td>{{ s.studentId?.name || 'N/A' }}</td>
-              <td>{{ s.classId?.name || 'N/A' }}</td>
-              <td><span class="badge" [attr.data-status]="s.status">{{ statusLabel(s.status) }}</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- INVOICES — Lịch sử thanh toán / hóa đơn -->
-      <div class="card full">
-        <h4>🧾 Lịch sử thanh toán</h4>
-        <div *ngIf="!data()!.invoices?.list?.length" class="empty">Chưa có hóa đơn nào</div>
-        <div class="invoice-summary" *ngIf="data()!.invoices?.total">
-          <span class="tag green-bg">Tổng hoá đơn: {{ data()!.invoices.total }}</span>
-          <span class="tag blue-bg">Đã thanh toán: {{ data()!.invoices.totalPaid | number:'1.0-0' }}đ</span>
-        </div>
-        <table *ngIf="data()!.invoices?.list?.length" class="data-table">
-          <thead>
-            <tr>
-              <th>Mã HĐ</th>
-              <th>Học sinh</th>
-              <th>Lớp học</th>
-              <th>Số buổi</th>
-              <th>Giá/buổi</th>
-              <th>Tổng tiền</th>
-              <th>Ngày TT</th>
-              <th>Trạng thái</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let inv of data()!.invoices.list">
-              <td class="mono">{{ inv.invoiceNumber }}</td>
-              <td>{{ inv.studentId?.name || 'N/A' }} <small *ngIf="inv.studentId?.studentCode">({{ inv.studentId.studentCode }})</small></td>
-              <td>{{ inv.classId?.name || '—' }} <small *ngIf="inv.classId?.code">({{ inv.classId.code }})</small></td>
-              <td class="center">{{ inv.sessions || '—' }}</td>
-              <td class="right">{{ inv.pricePerSession ? (inv.pricePerSession | number:'1.0-0') + 'đ' : '—' }}</td>
-              <td class="right bold">{{ inv.amount | number:'1.0-0' }}đ</td>
-              <td>{{ inv.paymentDate | date:'dd/MM/yyyy' }}</td>
-              <td><span class="badge" [attr.data-status]="inv.status">{{ invoiceStatusLabel(inv.status) }}</span></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- ATTENDANCE — Lịch sử điểm danh -->
-      <div class="card full">
-        <h4>✅ Lịch sử điểm danh</h4>
-        <div *ngIf="!data()!.attendance?.recentList?.length" class="empty">Chưa có bản ghi điểm danh</div>
-        <div class="attendance-summary" *ngIf="data()!.attendance?.total">
-          <span class="tag green-bg" *ngIf="data()!.attendance.byStatus['PRESENT']">Có mặt: {{ data()!.attendance.byStatus['PRESENT'] }}</span>
-          <span class="tag yellow-bg" *ngIf="data()!.attendance.byStatus['LATE']">Đi muộn: {{ data()!.attendance.byStatus['LATE'] }}</span>
-          <span class="tag red-bg" *ngIf="data()!.attendance.byStatus['ABSENT']">Vắng: {{ data()!.attendance.byStatus['ABSENT'] }}</span>
-          <span class="tag gray-bg" *ngIf="data()!.attendance.byStatus['EXCUSED']">Xin phép: {{ data()!.attendance.byStatus['EXCUSED'] }}</span>
-          <span class="tag blue-bg">Tổng: {{ data()!.attendance.total }}</span>
-        </div>
-        <table *ngIf="data()!.attendance?.recentList?.length" class="data-table">
-          <thead>
-            <tr>
-              <th>Ngày</th>
-              <th>Học sinh</th>
-              <th>Lớp</th>
-              <th>Giáo viên</th>
-              <th>Trạng thái</th>
-              <th>Ghi chú</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr *ngFor="let a of data()!.attendance.recentList">
-              <td>{{ a.date | date:'dd/MM/yyyy' }}</td>
-              <td>{{ a.studentId?.name || 'N/A' }} <small *ngIf="a.studentId?.studentCode">({{ a.studentId.studentCode }})</small></td>
-              <td>{{ a.classId?.name || '—' }} <small *ngIf="a.classId?.code">({{ a.classId.code }})</small></td>
-              <td>{{ a.teacherId?.fullName || 'N/A' }}</td>
-              <td><span class="badge" [attr.data-attend]="a.status">{{ attendanceLabel(a.status) }}</span></td>
-              <td>{{ a.notes || '—' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- Recent transactions -->
-      <div class="card full">
-        <h4>💳 Giao dịch ví gần đây</h4>
-        <div *ngIf="data()!.recentTransactions.length === 0" class="empty">Chưa có giao dịch</div>
-        <table *ngIf="data()!.recentTransactions.length > 0" class="data-table">
-          <thead><tr><th>Loại</th><th>Số tiền</th><th>Trạng thái</th><th>Ngày</th></tr></thead>
-          <tbody>
-            <tr *ngFor="let t of data()!.recentTransactions">
-              <td><span class="badge" [attr.data-type]="t.type">{{ txLabel(t.type) }}</span></td>
-              <td [class.deduct]="t.type === 'SESSION_DEDUCT'" [class.credit]="t.type === 'TOP_UP' || t.type === 'REFUND' || t.type === 'TRANSFER_IN'">
-                {{ isCredit(t.type) ? '+' : '-' }}{{ t.amount | number:'1.0-0' }}đ
-              </td>
-              <td><span class="badge" [attr.data-status]="t.status">{{ t.status }}</span></td>
-              <td>{{ t.createdAt | date:'dd/MM/yyyy HH:mm' }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-  `,
-  styles: [`
-    .dashboard { padding: 24px; }
-    h2 { margin:0 0 24px; color:#1e293b; }
-    .loading { text-align:center; padding:40px; color:#64748b; }
-    .error { background:#fef2f2; color:#dc2626; padding:12px 16px; border-radius:8px; margin-bottom:16px; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:16px; }
-    .card { background:#fff; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
-    .card h4 { margin:0 0 12px; color:#475569; font-size:14px; text-transform:uppercase; letter-spacing:0.5px; }
-    .card.wide { grid-column: span 2; }
-    .card.full { grid-column: 1 / -1; }
-    .card.highlight { border-top:4px solid; }
-    .card.highlight.blue { border-color:#3b82f6; }
-    .card.highlight.green { border-color:#22c55e; }
-    .card.highlight.purple { border-color:#8b5cf6; }
-    .card.highlight.orange { border-color:#f97316; }
-    .value { font-size:28px; font-weight:700; color:#1e293b; margin-bottom:4px; }
-    .card small { color:#94a3b8; }
-    .children-list { display:flex; gap:12px; flex-wrap:wrap; }
-    .child-card { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 16px; display:flex; flex-direction:column; gap:4px; min-width:180px; }
-    .child-card strong { color:#1e293b; }
-    .child-card span { font-size:13px; color:#64748b; }
-    .stat-row { display:flex; gap:20px; flex-wrap:wrap; }
-    .stat { display:flex; flex-direction:column; align-items:center; }
-    .stat .num { font-size:18px; font-weight:700; color:#1e293b; }
-    .stat .lbl { font-size:12px; color:#94a3b8; margin-top:2px; }
-    .status-list { display:flex; flex-direction:column; gap:6px; }
-    .status-item { display:flex; justify-content:space-between; align-items:center; }
-    .badge { padding:2px 8px; border-radius:99px; font-size:11px; background:#e2e8f0; color:#475569; font-weight:600; }
-    .badge[data-status="ACTIVE"], .badge[data-status="FINALIZED"], .badge[data-status="COMPLETED"], .badge[data-status="APPROVED"] { background:#dcfce7; color:#16a34a; }
-    .badge[data-status="SCHEDULED"], .badge[data-status="OPEN"] { background:#dbeafe; color:#2563eb; }
-    .badge[data-status="CANCELLED"] { background:#fef2f2; color:#dc2626; }
-    .badge[data-status="TEACHER_COMPLETED"], .badge[data-status="PENDING"], .badge[data-status="IN_PROGRESS"] { background:#fef9c3; color:#ca8a04; }
-    .badge[data-type="TOP_UP"] { background:#dbeafe; color:#2563eb; }
-    .badge[data-type="SESSION_DEDUCT"] { background:#fef2f2; color:#dc2626; }
-    .badge[data-type="REFUND"] { background:#fef9c3; color:#ca8a04; }
-    .badge[data-type="TRANSFER_OUT"] { background:#fed7aa; color:#9a3412; }
-    .badge[data-type="TRANSFER_IN"] { background:#bbf7d0; color:#166534; }
-    .badge[data-attend="PRESENT"] { background:#dcfce7; color:#16a34a; }
-    .badge[data-attend="ABSENT"] { background:#fef2f2; color:#dc2626; }
-    .badge[data-attend="LATE"] { background:#fef9c3; color:#ca8a04; }
-    .badge[data-attend="EXCUSED"] { background:#e2e8f0; color:#475569; }
-    .count { font-weight:600; color:#1e293b; }
-    .deduct { color:#dc2626; }
-    .credit { color:#16a34a; }
-    .green-text { color:#16a34a; }
-    .red-text { color:#dc2626; }
-    .mono { font-family:'Cascadia Code','Consolas',monospace; font-size:12px; }
-    .center { text-align:center; }
-    .right { text-align:right; }
-    .bold { font-weight:600; }
-    .data-table { width:100%; border-collapse:collapse; font-size:13px; }
-    .data-table th { text-align:left; padding:8px; border-bottom:2px solid #e2e8f0; color:#64748b; font-size:12px; text-transform:uppercase; }
-    .data-table td { padding:8px; border-bottom:1px solid #f1f5f9; }
-    .data-table small { color:#94a3b8; }
-    .invoice-summary, .attendance-summary { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px; }
-    .tag { display:inline-block; padding:4px 12px; border-radius:6px; font-size:12px; font-weight:600; }
-    .green-bg { background:#dcfce7; color:#166534; }
-    .blue-bg { background:#dbeafe; color:#1d4ed8; }
-    .yellow-bg { background:#fef9c3; color:#92400e; }
-    .red-bg { background:#fef2f2; color:#dc2626; }
-    .gray-bg { background:#f1f5f9; color:#475569; }
-    .empty { color:#94a3b8; font-style:italic; padding:12px 0; }
-    @media (max-width:768px) { .card.wide { grid-column: span 1; } }
-  `]
+  imports: [CommonModule, RouterLink],
+  templateUrl: './parent-dashboard.component.html',
+  styleUrls: ['./parent-dashboard.component.css'],
 })
 export class ParentDashboardComponent implements OnInit {
-  data = signal<any>(null);
+  readonly financeLinks = FINANCE_LINKS;
+  readonly learningLinks = LEARNING_LINKS;
+  readonly supportLinks = SUPPORT_LINKS;
+
+  data = signal<ParentDashboardData | null>(null);
   loading = signal(false);
   error = signal('');
 
-  constructor(private dashboardService: DashboardService) {}
+  readonly children = computed(() => this.data()?.children?.list || []);
+  readonly recentInvoices = computed(() => (this.data()?.invoices?.list || []).slice(0, 6));
+  readonly recentTransactions = computed(() => (this.data()?.recentTransactions || []).slice(0, 8));
+  readonly upcomingSessions = computed(() => (this.data()?.recentSessions || []).slice(0, 6));
+  readonly recentReports = computed(() => (this.data()?.attendance?.recentList || []).slice(0, 6));
+  readonly totalInflow = computed(() => {
+    const wallet = this.data()?.wallet;
+    if (!wallet) return 0;
+    return Number(wallet.totalTopUp || 0) + Number(wallet.totalRefunded || 0);
+  });
+  readonly totalOutflow = computed(() => Number(this.data()?.wallet?.totalDeducted || 0));
+  readonly programSubjects = computed(() => {
+    const subjects = new Set<string>();
+    for (const child of this.children()) {
+      for (const subject of child.subjects || []) {
+        if (subject) {
+          subjects.add(subject);
+        }
+      }
+    }
+    return Array.from(subjects.values());
+  });
+  readonly classHighlights = computed<HighlightItem[]>(() => {
+    const result = new Map<string, HighlightItem>();
+    for (const session of this.data()?.recentSessions || []) {
+      this.pushHighlight(result, session.classId);
+    }
+    for (const invoice of this.data()?.invoices?.list || []) {
+      this.pushHighlight(result, invoice.classId);
+    }
+    for (const attendance of this.data()?.attendance?.recentList || []) {
+      this.pushHighlight(result, attendance.classId);
+    }
+    return Array.from(result.values()).slice(0, 10);
+  });
+  readonly teacherHighlights = computed<string[]>(() => {
+    const result = new Set<string>();
+    for (const session of this.data()?.recentSessions || []) {
+      const teacher = this.personLabel(session.teacherId);
+      if (teacher !== '-') {
+        result.add(teacher);
+      }
+    }
+    for (const attendance of this.data()?.attendance?.recentList || []) {
+      const teacher = this.personLabel(attendance.teacherId);
+      if (teacher !== '-') {
+        result.add(teacher);
+      }
+    }
+    return Array.from(result.values()).slice(0, 10);
+  });
 
-  ngOnInit() { this.load(); }
+  constructor(private readonly dashboardService: DashboardService) {}
 
-  async load() {
+  ngOnInit(): void {
+    void this.load();
+  }
+
+  async load(): Promise<void> {
     this.loading.set(true);
     this.error.set('');
     try {
       const result = await this.dashboardService.getParentDashboard();
       this.data.set(result);
-    } catch (e: any) {
-      this.error.set(e?.error?.message || 'Lỗi tải dữ liệu');
+    } catch (error: any) {
+      this.error.set(error?.error?.message || 'Khong the tai dashboard phu huynh.');
     } finally {
       this.loading.set(false);
     }
   }
 
-  objectEntries(obj: any): [string, any][] {
-    return obj ? Object.entries(obj) : [];
+  childLabel(child?: DashboardChild | null): string {
+    return child?.fullName || child?.name || 'Hoc sinh';
   }
 
-  statusLabel(s: string): string {
-    const map: Record<string, string> = {
-      SCHEDULED: 'Đã lên lịch', TEACHER_COMPLETED: 'GV xác nhận',
-      PARENT_CONFIRMED: 'PH xác nhận', FINALIZED: 'Hoàn tất',
-      CANCELLED: 'Đã hủy', NO_SHOW: 'Vắng', RESCHEDULED: 'Dời lịch',
-    };
-    return map[s] || s;
+  personLabel(person?: DashboardEntityRef | null): string {
+    return person?.fullName || person?.name || '-';
   }
 
-  txLabel(type: string): string {
-    const map: Record<string, string> = {
-      TOP_UP: 'Nạp tiền', SESSION_DEDUCT: 'Trừ buổi học',
-      REFUND: 'Hoàn tiền', ADJUSTMENT: 'Điều chỉnh', BONUS: 'Thưởng',
-      TRANSFER_OUT: 'Chuyển đi', TRANSFER_IN: 'Nhận chuyển',
-    };
-    return map[type] || type;
+  studentLabel(student?: DashboardEntityRef | null): string {
+    const name = student?.fullName || student?.name;
+    if (!name) {
+      return '-';
+    }
+    return student?.studentCode ? `${name} (${student.studentCode})` : name;
   }
 
-  invoiceStatusLabel(s: string): string {
-    const map: Record<string, string> = {
-      PAID: 'Đã thanh toán', PENDING: 'Chờ xử lý', CANCELLED: 'Đã hủy',
-    };
-    return map[s] || s;
+  classLabel(classRef?: DashboardEntityRef | null): string {
+    if (!classRef?.name) {
+      return '-';
+    }
+    return classRef.code ? `${classRef.code} - ${classRef.name}` : classRef.name;
   }
 
-  attendanceLabel(s: string): string {
-    const map: Record<string, string> = {
-      PRESENT: 'Có mặt', ABSENT: 'Vắng',
-      LATE: 'Đi muộn', EXCUSED: 'Xin phép',
-    };
-    return map[s] || s;
+  statusLabel(status?: string): string {
+    if (!status) return '-';
+    return SESSION_STATUS_LABELS[status] || status;
   }
 
-  isCredit(type: string): boolean {
-    return ['TOP_UP', 'REFUND', 'TRANSFER_IN', 'BONUS'].includes(type);
+  txLabel(type?: string): string {
+    if (!type) return '-';
+    return TRANSACTION_LABELS[type] || type;
+  }
+
+  invoiceStatusLabel(status?: string): string {
+    if (!status) return '-';
+    return INVOICE_STATUS_LABELS[status] || status;
+  }
+
+  attendanceLabel(status?: string): string {
+    if (!status) return '-';
+    return ATTENDANCE_LABELS[status] || status;
+  }
+
+  isCredit(type?: string): boolean {
+    return ['TOP_UP', 'REFUND', 'TRANSFER_IN', 'BONUS'].includes(type || '');
+  }
+
+  private pushHighlight(collection: Map<string, HighlightItem>, item?: DashboardEntityRef | null): void {
+    const name = item?.name;
+    if (!name) {
+      return;
+    }
+    const key = item?._id || `${item.code || ''}:${name}`;
+    if (!collection.has(key)) {
+      collection.set(key, { name, code: item.code });
+    }
   }
 }

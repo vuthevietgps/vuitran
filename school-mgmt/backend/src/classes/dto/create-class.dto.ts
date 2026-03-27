@@ -66,6 +66,10 @@ export class CreateClassDto {
   @IsOptional()
   classMode?: string;
 
+  @IsMongoId()
+  @IsOptional()
+  productPackageId?: string;
+
   @IsArray()
   @IsMongoId({ each: true })
   @ArrayUnique()

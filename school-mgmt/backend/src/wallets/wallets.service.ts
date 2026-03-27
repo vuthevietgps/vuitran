@@ -1358,61 +1358,18 @@ export class WalletsService {
    * Nếu sai lệch → ghi log WARN để kế toán review thủ công.
    */
   @Cron('0 2 * * *', { name: 'nightly-ledger-balance-verification' })
-  async verifyWalletBalances(): Promise<void> {
+  async runNightlyLedgerVerification(): Promise<void> {
     this.logger.log('[CRON] Bắt đầu đối soát số dư ví...');
+    const { checked, issues } = await this.runManualLedgerVerification();
 
-    const wallets = await this.walletModel
-      .find({ status: { $ne: 'CLOSED' } })
-      .select('_id userId balance')
-      .lean();
-
-    let checked = 0;
-    let discrepancies = 0;
-    const issues: Array<{ walletId: string; userId: string; systemBalance: number; ledgerBalance: number; diff: number }> = [];
-
-    for (const wallet of wallets) {
-      checked++;
-
-      // Lấy giao dịch cuối cùng đã hoàn thành của ví này
-      const lastEntry = await this.ledgerModel
-        .findOne({
-          walletId: wallet._id,
-          status: { $in: [TransactionStatus.APPROVED, TransactionStatus.COMPLETED] },
-        })
-        .sort({ createdAt: -1 })
-        .select('balanceAfter amount type')
-        .lean();
-
-      const expectedBalance = lastEntry ? lastEntry.balanceAfter : 0;
-      const actualBalance = wallet.balance;
-
-      if (Math.abs(actualBalance - expectedBalance) > 0) {
-        discrepancies++;
-        const diff = actualBalance - expectedBalance;
-        issues.push({
-          walletId: wallet._id.toString(),
-          userId: wallet.userId.toString(),
-          systemBalance: actualBalance,
-          ledgerBalance: expectedBalance,
-          diff,
-        });
-        this.logger.warn(
-          `[BALANCE MISMATCH] Wallet ${wallet._id} (user: ${wallet.userId}): ` +
-          `system=${actualBalance.toLocaleString('vi-VN')}đ, ` +
-          `ledger=${expectedBalance.toLocaleString('vi-VN')}đ, ` +
-          `diff=${diff.toLocaleString('vi-VN')}đ`,
-        );
-      }
-    }
-
-    if (discrepancies === 0) {
+    if (issues.length === 0) {
       this.logger.log(
-        `[CRON] Đối soát hoàn tất: ${checked} ví kiểm tra, KHÔNG có sai lệch ✓`,
+        `[CRON] Đối soát hoàn tất: ${checked} ví đã kiểm tra, KHÔNG có sai lệch ✓`,
       );
     } else {
       this.logger.error(
         `[CRON] Đối soát hoàn tất: ${checked} ví kiểm tra, ` +
-        `${discrepancies} ví SAI LỆCH — cần kế toán xem xét:\n` +
+        `${issues.length} ví SAI LỆCH — cần kế toán xem xét:\n` +
         issues.map(i =>
           `  • Wallet ${i.walletId}: system=${i.systemBalance}đ, ledger=${i.ledgerBalance}đ, diff=${i.diff}đ`
         ).join('\n'),
@@ -1429,6 +1386,53 @@ export class WalletsService {
     discrepancies: number;
     issues: Array<{ walletId: string; userId: string; systemBalance: number; ledgerBalance: number; diff: number }>;
   }> {
+    const walletCount = await this.walletModel.countDocuments({ status: { $ne: 'CLOSED' } });
+
+    const issues = await this.ledgerModel.aggregate([
+      // Sort to get the latest entry first for each wallet
+      { $sort: { walletId: 1, createdAt: -1 } },
+      // Group by walletId and take the very first document (the latest one)
+      {
+        $group: {
+          _id: '$walletId',
+          lastBalanceAfter: { $first: '$balanceAfter' },
+        },
+      },
+      // Join with the wallets collection
+      {
+        $lookup: {
+          from: 'wallets',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'walletInfo',
+        },
+      },
+      { $unwind: '$walletInfo' },
+      // Project to calculate the difference
+      {
+        $project: {
+          walletId: '$_id',
+          userId: '$walletInfo.userId',
+          systemBalance: '$walletInfo.balance',
+          ledgerBalance: { $ifNull: ['$lastBalanceAfter', 0] },
+          diff: { $subtract: ['$walletInfo.balance', { $ifNull: ['$lastBalanceAfter', 0] }] },
+        },
+      },
+      // Filter only those with a non-zero difference
+      { $match: { diff: { $ne: 0 } } },
+    ]);
+
+    return { checked: walletCount, discrepancies: issues.length, issues };
+  }
+}
+
+/*
+  // OLD IMPLEMENTATION (N+1 queries)
+  async runManualLedgerVerification_OLD(): Promise<{
+    checked: number;
+    discrepancies: number;
+    issues: Array<{ walletId: string; userId: string; systemBalance: number; ledgerBalance: number; diff: number }>;
+  }> {
     const wallets = await this.walletModel
       .find({ status: { $ne: 'CLOSED' } })
       .select('_id userId balance')
@@ -1440,8 +1444,7 @@ export class WalletsService {
     for (const wallet of wallets) {
       checked++;
 
-      const lastEntry = await this.ledgerModel
-        .findOne({
+      const lastEntry = await this.ledgerModel.findOne({
           walletId: wallet._id,
           status: { $in: [TransactionStatus.APPROVED, TransactionStatus.COMPLETED] },
         })
@@ -1450,7 +1453,7 @@ export class WalletsService {
         .lean();
 
       const expectedBalance = lastEntry ? lastEntry.balanceAfter : 0;
-      const actualBalance = wallet.balance;
+      const actualBalance = wallet.balance ?? 0;
 
       if (Math.abs(actualBalance - expectedBalance) > 0) {
         issues.push({
@@ -1458,11 +1461,11 @@ export class WalletsService {
           userId: wallet.userId.toString(),
           systemBalance: actualBalance,
           ledgerBalance: expectedBalance,
-          diff: actualBalance - expectedBalance,
+          diff: (actualBalance || 0) - expectedBalance,
         });
       }
     }
 
     return { checked, discrepancies: issues.length, issues };
   }
-}
+*/

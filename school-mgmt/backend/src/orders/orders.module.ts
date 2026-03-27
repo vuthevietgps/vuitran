@@ -11,6 +11,7 @@ import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { MarketingAttributionModule } from '../marketing-attribution/marketing-attribution.module';
+import { OrderCommunicationService } from './order-communication.service';
 
 @Module({
   imports: [
@@ -26,7 +27,7 @@ import { MarketingAttributionModule } from '../marketing-attribution/marketing-a
     MarketingAttributionModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService, EnrollmentService],
-  exports: [OrdersService, EnrollmentService],
+  providers: [OrdersService, EnrollmentService, OrderCommunicationService],
+  exports: [OrdersService, EnrollmentService, OrderCommunicationService],
 })
 export class OrdersModule {}

@@ -57,6 +57,10 @@ type ScopedMaterialStats = {
 @Injectable()
 export class TeachingMaterialsService {
   private readonly logger = new Logger(TeachingMaterialsService.name);
+  private static readonly MATERIAL_ADMIN_ROLES = new Set<Role>([
+    Role.DIRECTOR,
+    Role.OPS,
+  ]);
 
   constructor(
     @InjectModel(TeachingMaterial.name)
@@ -186,17 +190,44 @@ export class TeachingMaterialsService {
     };
   }
 
+  private getActorId(actor: JwtPayload): string | null {
+    return actor?.sub ?? actor?._id ?? null;
+  }
+
+  private getActorObjectId(actor: JwtPayload): Types.ObjectId | null {
+    const actorId = this.getActorId(actor);
+    if (!actorId || !Types.ObjectId.isValid(actorId)) {
+      return null;
+    }
+    return new Types.ObjectId(actorId);
+  }
+
+  private isMaterialAdmin(actor: JwtPayload): boolean {
+    return TeachingMaterialsService.MATERIAL_ADMIN_ROLES.has(actor.role);
+  }
+
+  private isMaterialOwner(material: { teacherId?: Types.ObjectId | string | null }, actor: JwtPayload): boolean {
+    const actorId = this.getActorId(actor);
+    const ownerId = material.teacherId?.toString?.() || null;
+    return !!actorId && !!ownerId && ownerId === actorId;
+  }
+
   private buildVisibilityFilter(actor: JwtPayload): FilterQuery<TeachingMaterialDocument> {
-    if (actor.role === Role.TEACHER) {
-      return {
-        $or: [
-          { teacherId: new Types.ObjectId(actor.sub) },
-          { isShared: true },
-        ],
-      };
+    if (this.isMaterialAdmin(actor)) {
+      return {};
     }
 
-    return {};
+    const actorObjectId = this.getActorObjectId(actor);
+    if (!actorObjectId) {
+      return { _id: { $in: [] } };
+    }
+
+    return {
+      $or: [
+        { teacherId: actorObjectId },
+        { isShared: true },
+      ],
+    };
   }
 
   private buildScopedFilter(
@@ -370,7 +401,7 @@ export class TeachingMaterialsService {
       throw new NotFoundException('Tai lieu khong ton tai');
     }
 
-    if (actor.role === Role.TEACHER && material.teacherId?.toString() !== actor.sub) {
+    if (!this.isMaterialAdmin(actor) && !this.isMaterialOwner(material, actor)) {
       throw new ForbiddenException('Ban khong co quyen thao tac tai lieu nay');
     }
 
@@ -382,8 +413,13 @@ export class TeachingMaterialsService {
     file: Express.Multer.File,
     actor: JwtPayload,
   ): Promise<TeachingMaterial> {
+    const actorObjectId = this.getActorObjectId(actor);
+    if (!actorObjectId) {
+      throw new ForbiddenException('Khong xac dinh duoc tai khoan upload');
+    }
+
     const material = new this.materialModel({
-      teacherId: new Types.ObjectId(actor.sub),
+      teacherId: actorObjectId,
       title: dto.title,
       description: dto.description,
       subject: dto.subject,
@@ -463,13 +499,13 @@ export class TeachingMaterialsService {
     const material = await this.findMaterialForView(id);
     if (!material) throw new NotFoundException('Tai lieu khong ton tai');
 
-    if (actor.role === Role.TEACHER) {
-      const isOwner =
-        (material as any).teacherId?._id?.toString() === actor.sub ||
-        (material as any).teacherId?.toString?.() === actor.sub;
-      if (!isOwner && !(material as any).isShared) {
-        throw new NotFoundException('Tai lieu khong ton tai');
-      }
+    const ownerId =
+      (material as any).teacherId?._id?.toString?.()
+      || (material as any).teacherId?.toString?.()
+      || null;
+    const isOwner = !!ownerId && ownerId === this.getActorId(actor);
+    if (!this.isMaterialAdmin(actor) && !isOwner && !(material as any).isShared) {
+      throw new NotFoundException('Tai lieu khong ton tai');
     }
 
     return material as TeachingMaterial;

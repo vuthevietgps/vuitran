@@ -3,6 +3,9 @@ import { authGuard } from './guards/auth.guard';
 import { roleGuard } from './guards/role.guard';
 import { Role } from './models/role.enum';
 
+const ALL_ROLES = Object.values(Role) as Role[];
+const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE];
+
 export const routes: Routes = [
   {
     path: 'login',
@@ -85,7 +88,7 @@ export const routes: Routes = [
       },
       {
         path: 'comprehensive-report',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING])],
+        canActivate: [roleGuard(REPORT_ACCESS_ROLES)],
         loadComponent: () =>
           import('./components/comprehensive-report.component').then((m) => m.ComprehensiveReportComponent),
       },
@@ -127,7 +130,7 @@ export const routes: Routes = [
       },
       {
         path: 'teaching-materials',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER])],
+        canActivate: [roleGuard(ALL_ROLES)],
         loadComponent: () =>
           import('./components/teaching-materials.component').then((m) => m.TeachingMaterialsComponent),
       },
@@ -145,7 +148,7 @@ export const routes: Routes = [
       },
       {
         path: 'pending-approvals',
-        canActivate: [roleGuard([Role.DIRECTOR])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])],
         loadComponent: () =>
           import('./components/pending-approvals.component').then((m) => m.PendingApprovalsComponent),
       },
@@ -201,6 +204,12 @@ export const routes: Routes = [
         canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
         loadComponent: () =>
           import('./components/orders.component').then((m) => m.OrdersComponent),
+      },
+      {
+        path: 'trial-enrollments',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/trial-enrollments.component').then((m) => m.TrialEnrollmentsComponent),
       },
       {
         path: 'work-sessions',

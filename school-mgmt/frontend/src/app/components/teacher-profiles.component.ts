@@ -100,7 +100,10 @@ interface TeacherEditForm {
           <h2>Chi tiet giao vien</h2>
           <p class="subtext" *ngIf="isSale()">Sale chi thay lop, hoc sinh va buoi hoc thuoc sale cua minh.</p>
         </div>
-        <button *ngIf="canEditSelected()" class="primary-btn" (click)="openEditModal()">Sua</button>
+        <div class="detail-actions">
+          <button *ngIf="canApproveSelected()" class="secondary-btn" (click)="approveSelected()">Duyet</button>
+          <button *ngIf="canEditSelected()" class="primary-btn" (click)="openEditModal()">Sua</button>
+        </div>
       </div>
 
       <div *ngIf="detailLoading()" class="loading">Dang tai ho so...</div>
@@ -372,6 +375,7 @@ interface TeacherEditForm {
     .primary-btn { background: #0f766e; color: #fff; }
     .primary-btn:disabled { opacity: .6; cursor: not-allowed; }
     .detail-title { flex: 1; min-width: 220px; }
+    .detail-actions { display: flex; gap: 8px; align-items: center; }
     .modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 50; }
     .modal { width: min(820px, 100%); max-height: calc(100vh - 40px); overflow: auto; padding: 20px; }
     .edit-form { display: flex; flex-direction: column; gap: 16px; }
@@ -436,12 +440,17 @@ export class TeacherProfilesComponent implements OnInit {
   }
 
   isDirector(): boolean { return this.auth.userSignal()?.role === 'DIRECTOR'; }
+  isOps(): boolean { return this.auth.userSignal()?.role === 'OPS'; }
   isSale(): boolean { return this.auth.userSignal()?.role === 'SALE'; }
   showFinance(): boolean { return !this.isSale(); }
 
   canEditSelected(): boolean {
     const role = this.auth.userSignal()?.role;
     return role === 'DIRECTOR' || role === 'SALE' || role === 'ACCOUNTING';
+  }
+
+  canApproveSelected(): boolean {
+    return (this.isDirector() || this.isOps()) && this.profileData()?.status === 'PENDING';
   }
 
   async loadTeachers() {
@@ -451,7 +460,7 @@ export class TeacherProfilesComponent implements OnInit {
       this.allTeachers = await this.teacherService.getAllTeachers();
       this.filterTeachers();
     } catch (e: any) {
-      this.error.set(e?.error?.message || 'Loi tai danh sach giao vien');
+      this.error.set(this.getErrorMessage(e, 'Loi tai danh sach giao vien'));
     } finally {
       this.loading.set(false);
     }
@@ -494,9 +503,22 @@ export class TeacherProfilesComponent implements OnInit {
     try {
       this.fullProfile.set(await this.teacherService.getFullProfile(id));
     } catch (e: any) {
-      this.detailError.set(e?.error?.message || 'Loi tai ho so chi tiet');
+      this.detailError.set(this.getErrorMessage(e, 'Loi tai ho so chi tiet'));
     } finally {
       this.detailLoading.set(false);
+    }
+  }
+
+  async approveSelected() {
+    if (!this.selectedId || !this.canApproveSelected()) return;
+    if (!confirm('Duyet giao vien nay?')) return;
+
+    this.detailError.set('');
+    try {
+      await this.teacherService.approve(this.selectedId);
+      await Promise.all([this.loadTeachers(), this.loadFullProfile(this.selectedId)]);
+    } catch (e: any) {
+      this.detailError.set(this.getErrorMessage(e, 'Khong the duyet giao vien'));
     }
   }
 
@@ -577,7 +599,7 @@ export class TeacherProfilesComponent implements OnInit {
       this.showEditModal.set(false);
       await Promise.all([this.loadTeachers(), this.loadFullProfile(this.selectedId)]);
     } catch (e: any) {
-      this.formError.set(e?.error?.message || 'Khong the cap nhat ho so giao vien');
+      this.formError.set(this.getErrorMessage(e, 'Khong the cap nhat ho so giao vien'));
     } finally {
       this.saving.set(false);
     }
@@ -659,4 +681,27 @@ export class TeacherProfilesComponent implements OnInit {
   }
 
   objectEntries(obj: Record<string, any> | null | undefined): [string, any][] { return obj ? Object.entries(obj) : []; }
+
+  private getErrorMessage(error: any, fallback: string): string {
+    return this.normalizeErrorMessage(error?.error?.message)
+      || this.normalizeErrorMessage(error?.message)
+      || fallback;
+  }
+
+  private normalizeErrorMessage(value: any): string | null {
+    if (!value) return null;
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+      const normalized = value
+        .map((item) => this.normalizeErrorMessage(item))
+        .filter((item): item is string => !!item);
+      return normalized.length ? normalized.join(', ') : null;
+    }
+    if (typeof value === 'object') {
+      return this.normalizeErrorMessage(value.message)
+        || this.normalizeErrorMessage(value.error)
+        || null;
+    }
+    return String(value);
+  }
 }

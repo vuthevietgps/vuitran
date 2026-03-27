@@ -5,6 +5,8 @@ import { ClassesController } from './classes.controller';
 import { Classroom, ClassroomSchema } from './schemas/class.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
+import { Product, ProductSchema } from '../products/schemas/product.schema';
+import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { UsersModule } from '../users/users.module';
 import { StudentsModule } from '../students/students.module';
 import { MessagesModule } from '../messages/messages.module';
@@ -15,6 +17,8 @@ import { MessagesModule } from '../messages/messages.module';
       { name: Classroom.name, schema: ClassroomSchema },
       { name: Invoice.name, schema: InvoiceSchema },
       { name: TeacherProfile.name, schema: TeacherProfileSchema },
+      { name: Product.name, schema: ProductSchema },
+      { name: Session.name, schema: SessionSchema },
     ]),
     UsersModule,
     StudentsModule,

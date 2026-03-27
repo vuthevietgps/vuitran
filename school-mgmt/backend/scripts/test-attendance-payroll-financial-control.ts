@@ -280,6 +280,7 @@ async function main() {
     empty as any,
     empty as any,
     empty as any,
+    empty as any,
     {} as any,
     payrollAggregate as any,
     expenseAggregate as any,

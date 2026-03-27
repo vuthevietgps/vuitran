@@ -129,6 +129,10 @@ export class CreateOrderDto {
   @IsOptional()
   adGroupId?: string;
 
+  @IsMongoId()
+  @IsOptional()
+  referredByUserId?: string;
+
   @IsString()
   @IsOptional()
   adGroupName?: string;

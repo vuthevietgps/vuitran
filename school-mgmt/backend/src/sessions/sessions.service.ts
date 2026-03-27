@@ -47,6 +47,7 @@ import { HoldReason } from '../payroll/schemas/payroll-transaction.schema';
 import { TicketsService } from '../tickets/tickets.service';
 import { TicketType, TicketPriority } from '../tickets/schemas/ticket.schema';
 import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
+import { isTeacherAssignedToStudent } from '../classes/student-config.utils';
 
 // ─── Constants ───────────────────────────────────────────────────────
 const TEACHING_REPORT_DEADLINE_HOURS = 24; // Deadline nộp báo cáo: 24h sau buổi học
@@ -87,7 +88,12 @@ export class SessionsService {
     classroom: any,
     teacherId: string,
     scheduledDate: Date,
+    studentId?: string,
   ): boolean {
+    if (studentId && isTeacherAssignedToStudent(classroom, studentId, teacherId)) {
+      return true;
+    }
+
     if (this.objectIdToString(classroom?.teacher) === teacherId) {
       return true;
     }
@@ -411,7 +417,7 @@ export class SessionsService {
     }
 
     // Validate teacher assignment for class/date
-    if (!this.isTeacherAssignedToClassOnDate(classroom, dto.teacherId, scheduledDate)) {
+    if (!this.isTeacherAssignedToClassOnDate(classroom, dto.teacherId, scheduledDate, dto.studentId)) {
       throw new BadRequestException(
         'Giao vien khong phu trach lop nay trong ngay duoc chon',
       );
@@ -424,7 +430,7 @@ export class SessionsService {
           'Giao vien chi duoc tao buoi hoc cho chinh minh',
         );
       }
-      if (!this.isTeacherAssignedToClassOnDate(classroom, actor.sub, scheduledDate)) {
+      if (!this.isTeacherAssignedToClassOnDate(classroom, actor.sub, scheduledDate, dto.studentId)) {
         throw new ForbiddenException(
           'Ban khong phu trach lop nay trong ngay duoc chon',
         );
@@ -507,6 +513,7 @@ export class SessionsService {
       parentUserId: parentUserId ? new Types.ObjectId(parentUserId) : undefined,
       sessionType: dto.sessionType,
       amountCharged,
+      referenceAmountCharged: amountCharged,
       teacherPayout,
       durationMinutes,
       evaluation,
@@ -612,8 +619,38 @@ export class SessionsService {
       this.sessionModel.countDocuments(filter),
     ]);
 
+    const attendanceBySessionId = new Map<
+      string,
+      { attendedAt?: Date | null; status?: AttendanceStatus | null }
+    >();
+
+    if (data.length > 0) {
+      const sessionIds = data.map((session) => session._id as Types.ObjectId);
+      const attendanceRows = await this.attendanceModel
+        .find({ sessionId: { $in: sessionIds } })
+        .sort({ attendedAt: -1, updatedAt: -1, createdAt: -1 })
+        .select('sessionId attendedAt status')
+        .lean();
+
+      for (const row of attendanceRows as any[]) {
+        const sessionId = row?.sessionId?.toString();
+        if (!sessionId || attendanceBySessionId.has(sessionId)) continue;
+        attendanceBySessionId.set(sessionId, {
+          attendedAt: row?.attendedAt || null,
+          status: row?.status || null,
+        });
+      }
+    }
+
     return {
-      data,
+      data: data.map((session: any) => {
+        const attendance = attendanceBySessionId.get(session._id?.toString());
+        return {
+          ...session,
+          attendedAt: attendance?.attendedAt || null,
+          attendanceStatus: attendance?.status || null,
+        };
+      }),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -757,7 +794,11 @@ export class SessionsService {
     }
 
     // Chỉ cho phép nộp báo cáo cho buổi đã hoàn thành
-    const allowedForReport = [SessionStatus.TEACHER_COMPLETED, SessionStatus.FINALIZED];
+    const allowedForReport = [
+      SessionStatus.TEACHER_COMPLETED,
+      SessionStatus.PARENT_CONFIRMED,
+      SessionStatus.FINALIZED,
+    ];
     if (!allowedForReport.includes(session.status)) {
       throw new BadRequestException(
         'Chỉ nộp báo cáo cho buổi học đã hoàn thành',
@@ -824,7 +865,12 @@ export class SessionsService {
     // ─── Tạo PayrollTransaction khi lần đầu nộp báo cáo ───────────────
     // Chỉ tạo khi submit lần đầu (không phải update)
     // PayrollTransaction sẽ tự động tính penalty nếu nộp trễ
-    if (!isUpdate && savedSession.teacherPayout && savedSession.teacherPayout > 0) {
+    if (
+      !isUpdate &&
+      savedSession.teacherPayout &&
+      savedSession.teacherPayout > 0 &&
+      !(savedSession.sessionType === 'TRIAL' && (savedSession as any).trialRejectedNoPay)
+    ) {
       try {
         await this.payrollTxService.createFromSession({
           teacherId: savedSession.teacherId.toString(),
@@ -876,7 +922,13 @@ export class SessionsService {
       classId: classObjectId,
       teacherId: new Types.ObjectId(teacherUserId),
       scheduledDate: { $gte: dayStart, $lt: dayEnd },
-      status: { $in: [SessionStatus.TEACHER_COMPLETED, SessionStatus.FINALIZED] },
+      status: {
+        $in: [
+          SessionStatus.TEACHER_COMPLETED,
+          SessionStatus.PARENT_CONFIRMED,
+          SessionStatus.FINALIZED,
+        ],
+      },
     }).lean();
 
     if (sessions.length === 0) {
@@ -995,14 +1047,17 @@ export class SessionsService {
     if (!ownerParentId || ownerParentId !== parentUserId) {
       throw new ForbiddenException('Ban khong phai PH cua hoc sinh nay');
     }
+    const resolvedParentRating = dto.parentRating ?? dto.rating;
+    const resolvedOverallRating = dto.overallRating ?? dto.rating;
+
     // Legacy fields
     if (dto.parentNotes) session.parentNotes = dto.parentNotes;
-    if (dto.parentRating) session.parentRating = dto.parentRating;
+    if (resolvedParentRating !== undefined) session.parentRating = resolvedParentRating;
 
     // Build parentFeedback (phản hồi chi tiết từ PH)
     const feedback = session.parentFeedback || {} as any;
     if (dto.parentNotes) feedback.parentNotes = dto.parentNotes;
-    if (dto.overallRating) feedback.overallRating = dto.overallRating;
+    if (resolvedOverallRating !== undefined) feedback.overallRating = resolvedOverallRating;
     if (dto.teachingQualityRating) feedback.teachingQualityRating = dto.teachingQualityRating;
     if (dto.communicationRating) feedback.communicationRating = dto.communicationRating;
     if (dto.concerns) feedback.concerns = dto.concerns;
@@ -1012,7 +1067,7 @@ export class SessionsService {
     // ─── Đánh giá & Phân luồng xử lý ─────────────────────────────
     const shouldHoldSalary =
       dto.isSatisfied === false ||
-      (dto.overallRating && dto.overallRating <= 2);
+      (resolvedOverallRating !== undefined && resolvedOverallRating <= 2);
 
     // Xác định trạng thái tiếp theo: bị khiếu nại -> giữ nguyên PARENT_CONFIRMED
     const nextStatus = shouldHoldSalary ? SessionStatus.PARENT_CONFIRMED : SessionStatus.FINALIZED;
@@ -1020,7 +1075,7 @@ export class SessionsService {
     const updatePayload: any = {
       status: nextStatus,
       parentNotes: dto.parentNotes || session.parentNotes,
-      parentRating: dto.parentRating || session.parentRating,
+      parentRating: resolvedParentRating ?? session.parentRating,
       parentFeedback: session.parentFeedback,
       'confirmation.parentConfirmedAt': new Date(),
     };
@@ -1040,11 +1095,10 @@ export class SessionsService {
       throw new BadRequestException('Buổi học đã được chốt bởi hệ thống');
     }
 
-    // CHỈ TRỪ VÍ NẾU PHỤ HUYNH HÀI LÒNG VÀ BUỔI HỌC ĐÃ ĐƯỢC FINALIZED
-    if (!shouldHoldSalary) {
-      await this.deductWalletForSession(updated);
-      await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
-    }
+      // CHỈ TRỪ VÍ NẾU PHỤ HUYNH HÀI LÒNG VÀ BUỔI HỌC ĐÃ ĐƯỢC FINALIZED
+      if (!shouldHoldSalary) {
+        await this.settleFinalizedSession(updated);
+      }
 
     // ─── Khiếu nại: tạo Ticket cho OPS và đóng băng lương GV ──────
     if (shouldHoldSalary) {
@@ -1168,9 +1222,7 @@ export class SessionsService {
       );
     }
 
-    // Trừ ví PH
-    await this.deductWalletForSession(updated);
-    await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
+      await this.settleFinalizedSession(updated);
 
     this.triggerStudentSupportSnapshotRefreshForSession(updated, 'manualFinalize');
     return updated;
@@ -1458,10 +1510,8 @@ export class SessionsService {
         );
         if (!updated) continue; // Already finalized by parent
 
-        // Trừ ví PH
-        await this.deductWalletForSession(updated);
-        await this.applyInvoiceConsumptionForSession(updated._id as Types.ObjectId);
-        autoConfirmedSessions.push(updated);
+          await this.settleFinalizedSession(updated);
+          autoConfirmedSessions.push(updated);
 
         confirmed++;
       }
@@ -1491,6 +1541,7 @@ export class SessionsService {
     const sessions = await this.sessionModel.find({
       status: SessionStatus.FINALIZED,
       isPaid: false,
+      isBonusSession: false,
       amountCharged: { $gt: 0 },
       parentUserId: { $exists: true },
       'confirmation.finalizedAt': { $lt: cutoff },
@@ -1501,10 +1552,9 @@ export class SessionsService {
       // Skip unconverted trials
       if (session.sessionType === 'TRIAL' && !session.trialConverted) continue;
 
-      await this.deductWalletForSession(session);
-      await this.applyInvoiceConsumptionForSession(session._id as Types.ObjectId);
-      const reloaded = await this.sessionModel.findById(session._id).select('isPaid').lean();
-      if (reloaded?.isPaid) recovered++;
+      await this.settleFinalizedSession(session);
+      const reloaded = await this.sessionModel.findById(session._id).select('isPaid isBonusSession').lean();
+      if ((reloaded as any)?.isPaid || (reloaded as any)?.isBonusSession) recovered++;
     }
 
     if (recovered > 0) {
@@ -1524,10 +1574,18 @@ export class SessionsService {
 
     const sessions = await this.sessionModel.find({
       status: SessionStatus.FINALIZED,
-      isPaid: true,
       invoiceConsumptionApplied: false,
-      amountCharged: { $gt: 0 },
-      $or: [{ sessionType: { $ne: 'TRIAL' } }, { trialConverted: true }],
+      $and: [
+        {
+          $or: [
+            { isPaid: true, amountCharged: { $gt: 0 } },
+            { isBonusSession: true, referenceAmountCharged: { $gt: 0 } },
+          ],
+        },
+        {
+          $or: [{ sessionType: { $ne: 'TRIAL' } }, { trialConverted: true }],
+        },
+      ],
       'confirmation.finalizedAt': { $lt: cutoff },
     })
       .select('_id')
@@ -1550,31 +1608,15 @@ export class SessionsService {
 
   // ──────────────────────────────────────────────────────────────────
   //  CRON: AUTO-DECIDE ORPHAN TRIAL SESSIONS
-  //  Buổi thử FINALIZED quá TRIAL_AUTO_DECIDE_DAYS mà chưa có quyết định
-  //  → tự động đánh dấu trialTeacherPaidOnly = true (GV được trả, PH miễn phí)
+  //  Buổi thử cần được Sale/OPS chốt thủ công.
+  //  Không auto-mark teacher-paid-only nữa để tránh trả lương sai rule học thử.
   // ──────────────────────────────────────────────────────────────────
 
   @Cron(CronExpression.EVERY_12_HOURS)
   async autoDecideOrphanTrialSessions() {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - TRIAL_AUTO_DECIDE_DAYS);
-
-    const result = await this.sessionModel.updateMany(
-      {
-        sessionType: 'TRIAL',
-        status: SessionStatus.FINALIZED,
-        trialConverted: false,
-        trialTeacherPaidOnly: false,
-        'confirmation.finalizedAt': { $lt: cutoff },
-      },
-      { $set: { trialTeacherPaidOnly: true } },
+    this.logger.debug(
+      `Skip auto-deciding orphan trial sessions after ${TRIAL_AUTO_DECIDE_DAYS} days; awaiting explicit trial decision`,
     );
-
-    if (result.modifiedCount > 0) {
-      this.logger.log(
-        `Auto-decided ${result.modifiedCount} orphan trial sessions (teacher-paid-only after ${TRIAL_AUTO_DECIDE_DAYS} days)`,
-      );
-    }
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -1590,7 +1632,13 @@ export class SessionsService {
 
     const lateSessions = await this.sessionModel
       .find({
-        status: { $in: [SessionStatus.TEACHER_COMPLETED, SessionStatus.FINALIZED] },
+        status: {
+          $in: [
+            SessionStatus.TEACHER_COMPLETED,
+            SessionStatus.PARENT_CONFIRMED,
+            SessionStatus.FINALIZED,
+          ],
+        },
         hasTeachingReport: false,
         scheduledDate: { $lte: deadlineThreshold },
         isTeacherPaid: false, // Chưa tính lương → còn có thể cứu
@@ -1649,10 +1697,246 @@ export class SessionsService {
     return Math.round(value * 10000) / 10000;
   }
 
+  private getSessionCoverageAmount(session: any): number {
+    const referenceAmount = this.toSafeNumber(session?.referenceAmountCharged, 0);
+    if (referenceAmount > 0) {
+      return referenceAmount;
+    }
+    return this.toSafeNumber(session?.amountCharged, 0);
+  }
+
+  private buildInvoiceConsumptionReset() {
+    return {
+      $set: {
+        invoiceConsumptionApplied: false,
+        consumedInvoiceUnits: 0,
+        consumedInvoiceAmount: 0,
+        consumedBonusUnits: 0,
+        consumedBonusAmount: 0,
+      },
+      $unset: {
+        consumedInvoiceId: 1,
+        bonusInvoiceId: 1,
+      },
+    };
+  }
+
+  private async hasInvoiceCoverageForAmount(
+    session: SessionDocument,
+    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining',
+  ): Promise<boolean> {
+    const coverageAmount = this.getSessionCoverageAmount(session);
+    if (coverageAmount <= 0) {
+      return false;
+    }
+
+    let remainingAmount = coverageAmount;
+    const invoices = await this.invoiceModel
+      .find({
+        studentId: session.studentId,
+        classId: session.classId,
+        status: 'APPROVED',
+        [allowanceField]: { $gt: 0 },
+      })
+      .sort({ paymentDate: 1, createdAt: 1 })
+      .select(`_id ${allowanceField} pricePerSession`)
+      .lean();
+
+    for (const invoice of invoices) {
+      if (remainingAmount <= 0) {
+        break;
+      }
+
+      const pricePerSession = this.toSafeNumber((invoice as any).pricePerSession, 0);
+      const remainingUnits = this.toSafeNumber((invoice as any)[allowanceField], 0);
+      if (pricePerSession <= 0 || remainingUnits <= 0) {
+        continue;
+      }
+
+      const amountCovered = Math.min(
+        remainingAmount,
+        this.roundTo4(remainingUnits * pricePerSession),
+      );
+      if (amountCovered <= 0) {
+        continue;
+      }
+
+      remainingAmount = Math.max(0, this.roundTo4(remainingAmount - amountCovered));
+    }
+
+    return remainingAmount <= 0;
+  }
+
+  private async tryMarkBonusSession(session: SessionDocument): Promise<SessionDocument | null> {
+    if (!session.parentUserId || session.isPaid || session.isBonusSession) {
+      return null;
+    }
+
+    if (session.sessionType === 'TRIAL' && !session.trialConverted) {
+      return null;
+    }
+
+    const coverageAmount = this.getSessionCoverageAmount(session);
+    if (coverageAmount <= 0) {
+      return null;
+    }
+
+    const hasPaidCoverage = await this.hasInvoiceCoverageForAmount(session, 'sessionsRemaining');
+    if (hasPaidCoverage) {
+      return null;
+    }
+
+    const hasBonusCoverage = await this.hasInvoiceCoverageForAmount(session, 'bonusSessionsRemaining');
+    if (!hasBonusCoverage) {
+      return null;
+    }
+
+    const updated = await this.sessionModel.findOneAndUpdate(
+      {
+        _id: session._id,
+        status: SessionStatus.FINALIZED,
+        isPaid: false,
+        isBonusSession: false,
+      },
+      {
+        $set: {
+          isBonusSession: true,
+          amountCharged: 0,
+          referenceAmountCharged: coverageAmount,
+        },
+        $unset: {
+          walletDeductError: 1,
+          walletDeductAlertSentAt: 1,
+        },
+      },
+      { new: true },
+    );
+
+    if (updated) {
+      this.logger.log(`Session ${session._id} marked as complimentary bonus session`);
+    }
+
+    return updated;
+  }
+
+  private async settleFinalizedSession(session: SessionDocument): Promise<void> {
+    if (session.status !== SessionStatus.FINALIZED) {
+      return;
+    }
+
+    const bonusSession = await this.tryMarkBonusSession(session);
+    const sessionToSettle = bonusSession || session;
+
+    if (!sessionToSettle.isBonusSession) {
+      await this.deductWalletForSession(sessionToSettle);
+    }
+
+    await this.applyInvoiceConsumptionForSession(sessionToSettle._id as Types.ObjectId);
+  }
+
+  private async consumeInvoiceAllowanceForAmount(
+    claim: any,
+    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining',
+  ): Promise<{
+    primaryInvoiceId: Types.ObjectId | null;
+    consumedUnits: number;
+    consumedAmount: number;
+    remainingAmount: number;
+  }> {
+    const coverageAmount = this.getSessionCoverageAmount(claim);
+    let remainingAmount = coverageAmount;
+    let consumedAmount = 0;
+    let consumedUnits = 0;
+    let primaryInvoiceId: Types.ObjectId | null = null;
+
+    const invoices = await this.invoiceModel
+      .find({
+        studentId: claim.studentId,
+        classId: claim.classId,
+        status: 'APPROVED',
+        [allowanceField]: { $gt: 0 },
+      })
+      .sort({ paymentDate: 1, createdAt: 1 })
+      .select(`_id ${allowanceField} pricePerSession`)
+      .lean();
+
+    if (!invoices.length) {
+      return { primaryInvoiceId, consumedUnits, consumedAmount, remainingAmount };
+    }
+
+    for (const inv of invoices) {
+      if (remainingAmount <= 0) {
+        break;
+      }
+
+      const pricePerSession = this.toSafeNumber((inv as any).pricePerSession, 0);
+      const invoiceRemaining = this.toSafeNumber((inv as any)[allowanceField], 0);
+      if (pricePerSession <= 0 || invoiceRemaining <= 0) {
+        continue;
+      }
+
+      let unitsToConsume = this.roundTo4(
+        Math.min(invoiceRemaining, remainingAmount / pricePerSession),
+      );
+      if (unitsToConsume <= 0) {
+        continue;
+      }
+
+      let updateResult = await this.invoiceModel.updateOne(
+        { _id: (inv as any)._id, [allowanceField]: { $gte: unitsToConsume } },
+        { $inc: { [allowanceField]: -unitsToConsume } },
+      );
+
+      if (!updateResult.modifiedCount) {
+        const latestInvoice = await this.invoiceModel
+          .findById((inv as any)._id)
+          .select(allowanceField)
+          .lean();
+        const latestRemaining = this.toSafeNumber((latestInvoice as any)?.[allowanceField], 0);
+        const fallbackUnits = this.roundTo4(Math.min(latestRemaining, unitsToConsume));
+        if (fallbackUnits <= 0) {
+          continue;
+        }
+
+        updateResult = await this.invoiceModel.updateOne(
+          { _id: (inv as any)._id, [allowanceField]: { $gte: fallbackUnits } },
+          { $inc: { [allowanceField]: -fallbackUnits } },
+        );
+        if (!updateResult.modifiedCount) {
+          continue;
+        }
+        unitsToConsume = fallbackUnits;
+      }
+
+      const amountToConsume = Math.min(
+        remainingAmount,
+        this.roundTo4(unitsToConsume * pricePerSession),
+      );
+      if (amountToConsume <= 0) {
+        continue;
+      }
+
+      if (!primaryInvoiceId) {
+        primaryInvoiceId = (inv as any)._id as Types.ObjectId;
+      }
+      consumedAmount += amountToConsume;
+      consumedUnits += unitsToConsume;
+      remainingAmount = Math.max(0, this.roundTo4(remainingAmount - amountToConsume));
+    }
+
+    return {
+      primaryInvoiceId,
+      consumedUnits: this.roundTo4(consumedUnits),
+      consumedAmount: Math.round(consumedAmount),
+      remainingAmount,
+    };
+  }
+
   /**
-   * Trừ sessionsRemaining của invoice theo giá trị buổi học đã chốt.
+   * Tiêu hao suất học của invoice theo giá trị buổi học đã chốt.
    * Quy ước:
-   * - Chỉ áp dụng cho session FINALIZED, đã trừ ví (isPaid = true) và có amountCharged > 0
+   * - Session trả phí consume vào sessionsRemaining
+   * - Session buổi tặng consume vào bonusSessionsRemaining
    * - TRIAL chỉ consume khi đã convert
    * - FIFO theo paymentDate/createdAt của invoice APPROVED
    * - Idempotent qua cờ session.invoiceConsumptionApplied
@@ -1665,144 +1949,84 @@ export class SessionsService {
         {
           _id: sid,
           status: SessionStatus.FINALIZED,
-          isPaid: true,
           invoiceConsumptionApplied: false,
-          amountCharged: { $gt: 0 },
-          $or: [{ sessionType: { $ne: 'TRIAL' } }, { trialConverted: true }],
+          $and: [
+            {
+              $or: [
+                { isPaid: true, amountCharged: { $gt: 0 } },
+                { isBonusSession: true, referenceAmountCharged: { $gt: 0 } },
+              ],
+            },
+            {
+              $or: [{ sessionType: { $ne: 'TRIAL' } }, { trialConverted: true }],
+            },
+          ],
         },
         { $set: { invoiceConsumptionApplied: true } },
         { new: true },
       )
-      .select('_id studentId classId amountCharged')
+      .select('_id studentId classId amountCharged referenceAmountCharged isBonusSession')
       .lean();
 
     if (!claim) return;
 
-    const billedAmount = this.toSafeNumber((claim as any).amountCharged, 0);
-    if (billedAmount <= 0) {
-      await this.sessionModel.updateOne(
-        { _id: sid },
-        {
-          $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
-          $unset: { consumedInvoiceId: 1 },
-        },
-      );
+    const isBonusSession = !!(claim as any).isBonusSession;
+    const coverageAmount = this.getSessionCoverageAmount(claim);
+    const resetPayload = this.buildInvoiceConsumptionReset();
+
+    if (coverageAmount <= 0) {
+      await this.sessionModel.updateOne({ _id: sid }, resetPayload);
       return;
     }
 
-    let remainingAmount = billedAmount;
-    let consumedAmount = 0;
-    let consumedUnits = 0;
-    let primaryInvoiceId: Types.ObjectId | null = null;
-
+    const allowanceField = isBonusSession ? 'bonusSessionsRemaining' : 'sessionsRemaining';
+    const allowanceLabel = isBonusSession ? 'bonus sessions' : 'remaining sessions';
     try {
-      const invoices = await this.invoiceModel
-        .find({
-          studentId: (claim as any).studentId,
-          classId: (claim as any).classId,
-          status: 'APPROVED',
-          sessionsRemaining: { $gt: 0 },
-        })
-        .sort({ paymentDate: 1, createdAt: 1 })
-        .select('_id sessionsRemaining pricePerSession')
-        .lean();
+      const consumptionResult = await this.consumeInvoiceAllowanceForAmount(
+        claim,
+        allowanceField,
+      );
 
-      if (!invoices.length) {
-        await this.sessionModel.updateOne(
-          { _id: sid },
-          {
-            $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
-            $unset: { consumedInvoiceId: 1 },
-          },
-        );
+      if (consumptionResult.consumedAmount <= 0) {
+        await this.sessionModel.updateOne({ _id: sid }, resetPayload);
         this.logger.warn(
-          `Invoice consumption skipped: no APPROVED invoice with remaining sessions for session ${sid.toString()}`,
-        );
-        return;
-      }
-
-      for (const inv of invoices) {
-        if (remainingAmount <= 0) break;
-
-        const pricePerSession = this.toSafeNumber((inv as any).pricePerSession, 0);
-        const invoiceRemaining = this.toSafeNumber((inv as any).sessionsRemaining, 0);
-        if (pricePerSession <= 0 || invoiceRemaining <= 0) continue;
-
-        // Derive units from remaining billed amount, then consume atomically.
-        let unitsToConsume = this.roundTo4(
-          Math.min(invoiceRemaining, remainingAmount / pricePerSession),
-        );
-        if (unitsToConsume <= 0) continue;
-
-        let updateResult = await this.invoiceModel.updateOne(
-          { _id: (inv as any)._id, sessionsRemaining: { $gte: unitsToConsume } },
-          { $inc: { sessionsRemaining: -unitsToConsume } },
-        );
-
-        if (!updateResult.modifiedCount) {
-          const latestInvoice = await this.invoiceModel
-            .findById((inv as any)._id)
-            .select('sessionsRemaining')
-            .lean();
-          const latestRemaining = this.toSafeNumber((latestInvoice as any)?.sessionsRemaining, 0);
-          const fallbackUnits = this.roundTo4(Math.min(latestRemaining, unitsToConsume));
-          if (fallbackUnits <= 0) continue;
-
-          updateResult = await this.invoiceModel.updateOne(
-            { _id: (inv as any)._id, sessionsRemaining: { $gte: fallbackUnits } },
-            { $inc: { sessionsRemaining: -fallbackUnits } },
-          );
-          if (!updateResult.modifiedCount) continue;
-          unitsToConsume = fallbackUnits;
-        }
-
-        const amountToConsume = Math.min(
-          remainingAmount,
-          this.roundTo4(unitsToConsume * pricePerSession),
-        );
-        if (amountToConsume <= 0) continue;
-
-        if (!primaryInvoiceId) primaryInvoiceId = (inv as any)._id as Types.ObjectId;
-        consumedAmount += amountToConsume;
-        consumedUnits += unitsToConsume;
-        remainingAmount = Math.max(0, this.roundTo4(remainingAmount - amountToConsume));
-      }
-
-      if (consumedAmount <= 0) {
-        await this.sessionModel.updateOne(
-          { _id: sid },
-          {
-            $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
-            $unset: { consumedInvoiceId: 1 },
-          },
+          `Invoice consumption skipped: no APPROVED invoice with ${allowanceLabel} for session ${sid.toString()}`,
         );
         return;
       }
 
       await this.sessionModel.updateOne(
         { _id: sid },
-        {
-          $set: {
-            consumedInvoiceId: primaryInvoiceId || undefined,
-            consumedInvoiceUnits: this.roundTo4(consumedUnits),
-            consumedInvoiceAmount: Math.round(consumedAmount),
-          },
-        },
+        isBonusSession
+          ? {
+              $set: {
+                bonusInvoiceId: consumptionResult.primaryInvoiceId || undefined,
+                consumedBonusUnits: consumptionResult.consumedUnits,
+                consumedBonusAmount: consumptionResult.consumedAmount,
+                consumedInvoiceUnits: 0,
+                consumedInvoiceAmount: 0,
+              },
+              $unset: { consumedInvoiceId: 1 },
+            }
+          : {
+              $set: {
+                consumedInvoiceId: consumptionResult.primaryInvoiceId || undefined,
+                consumedInvoiceUnits: consumptionResult.consumedUnits,
+                consumedInvoiceAmount: consumptionResult.consumedAmount,
+                consumedBonusUnits: 0,
+                consumedBonusAmount: 0,
+              },
+              $unset: { bonusInvoiceId: 1 },
+            },
       );
 
-      if (remainingAmount > 0) {
+      if (consumptionResult.remainingAmount > 0) {
         this.logger.warn(
-          `Invoice consumption partial for session ${sid.toString()}: consumed ${Math.round(consumedAmount)} / ${Math.round(billedAmount)}`,
+          `Invoice consumption partial for session ${sid.toString()}: consumed ${Math.round(consumptionResult.consumedAmount)} / ${Math.round(coverageAmount)}`,
         );
       }
     } catch (err) {
-      await this.sessionModel.updateOne(
-        { _id: sid },
-        {
-          $set: { invoiceConsumptionApplied: false, consumedInvoiceUnits: 0, consumedInvoiceAmount: 0 },
-          $unset: { consumedInvoiceId: 1 },
-        },
-      );
+      await this.sessionModel.updateOne({ _id: sid }, resetPayload);
       this.logger.warn(
         `Invoice consumption failed for session ${sid.toString()}: ${this.extractErrorMessage(err)}`,
       );
@@ -1815,7 +2039,7 @@ export class SessionsService {
    * - Trial không convert: không trừ ví, nhưng GV vẫn được trả lương
    */
   private async deductWalletForSession(session: SessionDocument): Promise<void> {
-    if (!session.parentUserId || session.isPaid || session.amountCharged <= 0) return;
+    if (!session.parentUserId || session.isPaid || session.isBonusSession || session.amountCharged <= 0) return;
 
     // Trial chua convert => khong tru vi PH (GV van duoc tra qua payroll)
     if (session.sessionType === 'TRIAL' && !session.trialConverted) {
@@ -1905,7 +2129,7 @@ export class SessionsService {
       classId: new Types.ObjectId(classId),
       sessionType: 'TRIAL',
       trialConverted: false,
-      status: 'FINALIZED',
+      status: { $nin: [SessionStatus.CANCELLED, SessionStatus.RESCHEDULED] },
     });
 
     let converted = 0;
@@ -1913,12 +2137,16 @@ export class SessionsService {
 
     for (const session of trialSessions) {
       session.trialConverted = true;
+      session.trialTeacherPaidOnly = false;
+      (session as any).trialRejectedNoPay = false;
       await session.save();
       converted++;
 
-      // Now deduct wallet
-      await this.deductWalletForSession(session);
-      await this.applyInvoiceConsumptionForSession(session._id as Types.ObjectId);
+      if (session.status !== SessionStatus.FINALIZED) {
+        continue;
+      }
+
+      await this.settleFinalizedSession(session);
       // Reload to get updated isPaid from atomic deductWalletForSession
       const reloaded = await this.sessionModel.findById(session._id).lean();
       if (reloaded?.isPaid) deducted++;
@@ -1931,31 +2159,66 @@ export class SessionsService {
     return { converted, deducted };
   }
 
-  /**
-   * Khi HS KHÔNG học tiếp sau buổi thử:
-   * - Mark trialTeacherPaidOnly = true (GV vẫn được trả lương)
-   * - Không trừ ví PH
-   */
-  async markTrialTeacherPaidOnly(
+  async markTrialRejectedNoPay(
     studentId: string,
     classId: string,
-  ): Promise<{ updated: number }> {
-    const result = await this.sessionModel.updateMany(
+    actorUserId?: string,
+  ): Promise<{ updated: number; excludedPayroll: number }> {
+    const trialSessions = await this.sessionModel.find(
       {
         studentId: new Types.ObjectId(studentId),
         classId: new Types.ObjectId(classId),
         sessionType: 'TRIAL',
         trialConverted: false,
-        trialTeacherPaidOnly: false,
+        trialRejectedNoPay: false,
       },
-      { $set: { trialTeacherPaidOnly: true } },
     );
+
+    let updated = 0;
+    let excludedPayroll = 0;
+    for (const session of trialSessions) {
+      session.trialTeacherPaidOnly = false;
+      (session as any).trialRejectedNoPay = true;
+      session.isTeacherPaid = false;
+      await session.save();
+      updated++;
+
+      if (actorUserId) {
+        try {
+          await this.payrollTxService.excludeFromPayroll(
+            session._id.toString(),
+            actorUserId,
+            'Hoc thu khong chuyen doi thanh hoc vien chinh thuc',
+          );
+          excludedPayroll++;
+        } catch (error) {
+          const message = this.extractErrorMessage(error);
+          if (!message.includes('PayrollTransaction not found')) {
+            this.logger.warn(
+              `Failed to exclude payroll for rejected trial session ${session._id}: ${message}`,
+            );
+          }
+        }
+      }
+    }
 
     this.logger.log(
-      `Trial teacher-paid-only: student ${studentId} class ${classId} → ${result.modifiedCount} sessions`,
+      `Trial rejected-no-pay: student ${studentId} class ${classId} → ${updated} sessions, ${excludedPayroll} payroll exclusions`,
     );
 
-    return { updated: result.modifiedCount };
+    return { updated, excludedPayroll };
+  }
+
+  /**
+   * Route cũ được giữ lại để tương thích nhưng nghiệp vụ mới là KHÔNG tính lương GV
+   * nếu học thử không chuyển đổi.
+   */
+  async markTrialTeacherPaidOnly(
+    studentId: string,
+    classId: string,
+    actorUserId?: string,
+  ): Promise<{ updated: number; excludedPayroll: number }> {
+    return this.markTrialRejectedNoPay(studentId, classId, actorUserId);
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -2387,22 +2650,34 @@ export class SessionsService {
     facility?: number;
     comment?: string;
     studentId?: string;
+    sessionId?: string;
   }) {
     const parentObjId = new Types.ObjectId(parentUserId);
 
-    // Find recent finalized sessions for this parent's children
     const filter: any = {
       parentUserId: parentObjId,
-      status: 'FINALIZED',
+      status: SessionStatus.FINALIZED,
     };
     if (feedback.studentId) {
       filter.studentId = new Types.ObjectId(feedback.studentId);
     }
 
-    // Store feedback on the most recent session
-    const session = await this.sessionModel
-      .findOne(filter)
-      .sort({ scheduledDate: -1 });
+    let session: SessionDocument | null = null;
+
+    if (feedback.sessionId) {
+      session = await this.sessionModel.findOne({
+        ...filter,
+        _id: new Types.ObjectId(feedback.sessionId),
+      });
+      if (!session) {
+        throw new NotFoundException('Bu?i h?c c?n ??nh gi? kh?ng t?n t?i');
+      }
+    } else {
+      // Backward compatibility for older clients that still omit sessionId.
+      session = await this.sessionModel
+        .findOne(filter)
+        .sort({ scheduledDate: -1 });
+    }
 
     if (!session) {
       return { success: true, message: 'Feedback đã được ghi nhận (không có session liên quan)' };
@@ -2426,3 +2701,4 @@ export class SessionsService {
     return { success: true, message: 'Cảm ơn bạn đã gửi đánh giá!' };
   }
 }
+

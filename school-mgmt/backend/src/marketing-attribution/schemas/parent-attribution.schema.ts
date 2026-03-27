@@ -18,6 +18,7 @@ export enum ParentAttributionSourceType {
   LANDING_PAGE = 'LANDING_PAGE',
   LEAD = 'LEAD',
   ORDER = 'ORDER',
+  REFERRAL = 'REFERRAL',
   STUDENT = 'STUDENT',
   MANUAL = 'MANUAL',
   SYSTEM = 'SYSTEM',
@@ -30,6 +31,9 @@ export class ParentAttribution {
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   parentUserId?: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  referredByUserId?: Types.ObjectId;
 
   @Prop({ type: String, trim: true })
   parentPhone?: string;

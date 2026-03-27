@@ -426,6 +426,7 @@ export class LandingPagesService {
     const platform = adGroup?.platform || dto.platform || page.defaultPlatform;
     const adGroupId = adGroup?._id || toObjectId(page.defaultAdGroupId);
     const adGroupName = adGroup?.name || dto.adGroupName || page.defaultAdGroupName;
+    const referredByUserId = toObjectId(dto.referredByUserId);
 
     const submission = new this.submissionModel({
       submissionCode,
@@ -445,6 +446,7 @@ export class LandingPagesService {
       platform,
       adRefParam: dto.adRefParam || undefined,
       adGroupId,
+      referredByUserId,
       adGroupName,
       tracking: normalizeTrackingAttribution(normalizedTracking),
       matchedParentUserId: identity.parentUserId,
@@ -479,6 +481,7 @@ export class LandingPagesService {
       parentUserId: identity.parentUserId,
       parentPhone: dto.parentPhone,
       parentEmail: dto.parentEmail,
+      referredByUserId,
       adGroupId,
       adGroupName,
       platform,

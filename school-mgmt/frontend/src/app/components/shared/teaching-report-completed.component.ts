@@ -5,6 +5,7 @@ import { ReportTemplate } from '../../services/report-template.service';
 import {
   TeachingReportFormComponent,
   ReportFormValues,
+  teachingReportDraftStorageKey,
 } from './teaching-report-form.component';
 
 export interface CompletedMeta {
@@ -78,6 +79,7 @@ export interface CompletedMeta {
       <div *ngIf="canEdit && viewingId === s._id && editingId === s._id" class="report-form-wrapper">
         <app-teaching-report-form
           [initialValues]="editInitialValues"
+          [draftKey]="draftKeyFor(s._id)"
           [templates]="templates"
           [submitting]="submitting"
           submitLabel="💾 Cập nhật báo cáo"
@@ -189,6 +191,10 @@ export class TeachingReportCompletedComponent {
   onSubmit(sessionId: string, data: ReportFormValues) {
     this.submitReport.emit({ sessionId, data });
     this.editingId = '';
+  }
+
+  draftKeyFor(sessionId: string): string {
+    return teachingReportDraftStorageKey(sessionId);
   }
 
   /** Sanitize URL: only allow http/https to prevent javascript: XSS */

@@ -132,6 +132,9 @@ export class Student {
 
   @Prop({ type: [PaymentFrameSchema], default: [] })
   payments?: PaymentFrame[];
+
+  @Prop({ type: Number, default: 0, min: 0 })
+  totalPurchasedSessions!: number;
 }
 
 export const StudentSchema = SchemaFactory.createForClass(Student);
