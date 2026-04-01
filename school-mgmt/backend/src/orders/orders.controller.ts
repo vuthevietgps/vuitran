@@ -70,8 +70,12 @@ export class OrdersController {
 
   @Post(':id/approve')
   @Roles(Role.OPS, Role.DIRECTOR)
-  approve(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
-    return this.ordersService.approve(id, req.user);
+  approve(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() body: { approvalImage?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.ordersService.approve(id, req.user, body.approvalImage);
   }
 
   @Post(':id/reject')

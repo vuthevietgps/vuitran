@@ -50,9 +50,29 @@ export class Invoice {
   @Prop({ type: SchemaTypes.ObjectId, ref: Student.name, required: true })
   studentId!: Types.ObjectId;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Order', required: false })
+  orderId?: Types.ObjectId;
+
+  @Prop({ type: Number, min: 0, required: false })
+  orderItemIndex?: number;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Product', required: false })
+  productId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true, required: false })
+  productName?: string;
+
   /** Lớp học liên quan (để biết thanh toán cho lớp nào) */
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom', required: false })
   classId?: Types.ObjectId;
+
+  /** Lớp được chọn sẵn từ order, sẽ auto gán sau khi duyệt hóa đơn */
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom', required: false })
+  requestedClassId?: Types.ObjectId;
+
+  /** Giáo viên được chọn sẵn từ order, sẽ dùng để auto tạo lớp mới nếu chưa chọn lớp */
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: false })
+  requestedTeacherId?: Types.ObjectId;
 
   /** Sale phụ trách — luôn ghi nhận doanh thu & hoa hồng cho sale này */
   @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: false })
@@ -81,6 +101,10 @@ export class Invoice {
   /** Số buổi tặng thêm theo chương trình khuyến mãi */
   @Prop({ type: Number, min: 0, default: 0 })
   bonusSessions?: number;
+
+  /** Số buổi học thử (được gộp chung vào tổng số buổi của hóa đơn) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  trialSessions?: number;
 
   @Prop({ type: Number, min: 1, required: false })
   paymentRound?: number;
@@ -112,6 +136,10 @@ export class Invoice {
   @Prop({ type: Number, min: 0, required: false })
   perMinuteRate?: number;
 
+  /** Lương GV mỗi buổi (VNĐ) — lưu từ order/DTO để truyền sang class */
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerSession?: number;
+
   /** Số buổi quy đổi còn lại (theo referenceDuration) */
   @Prop({ type: Number, min: 0, required: false })
   sessionsRemaining?: number;
@@ -119,6 +147,10 @@ export class Invoice {
   /** Số buổi tặng còn lại (không cộng ví, chỉ dùng để học bù/khuyến mãi) */
   @Prop({ type: Number, min: 0, default: 0 })
   bonusSessionsRemaining?: number;
+
+  /** Số buổi học thử còn lại */
+  @Prop({ type: Number, min: 0, default: 0 })
+  trialSessionsRemaining?: number;
 
   @Prop({ required: true, min: 0 })
   amount!: number; // Tổng số tiền = sessions * pricePerSession (hoặc nhập tự do)
@@ -182,3 +214,5 @@ InvoiceSchema.index({ saleId: 1 });
 InvoiceSchema.index({ status: 1 });
 InvoiceSchema.index({ classId: 1 });
 InvoiceSchema.index({ courseStatus: 1 });
+InvoiceSchema.index({ orderId: 1, classId: 1 });
+InvoiceSchema.index({ orderId: 1, orderItemIndex: 1 });

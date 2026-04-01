@@ -31,6 +31,9 @@ export const INVOICE_COURSE_STATUS_LABELS: Record<InvoiceCourseStatus, string> =
 export interface InvoiceItem {
   _id: string;
   invoiceNumber: string;
+  orderId?: string;
+  productId?: string;
+  productName?: string;
   studentId: {
     _id: string;
     fullName: string;
@@ -46,12 +49,15 @@ export interface InvoiceItem {
   };
   sessions?: number;
   bonusSessions?: number;
+  trialSessions?: number;
   bonusSessionsRemaining?: number;
+  trialSessionsRemaining?: number;
   paymentRound?: number;
   courseStatus?: InvoiceCourseStatus;
   amount: number;
   pricePerSession?: number;
   referenceDuration?: number;
+  teacherPayPerSession?: number;
   paymentDate: string;
   receiptImage?: string;
   approvalImage?: string;
@@ -74,10 +80,15 @@ export interface InvoiceItem {
 export interface InvoiceUpsertPayload {
   invoiceNumber: string;
   studentId: string;
+  classId?: string;
+  orderId?: string;
+  productId?: string;
+  productName?: string;
   classType?: 'ONLINE' | 'OFFLINE';
   saleId?: string;
   sessions?: number;
   bonusSessions?: number;
+  trialSessions?: number;
   paymentRound?: number;
   courseStatus?: InvoiceCourseStatus;
   amount: number;

@@ -114,7 +114,7 @@ import { AuthService } from '../services/auth.service';
                   <th>Ma GV + ten GV</th>
                   <th *ngIf="showTeacherSalary()">Luong GV</th>
                   <th>So Hoa Don</th>
-                  <th>Tong buoi</th>
+                  <th title="Tong buoi = Da hoc + buoi con lai tu hoa don (chinh + tang + thu)">Tong buoi (Da hoc + HD)</th>
                   <th>Da Hoc</th>
                   <th>Sale</th>
                   <th>Tinh Trang Data</th>

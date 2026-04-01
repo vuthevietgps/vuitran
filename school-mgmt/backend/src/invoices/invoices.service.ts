@@ -10,6 +10,7 @@ import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
+import { ClassesService } from '../classes/classes.service';
 import { WalletsService } from '../wallets/wallets.service';
 
 @Injectable()
@@ -21,6 +22,7 @@ export class InvoicesService {
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    private readonly classesService: ClassesService,
     private readonly walletsService: WalletsService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -29,8 +31,76 @@ export class InvoicesService {
     return String(actor?.sub ?? actor?._id ?? (actor as any)?.userId ?? '');
   }
 
+  private normalizeObjectId(value: unknown): string | undefined {
+    if (!value) {
+      return undefined;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    return (value as any)?._id?.toString?.() || (value as any)?.toString?.() || undefined;
+  }
+
+  private async resolveValidatedInvoiceClassLink(params: {
+    classId?: string;
+    classType?: string;
+    studentId: string;
+  }): Promise<{ classroom: any | null; classId?: Types.ObjectId; classType?: string }> {
+    const { classId, classType, studentId } = params;
+    if (!classId) {
+      return { classroom: null, classType };
+    }
+
+    const classroom = await this.classModel
+      .findById(classId)
+      .select('classMode students name code pricePerSession baseDuration sessionDuration')
+      .lean();
+
+    if (!classroom) {
+      throw new BadRequestException('Lop hoc khong ton tai');
+    }
+
+    const normalizedClassType = String((classroom as any).classMode || '').trim().toUpperCase() || undefined;
+    if (classType && normalizedClassType && classType !== normalizedClassType) {
+      throw new BadRequestException('Loai lop hoc khong khop voi lop da chon');
+    }
+
+    const classStudentIds = Array.isArray((classroom as any).students)
+      ? (classroom as any).students
+          .map((item: any) => item?._id?.toString?.() || item?.toString?.())
+          .filter((item: string | undefined): item is string => !!item)
+      : [];
+
+    if (!classStudentIds.includes(studentId)) {
+      throw new BadRequestException(
+        'Hoc sinh chua duoc gan vao lop da chon. Vui long chon dung lop cua hoc sinh.',
+      );
+    }
+
+    return {
+      classroom,
+      classId: new Types.ObjectId(classId),
+      classType: normalizedClassType,
+    };
+  }
+
   private getRemainingStudySessions(invoice: Partial<InvoiceDocument> | any): number {
-    return Number(invoice?.sessionsRemaining || 0) + Number(invoice?.bonusSessionsRemaining || 0);
+    return Number(invoice?.sessionsRemaining || 0) + Number(invoice?.bonusSessionsRemaining || 0) + Number(invoice?.trialSessionsRemaining || 0);
+  }
+
+  private roundMoneyToThousand(value: unknown): number {
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return 0;
+    }
+    return Math.round(amount / 1000) * 1000;
+  }
+
+  private isOfflineTrialApprovalExempt(invoice: any): boolean {
+    const classType = String(invoice?.classType || '').trim().toUpperCase();
+    const trialSessions = Math.max(0, Number(invoice?.trialSessions || 0));
+    const amount = this.roundMoneyToThousand(invoice?.amount);
+    return classType === 'OFFLINE' && trialSessions > 0 && amount <= 0;
   }
 
   private isPurchasedSessionsSourceStatus(status?: string | null): boolean {
@@ -42,7 +112,7 @@ export class InvoicesService {
       return 0;
     }
 
-    return Math.max(0, Number(invoice.sessions || 0)) + Math.max(0, Number(invoice.bonusSessions || 0));
+    return Math.max(0, Number(invoice.sessions || 0)) + Math.max(0, Number(invoice.bonusSessions || 0)) + Math.max(0, Number((invoice as any).trialSessions || 0));
   }
 
   private getInvoiceStudentId(invoice?: Partial<InvoiceDocument> | null): string | null {
@@ -183,16 +253,15 @@ export class InvoicesService {
     }
 
     // â”€â”€ Resolve class info for pricing â”€â”€
-    let classroom: any = null;
-    if (dto.classId) {
-      classroom = await this.classModel.findById(dto.classId).lean();
-    }
+    const classLink = await this.resolveValidatedInvoiceClassLink({
+      classId: dto.classId,
+      classType: dto.classType,
+      studentId: dto.studentId,
+    });
+    const classroom = classLink.classroom;
 
     // Auto-calculate amount if sessions + pricePerSession provided
     let amount = dto.amount;
-    if (dto.sessions && dto.pricePerSession && (amount === undefined || amount === null)) {
-      amount = dto.sessions * dto.pricePerSession;
-    }
 
     // If classId provided but no pricePerSession, get from class
     let pricePerSession = dto.pricePerSession;
@@ -207,7 +276,19 @@ export class InvoicesService {
 
     // â”€â”€ Auto-compute pricePerSession from amount + sessions if needed â”€â”€
     if ((pricePerSession === undefined || pricePerSession === null) && amount != null && dto.sessions) {
-      pricePerSession = Math.round(amount / dto.sessions);
+      pricePerSession = amount / dto.sessions;
+    }
+
+    if (pricePerSession !== undefined && pricePerSession !== null) {
+      pricePerSession = this.roundMoneyToThousand(pricePerSession);
+    }
+
+    if (amount === undefined || amount === null) {
+      if (dto.sessions && pricePerSession) {
+        amount = dto.sessions * pricePerSession;
+      }
+    } else {
+      amount = this.roundMoneyToThousand(amount);
     }
 
     // â”€â”€ Compute per-minute rate â”€â”€
@@ -224,6 +305,7 @@ export class InvoicesService {
     const status = InvoiceStatus.PENDING_APPROVAL;
 
     const bonusSessions = Math.max(0, Number(dto.bonusSessions || 0));
+    const trialSessions = Math.max(0, Number(dto.trialSessions || 0));
 
     const entity = new this.invoiceModel({
       ...dto,
@@ -232,14 +314,17 @@ export class InvoicesService {
       pricePerSession,
       referenceDuration,
       perMinuteRate,
-      sessionsRemaining: dto.sessions, // Ban Ä‘áº§u = sessions mua
+      sessionsRemaining: dto.sessions, // Ban đầu = sessions mua
       bonusSessions,
       bonusSessionsRemaining: bonusSessions,
+      trialSessions,
+      trialSessionsRemaining: trialSessions,
       invoiceType: dto.invoiceType || InvoiceType.TUITION,
       status,
       saleId,
       studentId: new Types.ObjectId(dto.studentId),
-      classId: dto.classId ? new Types.ObjectId(dto.classId) : undefined,
+      classType: classLink.classType ?? dto.classType,
+      classId: classLink.classId,
       createdBy: actorId,
     });
     return entity.save();
@@ -304,26 +389,15 @@ export class InvoicesService {
       const invoice = await this.invoiceModel.findById(id).session(mongoSession);
       if (!invoice) throw new NotFoundException('HÃ³a Ä‘Æ¡n khÃ´ng tá»“n táº¡i');
 
-      // SALE can edit pending invoices they created.
-      // If the invoice was auto-generated from an order, the sale owner can still
-      // upload the sale receipt while financial fields remain locked.
+      // SALE chá»‰ Ä‘Æ°á»£c sá»­a hÃ³a Ä‘Æ¡n PENDING_APPROVAL do mÃ¬nh táº¡o
       if (actor?.role === Role.SALE) {
-        const actorId = this.getActorId(actor);
-        const isCreator = invoice.createdBy.toString() === actorId;
-        const isOwner = invoice.saleId?.toString?.() === actorId;
-
-        if (!isCreator && !isOwner) {
+        if (invoice.createdBy.toString() !== this.getActorId(actor)) {
           throw new ForbiddenException('Báº¡n khÃ´ng cÃ³ quyá»n sá»­a hÃ³a Ä‘Æ¡n nÃ y');
         }
         if (invoice.status !== InvoiceStatus.PENDING_APPROVAL) {
           throw new ForbiddenException('KhÃ´ng thá»ƒ sá»­a hÃ³a Ä‘Æ¡n Ä‘Ã£ Ä‘Æ°á»£c xá»­ lÃ½');
         }
-        if (!isCreator) {
-          const limitedPatch: Record<string, unknown> = {};
-          if (dto.receiptImage !== undefined) limitedPatch.receiptImage = dto.receiptImage;
-          if (dto.description !== undefined) limitedPatch.description = dto.description;
-          dto = limitedPatch as UpdateInvoiceDto;
-        }
+        // SALE khÃ´ng Ä‘Æ°á»£c tá»± Ä‘á»•i status
         delete (dto as any).status;
         delete (dto as any).saleId;
         delete (dto as any).studentId;
@@ -341,14 +415,17 @@ export class InvoicesService {
       }
 
       const safeNum = (v: any) => v == null ? 0 : Number(v);
+      const classLinkChanged =
+        dto.classId !== undefined
+        || dto.classType !== undefined
+        || dto.studentId !== undefined;
       const isFinancialChanged = 
         (dto.amount !== undefined && safeNum(dto.amount) !== safeNum(invoice.amount)) ||
         (dto.sessions !== undefined && safeNum(dto.sessions) !== safeNum(invoice.sessions)) ||
         (dto.bonusSessions !== undefined && safeNum(dto.bonusSessions) !== safeNum(invoice.bonusSessions)) ||
-        (dto.pricePerSession !== undefined && safeNum(dto.pricePerSession) !== safeNum(invoice.pricePerSession)) ||
-        (dto.studentId !== undefined && dto.studentId.toString() !== invoice.studentId.toString()) ||
-        (dto.classId !== undefined && dto.classId?.toString() !== invoice.classId?.toString());
-
+        ((dto as any).trialSessions !== undefined
+          && safeNum((dto as any).trialSessions) !== safeNum((invoice as any).trialSessions)) ||
+        classLinkChanged;
       if (
         (invoice.status === InvoiceStatus.APPROVED || (invoice.status as any) === 'PAID') &&
         isFinancialChanged
@@ -358,6 +435,12 @@ export class InvoicesService {
 
       // Recalculate derived financial fields when relevant fields change
       const updateData: any = { ...dto };
+      if (updateData.amount !== undefined) {
+        updateData.amount = this.roundMoneyToThousand(updateData.amount);
+      }
+      if (updateData.pricePerSession !== undefined) {
+        updateData.pricePerSession = this.roundMoneyToThousand(updateData.pricePerSession);
+      }
       if (updateData.studentId !== undefined || updateData.saleId !== undefined) {
         const resolved = await this.resolveInvoiceSaleOwner(
           {
@@ -373,8 +456,20 @@ export class InvoicesService {
           delete updateData.saleId;
         }
       }
+      if (updateData.classId !== undefined || updateData.classType !== undefined || updateData.studentId !== undefined) {
+        const resolvedClassLink = await this.resolveValidatedInvoiceClassLink({
+          classId: updateData.classId ?? invoice.classId?.toString(),
+          classType: updateData.classType ?? invoice.classType,
+          studentId: (updateData.studentId ?? invoice.studentId.toString()).toString(),
+        });
+        if (resolvedClassLink.classId) {
+          updateData.classId = resolvedClassLink.classId;
+        }
+        updateData.classType = resolvedClassLink.classType ?? updateData.classType ?? invoice.classType;
+      }
       const sessions = dto.sessions ?? invoice.sessions;
       const bonusSessions = dto.bonusSessions ?? invoice.bonusSessions;
+      const trialSessions = (dto as any).trialSessions ?? (invoice as any).trialSessions;
       const referenceDuration = dto.referenceDuration ?? invoice.referenceDuration;
       const pricePerSession = dto.pricePerSession ?? invoice.pricePerSession;
 
@@ -385,6 +480,10 @@ export class InvoicesService {
       if (bonusSessions !== undefined && bonusSessions >= 0) {
         const usedBonusSessions = safeNum(invoice.bonusSessions) - safeNum(invoice.bonusSessionsRemaining);
         updateData.bonusSessionsRemaining = Math.max(0, safeNum(bonusSessions) - usedBonusSessions);
+      }
+      if (trialSessions !== undefined && trialSessions >= 0) {
+        const usedTrialSessions = safeNum((invoice as any).trialSessions) - safeNum((invoice as any).trialSessionsRemaining);
+        updateData.trialSessionsRemaining = Math.max(0, safeNum(trialSessions) - usedTrialSessions);
       }
       if (sessions && referenceDuration && referenceDuration > 0 && pricePerSession != null) {
         updateData.perMinuteRate = pricePerSession / referenceDuration;
@@ -418,20 +517,26 @@ export class InvoicesService {
   async approveInvoice(id: string, dto: ApproveInvoiceDto, actor: JwtPayload) {
     const actorId = this.getActorId(actor);
     const approvalImage = dto.approvalImage?.trim();
-
-    if (dto.action === 'APPROVE' && !approvalImage) {
-      throw new BadRequestException('Phai tai hoa don doi ung truoc khi duyet hoa don');
-    }
+    let approvedInvoiceAfterCommit: any = null;
 
     const existingInvoice = await this.invoiceModel
       .findById(id)
-      .select('_id invoiceNumber status receiptImage studentId invoiceType sessions bonusSessions')
+      .select(
+        '_id invoiceNumber status receiptImage studentId invoiceType sessions bonusSessions trialSessions amount classType classId requestedClassId requestedTeacherId',
+      )
       .lean();
     if (!existingInvoice) {
       throw new NotFoundException('HÃƒÂ³a Ã„â€˜Ã†Â¡n khÃƒÂ´ng tÃ¡Â»â€œn tÃ¡ÂºÂ¡i');
     }
 
-    if (dto.action === 'APPROVE' && !existingInvoice.receiptImage) {
+    const approvalProofRequired =
+      dto.action === 'APPROVE' && !this.isOfflineTrialApprovalExempt(existingInvoice);
+
+    if (approvalProofRequired && !approvalImage) {
+      throw new BadRequestException('Phai tai hoa don doi ung truoc khi duyet hoa don');
+    }
+
+    if (approvalProofRequired && !existingInvoice.receiptImage) {
       throw new BadRequestException(
         'Khong the duyet hoa don khi chua co hoa don sale upload. Vui long bo sung hoa don goc truoc.',
       );
@@ -445,19 +550,22 @@ export class InvoicesService {
       try {
         const now = new Date();
         const approvedByOid = new Types.ObjectId(actorId);
+        const approveSet: Record<string, unknown> = {
+          status: InvoiceStatus.APPROVED,
+          approvedBy: approvedByOid,
+          approvedAt: now,
+          paymentDate: { $ifNull: ['$paymentDate', now] },
+          updatedAt: now,
+        };
+        if (approvalImage) {
+          approveSet.approvalImage = approvalImage;
+        }
         // BUG #1 fix: use aggregation pipeline update to set paymentDate = $ifNull($paymentDate, now)
         // This ensures invoices always have a paymentDate for financial control period filtering
         const invoice = await this.invoiceModel.findOneAndUpdate(
           { _id: id, status: InvoiceStatus.PENDING_APPROVAL },
           [{
-            $set: {
-              status: InvoiceStatus.APPROVED,
-              approvedBy: approvedByOid,
-              approvedAt: now,
-              approvalImage,
-              paymentDate: { $ifNull: ['$paymentDate', now] },
-              updatedAt: now,
-            },
+            $set: approveSet,
           }],
           { new: true, session: mongoSession },
         );
@@ -480,6 +588,7 @@ export class InvoicesService {
         }
 
         await this.syncPurchasedSessionsSnapshot(existingInvoice as any, invoice, mongoSession);
+        approvedInvoiceAfterCommit = invoice.toObject();
 
         await mongoSession.commitTransaction();
       } catch (err) {
@@ -509,6 +618,10 @@ export class InvoicesService {
           `HÃ³a Ä‘Æ¡n Ä‘ang á»Ÿ tráº¡ng thÃ¡i "${exists.status}", chá»‰ cÃ³ thá»ƒ duyá»‡t khi á»Ÿ tráº¡ng thÃ¡i "PENDING_APPROVAL"`,
         );
       }
+    }
+
+    if (dto.action === 'APPROVE' && approvedInvoiceAfterCommit) {
+      await this.autoPlaceApprovedInvoice(approvedInvoiceAfterCommit, actor);
     }
 
     return this.invoiceModel.findById(id)
@@ -577,6 +690,37 @@ export class InvoicesService {
     this.logger.log(
       `Invoice ${invoice.invoiceNumber} APPROVED â†’ Wallet topped up ${invoice.amount.toLocaleString('vi-VN')}Ä‘ for parent ${parentUserId}`,
     );
+  }
+
+  private async autoPlaceApprovedInvoice(invoice: Partial<InvoiceDocument> | any, actor: JwtPayload): Promise<void> {
+    const invoiceId = this.normalizeObjectId(invoice?._id);
+    const studentId = this.normalizeObjectId(invoice?.studentId);
+    const classId = this.normalizeObjectId(invoice?.classId);
+    const requestedClassId = this.normalizeObjectId(invoice?.requestedClassId);
+    const requestedClassCode = String(invoice?.requestedClassCode || '').trim().toUpperCase() || null;
+    const requestedTeacherId = this.normalizeObjectId(invoice?.requestedTeacherId);
+
+    if (!invoiceId || !studentId || classId || (!requestedClassId && !requestedClassCode && !requestedTeacherId)) {
+      return;
+    }
+
+    try {
+      await this.classesService.autoPlaceApprovedInvoice(
+        {
+          invoiceId,
+          studentId,
+          requestedClassId,
+          requestedClassCode,
+          requestedTeacherId,
+        },
+        actor,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      this.logger.warn(
+        `Auto placement failed for invoice ${invoice?.invoiceNumber || invoiceId}: ${message}`,
+      );
+    }
   }
 
   /** Láº¥y danh sÃ¡ch hÃ³a Ä‘Æ¡n chá» duyá»‡t */
@@ -767,10 +911,8 @@ export class InvoicesService {
         }, { session: mongoSession });
       }
 
-      await this.syncPurchasedSessionsSnapshot(invoice, {
-        ...invoice.toObject(),
-        status: InvoiceStatus.CANCELLED,
-      } as Partial<InvoiceDocument>, mongoSession);
+      const beforeSnapshot = { ...invoice.toObject(), status: InvoiceStatus.APPROVED } as Partial<InvoiceDocument>;
+      await this.syncPurchasedSessionsSnapshot(beforeSnapshot, invoice, mongoSession);
 
       await mongoSession.commitTransaction();
 

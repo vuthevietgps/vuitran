@@ -1,4 +1,4 @@
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsMongoId } from 'class-validator';
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsMongoId, IsOptional } from 'class-validator';
 
 export class AssignStudentsDto {
   @IsArray()
@@ -6,4 +6,8 @@ export class AssignStudentsDto {
   @ArrayUnique()
   @IsMongoId({ each: true })
   studentIds!: string[];
+
+  @IsMongoId()
+  @IsOptional()
+  invoiceId?: string;
 }

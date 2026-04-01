@@ -79,3 +79,47 @@ describe('SessionsService.submitParentFeedback()', () => {
     expect(updateOne).not.toHaveBeenCalled();
   });
 });
+
+describe('SessionsService duration rounding', () => {
+  it('floors remaining sessions in duration snapshots when the new duration creates fractions', async () => {
+    const service = Object.create(SessionsService.prototype) as any;
+    const session = {
+      classId: new Types.ObjectId(),
+      studentId: new Types.ObjectId(),
+    };
+
+    service.classModel = {
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            pricingSnapshot: { referenceDuration: 70 },
+            baseDuration: 70,
+          }),
+        }),
+      }),
+    };
+    service.invoiceModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            {
+              referenceDuration: 70,
+              sessionsRemaining: 2,
+              bonusSessionsRemaining: 1,
+              trialSessionsRemaining: 0,
+            },
+          ]),
+        }),
+      }),
+    };
+
+    const snapshot = await service.buildRemainingSessionsAtNewDurationSnapshot(session, 90);
+
+    expect(snapshot).toMatchObject({
+      newDurationMinutes: 90,
+      paidSessionsRemaining: 1,
+      bonusSessionsRemaining: 0,
+      totalSessionsRemaining: 2,
+    });
+  });
+});

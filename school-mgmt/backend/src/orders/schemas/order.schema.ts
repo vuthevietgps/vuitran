@@ -4,6 +4,7 @@ import {
   TrackingAttribution,
   TrackingAttributionSchema,
 } from '../../marketing-attribution/schemas/tracking-attribution.schema';
+import { InvoiceCourseStatus } from '../../invoices/schemas/invoice.schema';
 
 export type OrderDocument = HydratedDocument<Order>;
 
@@ -49,11 +50,20 @@ export class OrderItem {
   @Prop({ type: String, trim: true })
   productName?: string;
 
+  @Prop({ type: String, trim: true })
+  invoiceNumber?: string;
+
   @Prop({ type: Number, min: 1, required: true })
   sessions!: number;
 
+  @Prop({ type: Number, min: 0 })
+  invoiceSessions?: number;
+
   @Prop({ type: Number, min: 15, default: 90 })
   sessionDuration!: number;
+
+  @Prop({ type: Number, min: 15 })
+  baseDuration?: number;
 
   @Prop({ type: Number, min: 0, required: true })
   pricePerSession!: number;
@@ -61,14 +71,47 @@ export class OrderItem {
   @Prop({ type: Number, min: 0, required: true })
   amount!: number;
 
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusSessions?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  trialSessions?: number;
+
+  @Prop({ type: String, enum: Object.values(InvoiceCourseStatus) })
+  courseStatus?: string;
+
   @Prop({ type: String, enum: ['ONLINE', 'OFFLINE'], default: 'ONLINE' })
   teachingMode?: string;
 
   @Prop({ type: String, trim: true })
   preferredSchedule?: string;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom' })
+  selectedClassId?: Types.ObjectId;
+
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   preferredTeacherId?: Types.ObjectId;
+
+  @Prop({ type: Number, min: 1 })
+  paymentRound?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerSession?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  teacherPayPerStudent?: number;
+
+  @Prop({ type: String, trim: true })
+  subject?: string;
+
+  @Prop({ type: String, trim: true })
+  learningGoals?: string;
+
+  @Prop({ type: Number, min: 1 })
+  maxStudents?: number;
+
+  @Prop({ type: String, trim: true })
+  invoiceDescription?: string;
 
   @Prop({ type: String, trim: true })
   notes?: string;
@@ -152,15 +195,42 @@ export class Order {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   parentUserId?: Types.ObjectId;
 
+  @Prop({ type: String, trim: true, uppercase: true })
+  parentUserCode?: string;
+
+  @Prop({ type: String, trim: true })
+  parentAddress?: string;
+
+  @Prop({ type: String, trim: true })
+  parentFacebookLink?: string;
+
   // Student info
   @Prop({ required: true, trim: true })
   studentName!: string;
+
+  @Prop({ type: String, trim: true, uppercase: true })
+  studentCode?: string;
 
   @Prop({ type: Date })
   studentDob?: Date;
 
   @Prop({ type: String, trim: true })
   studentGrade?: string;
+
+  @Prop({ type: String, trim: true })
+  studentLevel?: string;
+
+  @Prop({ type: Number, min: 3, max: 25 })
+  studentAge?: number;
+
+  @Prop({ type: Number, min: 1, max: 12 })
+  studentBirthMonth?: number;
+
+  @Prop({ type: Number, min: 1, max: 12 })
+  parentBirthMonth?: number;
+
+  @Prop({ type: String, trim: true })
+  studentFaceImage?: string;
 
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Student' })
   existingStudentId?: Types.ObjectId;
@@ -186,6 +256,12 @@ export class Order {
   @Prop({ type: String, enum: Object.values(PaymentPlan), default: PaymentPlan.FULL })
   paymentPlan?: string;
 
+  @Prop({ type: Date })
+  paymentDate?: Date;
+
+  @Prop({ type: String, trim: true })
+  receiptImage?: string;
+
   @Prop({ type: [PaymentFrameSchema], default: [] })
   paymentFrames?: PaymentFrame[];
 
@@ -208,6 +284,9 @@ export class Order {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
   adGroupId?: Types.ObjectId;
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  referredByUserId?: Types.ObjectId;
+
   @Prop({ type: String, trim: true })
   adGroupName?: string;
 
@@ -227,6 +306,9 @@ export class Order {
 
   @Prop({ type: Date })
   approvedAt?: Date;
+
+  @Prop({ type: String, trim: true })
+  approvalImage?: string;
 
   @Prop({ type: String, trim: true })
   rejectionReason?: string;

@@ -28,6 +28,8 @@ import { BulkCreateSessionDto } from './dto/bulk-create-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
 import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
 import { SubmitParentFeedbackDto } from './dto/submit-parent-feedback.dto';
+import { CreateSessionChangeRequestDto } from './dto/create-session-change-request.dto';
+import { ReviewSessionChangeRequestDto } from './dto/review-session-change-request.dto';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
 @Controller('sessions')
@@ -39,14 +41,14 @@ export class SessionsController {
 
   /** Tạo 1 buổi học */
   @Post()
-  @Roles(Role.OPS, Role.DIRECTOR)
+  @Roles(Role.OPS, Role.ACCOUNTING, Role.DIRECTOR)
   create(@Body() dto: CreateSessionDto, @Req() req: AuthenticatedRequest) {
     return this.sessionsService.create(dto, req.user.sub, req.user);
   }
 
   /** Tạo buổi học hàng loạt cho cả lớp */
   @Post('bulk')
-  @Roles(Role.OPS, Role.DIRECTOR)
+  @Roles(Role.OPS, Role.ACCOUNTING, Role.DIRECTOR)
   bulkCreate(@Body() dto: BulkCreateSessionDto, @Req() req: AuthenticatedRequest) {
     return this.sessionsService.bulkCreate(dto, req.user);
   }
@@ -55,7 +57,7 @@ export class SessionsController {
 
   /** Danh sách sessions (filter, paginate, sort) */
   @Get()
-  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT)
+  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT, Role.SALE)
   findAll(@Query() query: QuerySessionDto, @Req() req: AuthenticatedRequest) {
     // Force ownership filter for PARENT and TEACHER to prevent data leaks
     if (req.user.role === Role.PARENT) {
@@ -63,6 +65,9 @@ export class SessionsController {
     }
     if (req.user.role === Role.TEACHER) {
       return this.sessionsService.findAll({ ...query, teacherId: req.user.sub });
+    }
+    if (req.user.role === Role.SALE) {
+      return (this.sessionsService as any).findAllBySale(req.user.sub, query);
     }
     return this.sessionsService.findAll(query);
   }
@@ -132,9 +137,38 @@ export class SessionsController {
     } as any);
   }
 
+  /** Sale tạo yêu cầu thay đổi buổi học */
+  @Post(':id/change-requests')
+  @Roles(Role.SALE)
+  createChangeRequest(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: CreateSessionChangeRequestDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return (this.sessionsService as any).createSessionChangeRequest(id, dto, req.user);
+  }
+
+  /** Xem lịch sử yêu cầu thay đổi của một buổi học */
+  @Get(':id/change-requests')
+  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT, Role.SALE)
+  getChangeRequests(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return (this.sessionsService as any).getSessionChangeRequests(id, req.user);
+  }
+
+  /** Director/OPS duyệt hoặc từ chối yêu cầu thay đổi buổi học */
+  @Post('change-requests/:requestId/review')
+  @Roles(Role.OPS, Role.ACCOUNTING, Role.DIRECTOR)
+  reviewChangeRequest(
+    @Param('requestId', ParseMongoIdPipe) requestId: string,
+    @Body() dto: ReviewSessionChangeRequestDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return (this.sessionsService as any).reviewSessionChangeRequest(requestId, dto, req.user);
+  }
+
   /** Chi tiết 1 session */
   @Get(':id')
-  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT)
+  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT, Role.SALE)
   findOne(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.sessionsService.findById(id, req.user);
   }
@@ -144,7 +178,11 @@ export class SessionsController {
   /** Sửa thông tin buổi học (chỉ SCHEDULED) */
   @Patch(':id')
   @Roles(Role.OPS, Role.DIRECTOR)
-  update(@Param('id', ParseMongoIdPipe) id: string, @Body() dto: UpdateSessionDto) {
+  update(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: UpdateSessionDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
     return this.sessionsService.update(id, dto);
   }
 
@@ -174,7 +212,7 @@ export class SessionsController {
 
   /** OPS/DIRECTOR chốt thủ công */
   @Post(':id/finalize')
-  @Roles(Role.OPS, Role.DIRECTOR)
+  @Roles(Role.OPS, Role.ACCOUNTING, Role.DIRECTOR)
   manualFinalize(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
     return this.sessionsService.manualFinalize(id, req.user.sub);
   }
@@ -243,24 +281,13 @@ export class SessionsController {
     return this.sessionsService.convertTrialSessions(body.studentId, body.classId);
   }
 
-  /** Học viên KHÔNG tiếp tục → không tính lương GV, không charge phụ huynh */
-  @Post('trial/reject')
-  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING)
-  rejectTrial(
-    @Body() body: { studentId: string; classId: string },
-    @Req() req: AuthenticatedRequest,
-  ) {
-    return this.sessionsService.markTrialRejectedNoPay(body.studentId, body.classId, req.user.sub);
-  }
-
-  /** Route cũ giữ tương thích nhưng đã map sang nghiệp vụ reject-no-pay */
+  /** Học viên KHÔNG tiếp tục → GV không được tính lương từ HS này, không charge phụ huynh */
   @Post('trial/teacher-paid-only')
   @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING)
   trialTeacherPaidOnly(
     @Body() body: { studentId: string; classId: string },
-    @Req() req: AuthenticatedRequest,
   ) {
-    return this.sessionsService.markTrialTeacherPaidOnly(body.studentId, body.classId, req.user.sub);
+    return this.sessionsService.markTrialTeacherPaidOnly(body.studentId, body.classId);
   }
 
   // ── DELETE ──────────────────────────────────────────────────────

@@ -12,6 +12,7 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { WalletsModule } from '../wallets/wallets.module';
+import { ClassesModule } from '../classes/classes.module';
 
 const receiptUploadPath = join(process.cwd(), 'uploads', 'invoices');
 
@@ -47,6 +48,7 @@ const imageFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
     ]),
     MulterModule.register({ storage, fileFilter: imageFileFilter }),
     WalletsModule,
+    ClassesModule,
   ],
   controllers: [InvoicesController],
   providers: [InvoicesService],

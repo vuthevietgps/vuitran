@@ -48,6 +48,10 @@ export class CreateStudentDto {
 
   @IsOptional()
   @IsString()
+  level?: string;
+
+  @IsOptional()
+  @IsString()
   studentType?: 'ONLINE' | 'OFFLINE';
 
   @IsOptional()

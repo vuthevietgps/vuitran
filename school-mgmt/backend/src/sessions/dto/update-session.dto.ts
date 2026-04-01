@@ -3,6 +3,7 @@ import {
   IsDateString,
   IsEnum,
   IsInt,
+  IsMongoId,
   IsNumber,
   IsOptional,
   IsString,
@@ -15,6 +16,10 @@ import { Type } from 'class-transformer';
 import { SessionType } from '../schemas/session.schema';
 
 export class UpdateSessionDto {
+  @IsMongoId()
+  @IsOptional()
+  teacherId?: string;
+
   @IsDateString()
   @IsOptional()
   scheduledDate?: string;

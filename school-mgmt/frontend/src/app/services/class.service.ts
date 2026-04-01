@@ -41,6 +41,8 @@ export interface PendingSaleUpdate {
   requestedChanges?: Record<string, unknown>;
   requestedBy?: ClassMember | null;
   requestedAt?: string;
+  changeSummary?: ClassEditHistoryChange[];
+  durationPreview?: ClassDurationPreview | null;
   reviewedBy?: ClassMember | null;
   reviewedAt?: string;
   rejectionReason?: string;
@@ -55,6 +57,53 @@ export interface DurationSnapshot {
   pricePerSession?: number;
   teacherPayPerSession?: number;
   teacherPayPerStudent?: number;
+}
+
+export interface ClassEditHistoryChange {
+  field: string;
+  label: string;
+  beforeValue?: string;
+  afterValue?: string;
+}
+
+export interface ClassDurationPreviewStudent {
+  studentId?: string | null;
+  studentName?: string;
+  studentCode?: string;
+  oldDurationMinutes: number;
+  newDurationMinutes: number;
+  paidSessionsRemainingBefore?: number;
+  bonusSessionsRemainingBefore?: number;
+  totalSessionsRemainingBefore?: number;
+  paidSessionsRemainingAfter?: number;
+  bonusSessionsRemainingAfter?: number;
+  totalSessionsRemainingAfter?: number;
+  projectedTotalSessionsBefore?: number;
+  projectedTotalSessionsAfter?: number;
+}
+
+export interface ClassDurationPreview {
+  oldBaseDuration: number;
+  oldSessionDuration: number;
+  newBaseDuration: number;
+  newSessionDuration: number;
+  students: ClassDurationPreviewStudent[];
+}
+
+export interface ClassEditHistoryEntry {
+  editedAt: string;
+  editedByName?: string;
+  editedByRole?: string;
+  action:
+    | 'SALE_DIRECT_UPDATED'
+    | 'SALE_REQUESTED'
+    | 'APPROVED'
+    | 'REJECTED'
+    | 'MANAGER_UPDATED';
+  requestType?: 'GENERAL' | 'DURATION_CHANGE';
+  changes: ClassEditHistoryChange[];
+  durationPreview?: ClassDurationPreview | null;
+  note?: string;
 }
 
 export interface ClassItem {
@@ -79,6 +128,9 @@ export interface ClassItem {
   teacherPayPerStudent?: number;
   baseDuration?: number;
   sessionDuration?: number;
+  subject?: string;
+  learningGoals?: string;
+  maxStudents?: number;
   actualPricePerSession?: number;
   actualTeacherPayPerSession?: number;
 
@@ -96,6 +148,7 @@ export interface ClassItem {
   pendingSaleUpdate?: PendingSaleUpdate | null;
   durationSnapshots?: DurationSnapshot[];
   studentConfigs?: StudentClassConfig[];
+  editHistory?: ClassEditHistoryEntry[];
 }
 
 export interface ClassPayload {
@@ -112,6 +165,9 @@ export interface ClassPayload {
   teacherPayPerStudent?: number;
   baseDuration?: number;
   sessionDuration?: number;
+  subject?: string;
+  learningGoals?: string;
+  maxStudents?: number;
   revenuePerStudent?: number;
   teacherSalaryCost?: number;
   requestType?: 'GENERAL' | 'DURATION_CHANGE';
@@ -154,6 +210,18 @@ export class ClassService {
     }
   }
 
+  async listSaleOfflineOptions(): Promise<ClassItem[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ClassItem[]>(`${environment.apiBase}/classes/sale-offline-options`, {
+          withCredentials: true,
+        }),
+      );
+    } catch {
+      return [];
+    }
+  }
+
   async update(id: string, payload: Partial<ClassPayload>): Promise<ClassMutationResult> {
     try {
       const response = await firstValueFrom(
@@ -180,12 +248,16 @@ export class ClassService {
     }
   }
 
-  async assignStudents(id: string, studentIds: string[]): Promise<ClassMutationResult> {
+  async assignStudents(
+    id: string,
+    studentIds: string[],
+    invoiceId?: string,
+  ): Promise<ClassMutationResult> {
     try {
       const response = await firstValueFrom(
         this.http.post(
           `${environment.apiBase}/classes/${id}/assign-students`,
-          { studentIds },
+          { studentIds, invoiceId },
           { withCredentials: true },
         ),
       );

@@ -24,11 +24,11 @@ const FLOW_DATA: Record<string, FlowInfo> = {
   },
   'pending-approvals': {
     title: 'Chờ duyệt',
-    summary: 'Duyệt các yêu cầu từ nhân viên: hóa đơn, đơn hàng, xin nghỉ, chi phí.',
+    summary: 'Duyệt các yêu cầu từ nhân viên: hóa đơn, đơn hàng, xin nghỉ, chi phí và yêu cầu thay đổi buổi học.',
     steps: [
       { step: 'Xem danh sách', desc: 'Hiển thị tất cả yêu cầu đang chờ duyệt, phân loại theo loại yêu cầu.' },
-      { step: 'Xem chi tiết', desc: 'Click vào yêu cầu để xem thông tin chi tiết.' },
-      { step: 'Duyệt / Từ chối', desc: 'Giám đốc duyệt hoặc từ chối yêu cầu, có thể ghi chú lý do.' },
+      { step: 'Xem chi tiết', desc: 'Click vào yêu cầu để xem thông tin chi tiết, đặc biệt là tác động tài chính của các yêu cầu đổi buổi học.' },
+      { step: 'Duyệt / Từ chối', desc: 'Giám đốc hoặc OPS duyệt, từ chối và có thể ghi chú lý do.' },
       { step: 'Thông báo', desc: 'Hệ thống tự động gửi thông báo kết quả cho người yêu cầu.' },
     ],
   },
@@ -180,12 +180,12 @@ const FLOW_DATA: Record<string, FlowInfo> = {
   },
   sessions: {
     title: 'Buổi học',
-    summary: 'Quản lý danh sách buổi học, lịch trình, trạng thái.',
+    summary: 'Quản lý danh sách buổi học, lịch trình, trạng thái và yêu cầu thay đổi buổi học.',
     steps: [
       { step: 'Xem danh sách', desc: 'Hiển thị buổi học theo ngày/tuần, lọc theo lớp, giáo viên.' },
       { step: 'Tạo buổi học', desc: 'Tạo buổi học mới: chọn lớp, giáo viên, thời gian, phòng.' },
-      { step: 'Điểm danh', desc: 'Giáo viên điểm danh học sinh sau buổi học.' },
-      { step: 'Ghi nhận xét', desc: 'Giáo viên ghi nhận xét tiến bộ cho từng học sinh.' },
+      { step: 'Yêu cầu thay đổi', desc: 'Sale mở chi tiết buổi học để gửi đề nghị đổi giáo viên hoặc thời lượng trước khi buổi học diễn ra.' },
+      { step: 'Phê duyệt', desc: 'Director hoặc OPS xử lý yêu cầu trên màn Chờ duyệt, hệ thống chỉ cập nhật session sau khi được phê duyệt.' },
     ],
   },
   'parent-calendar': {

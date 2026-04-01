@@ -11,6 +11,11 @@ import {
   ClassDocument,
   ClassUpdateRequestStatus,
 } from '../classes/schemas/class.schema';
+import {
+  SessionChangeRequest,
+  SessionChangeRequestDocument,
+  SessionChangeRequestStatus,
+} from '../sessions/schemas/session-change-request.schema';
 
 @Injectable()
 export class PendingApprovalsService {
@@ -21,6 +26,8 @@ export class PendingApprovalsService {
     @InjectModel(TeacherProfile.name) private teacherModel: Model<any>,
     @InjectModel(Ticket.name) private ticketModel: Model<TicketDocument>,
     @InjectModel(Classroom.name) private classModel: Model<ClassDocument>,
+    @InjectModel(SessionChangeRequest.name)
+    private sessionChangeRequestModel: Model<SessionChangeRequestDocument>,
   ) {}
 
   async getSummary() {
@@ -30,6 +37,7 @@ export class PendingApprovalsService {
       pendingTopUps,
       pendingTeachers,
       pendingClassUpdates,
+      pendingSessionChangeRequests,
       openTickets,
     ] = await Promise.all([
       this.payrollModel.countDocuments({ status: PayrollStatus.PENDING_REVIEW }),
@@ -37,6 +45,7 @@ export class PendingApprovalsService {
       this.ledgerModel.countDocuments({ type: TransactionType.TOP_UP, status: TransactionStatus.PENDING }),
       this.teacherModel.countDocuments({ status: 'PENDING' }),
       this.classModel.countDocuments({ 'pendingSaleUpdate.status': ClassUpdateRequestStatus.PENDING }),
+      this.sessionChangeRequestModel.countDocuments({ status: SessionChangeRequestStatus.PENDING }),
       this.ticketModel.countDocuments({ status: { $in: ['OPEN', 'IN_PROGRESS', 'WAITING_INFO'] } }),
     ]);
 
@@ -46,8 +55,15 @@ export class PendingApprovalsService {
       pendingTopUps,
       pendingTeachers,
       pendingClassUpdates,
+      pendingSessionChangeRequests,
       openTickets,
-      totalPending: pendingPayrolls + pendingInvoices + pendingTopUps + pendingTeachers + pendingClassUpdates,
+      totalPending:
+        pendingPayrolls
+        + pendingInvoices
+        + pendingTopUps
+        + pendingTeachers
+        + pendingClassUpdates
+        + pendingSessionChangeRequests,
     };
   }
 
@@ -62,8 +78,13 @@ export class PendingApprovalsService {
   async getPendingInvoices() {
     return this.invoiceModel
       .find({ status: InvoiceStatus.PENDING_APPROVAL })
-      .populate('studentId', 'fullName')
+      .select(
+        '_id invoiceNumber invoiceType classType sessions bonusSessions trialSessions amount paymentDate receiptImage description status createdAt createdBy studentId saleId classId',
+      )
+      .populate('studentId', 'fullName parentName parentPhone studentCode parentUserId')
       .populate('createdBy', 'fullName email')
+      .populate('saleId', 'fullName email')
+      .populate('classId', 'name code')
       .sort({ createdAt: -1 })
       .lean();
   }
@@ -94,16 +115,30 @@ export class PendingApprovalsService {
       .lean();
   }
 
+  async getPendingSessionChanges() {
+    return this.sessionChangeRequestModel
+      .find({ status: SessionChangeRequestStatus.PENDING })
+      .populate('sessionId', 'scheduledDate scheduledStartTime scheduledEndTime status durationMinutes')
+      .populate('classId', 'name code')
+      .populate('studentId', 'fullName studentCode')
+      .populate('requestedBy', 'fullName email')
+      .populate('currentTeacherId', 'fullName email')
+      .populate('requestedTeacherId', 'fullName email')
+      .sort({ requestedAt: -1 })
+      .lean();
+  }
+
   async getAll() {
-    const [summary, payrolls, invoices, topUps, teachers, classes] = await Promise.all([
+    const [summary, payrolls, invoices, topUps, teachers, classes, sessionChanges] = await Promise.all([
       this.getSummary(),
       this.getPendingPayrolls(),
       this.getPendingInvoices(),
       this.getPendingTopUps(),
       this.getPendingTeachers(),
       this.getPendingClassUpdates(),
+      this.getPendingSessionChanges(),
     ]);
 
-    return { summary, payrolls, invoices, topUps, teachers, classes };
+    return { summary, payrolls, invoices, topUps, teachers, classes, sessionChanges };
   }
 }

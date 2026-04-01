@@ -11,6 +11,7 @@ import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { Lead, LeadSchema } from '../leads/schemas/lead.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { MarketingAttributionModule } from '../marketing-attribution/marketing-attribution.module';
+import { InvoicesModule } from '../invoices/invoices.module';
 import { OrderCommunicationService } from './order-communication.service';
 
 @Module({
@@ -25,6 +26,7 @@ import { OrderCommunicationService } from './order-communication.service';
     ]),
     AuditLogModule,
     MarketingAttributionModule,
+    InvoicesModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService, EnrollmentService, OrderCommunicationService],

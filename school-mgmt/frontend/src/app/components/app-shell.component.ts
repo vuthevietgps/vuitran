@@ -255,6 +255,15 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/bank-reconciliation" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Đối soát ngân hàng">
               <span class="icon">&#127974;</span><span class="label">Đối soát NH</span>
             </a>
+            <a routerLink="/app/supplier-quotes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Báo giá NCC">
+              <span class="icon">&#128196;</span><span class="label">Báo giá NCC</span>
+            </a>
+            <a routerLink="/app/payments/supplier" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Thanh toán NCC">
+              <span class="icon">&#128179;</span><span class="label">Thanh toán NCC</span>
+            </a>
+            <a routerLink="/app/agents" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])" title="Danh sách đại lý">
+              <span class="icon">&#129309;</span><span class="label">Đại lý</span>
+            </a>
           </div>
         </div>
 

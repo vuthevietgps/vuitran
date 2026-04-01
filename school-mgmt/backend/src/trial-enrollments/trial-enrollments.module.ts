@@ -8,6 +8,7 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
 import { Product, ProductSchema } from '../products/schemas/product.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
+import { Order, OrderSchema } from '../orders/schemas/order.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { TrialEnrollmentsController } from './trial-enrollments.controller';
 import { TrialEnrollmentsService } from './trial-enrollments.service';
@@ -21,6 +22,7 @@ import { SessionsModule } from '../sessions/sessions.module';
       { name: Classroom.name, schema: ClassroomSchema },
       { name: Product.name, schema: ProductSchema },
       { name: Invoice.name, schema: InvoiceSchema },
+      { name: Order.name, schema: OrderSchema },
       { name: User.name, schema: UserSchema },
     ]),
     SessionsModule,

@@ -46,6 +46,11 @@ export class CreateInvoiceDto {
   bonusSessions?: number;
 
   @IsNumber()
+  @Min(0)
+  @IsOptional()
+  trialSessions?: number;
+
+  @IsNumber()
   @Min(1)
   @IsOptional()
   paymentRound?: number;
@@ -63,6 +68,11 @@ export class CreateInvoiceDto {
   @Min(1)
   @IsOptional()
   referenceDuration?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  teacherPayPerSession?: number;
 
   @IsNumber()
   @Min(0)

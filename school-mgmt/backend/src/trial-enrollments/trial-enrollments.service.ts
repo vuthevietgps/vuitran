@@ -4,6 +4,7 @@ import { FilterQuery, Model, Types } from 'mongoose';
 import { Role } from '../common/interfaces/role.enum';
 import { Classroom, ClassDocument, ClassMode } from '../classes/schemas/class.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
+import { Order, OrderDocument, OrderStatus } from '../orders/schemas/order.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -33,6 +34,8 @@ export class TrialEnrollmentsService {
     private readonly productModel: Model<ProductDocument>,
     @InjectModel(Invoice.name)
     private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(Order.name)
+    private readonly orderModel: Model<OrderDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly sessionsService: SessionsService,
@@ -58,6 +61,75 @@ export class TrialEnrollmentsService {
     if (!value) return undefined;
     if (value instanceof Types.ObjectId) return value;
     return Types.ObjectId.isValid(value) ? new Types.ObjectId(value) : undefined;
+  }
+
+  private async syncOrderProgressForInvoiceIds(
+    invoiceIds: Array<string | Types.ObjectId>,
+  ): Promise<void> {
+    const normalizedInvoiceIds = invoiceIds
+      .map((invoiceId) => this.normalizeMongoId(invoiceId))
+      .filter((invoiceId): invoiceId is Types.ObjectId => !!invoiceId);
+
+    if (!normalizedInvoiceIds.length) {
+      return;
+    }
+
+    const sourceInvoices = await this.invoiceModel
+      .find({ _id: { $in: normalizedInvoiceIds } })
+      .select('_id orderId')
+      .lean();
+
+    const orderIds = Array.from(
+      new Set(
+        sourceInvoices
+          .map((invoice: any) => invoice?.orderId?.toString?.())
+          .filter((orderId: string | undefined): orderId is string => !!orderId),
+      ),
+    );
+
+    if (!orderIds.length) {
+      return;
+    }
+
+    const orderInvoices = await this.invoiceModel
+      .find({ orderId: { $in: orderIds.map((orderId) => new Types.ObjectId(orderId)) } })
+      .select('_id orderId classId')
+      .lean();
+
+    const invoicesByOrder = new Map<string, any[]>();
+    for (const invoice of orderInvoices) {
+      const orderId = invoice?.orderId?.toString?.();
+      if (!orderId) continue;
+      if (!invoicesByOrder.has(orderId)) {
+        invoicesByOrder.set(orderId, []);
+      }
+      invoicesByOrder.get(orderId)!.push(invoice);
+    }
+
+    for (const orderId of orderIds) {
+      const relatedInvoices = invoicesByOrder.get(orderId) || [];
+      const allInvoicesAssignedToClass =
+        relatedInvoices.length > 0 && relatedInvoices.every((invoice) => !!invoice.classId);
+      const uniqueClassIds = Array.from(
+        new Set(
+          relatedInvoices
+            .map((invoice) => invoice?.classId?.toString?.())
+            .filter((classId: string | undefined): classId is string => !!classId),
+        ),
+      );
+
+      await this.orderModel.findByIdAndUpdate(orderId, {
+        $set: {
+          status: allInvoicesAssignedToClass ? OrderStatus.COMPLETED : OrderStatus.APPROVED,
+          'processedResults.invoiceIds': relatedInvoices.map(
+            (invoice) => new Types.ObjectId(invoice._id),
+          ),
+          'processedResults.classIds': uniqueClassIds.map(
+            (classId) => new Types.ObjectId(classId),
+          ),
+        },
+      });
+    }
   }
 
   private getRoleScopedFilter(user: any): FilterQuery<TrialEnrollmentDocument> {
@@ -495,6 +567,11 @@ export class TrialEnrollmentsService {
       { _id: enrollment.classId },
       { $addToSet: { students: student._id } },
     );
+    await this.invoiceModel.updateOne(
+      { _id: invoice._id },
+      { $set: { classId: enrollment.classId } },
+    );
+    await this.syncOrderProgressForInvoiceIds([invoice._id]);
     await this.maybePromoteStudentToOfficial(student._id as Types.ObjectId, this.getActorId(user));
 
     enrollment.status = TrialEnrollmentStatus.CONVERTED;

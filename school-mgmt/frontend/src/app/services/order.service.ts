@@ -7,12 +7,26 @@ export interface OrderItem {
   productId: string;
   productName?: string;
   sessions: number;
+  invoiceSessions?: number;
   sessionDuration: number;
+  baseDuration?: number;
   pricePerSession: number;
   amount: number;
+  bonusSessions?: number;
+  trialSessions?: number;
+  courseStatus?: string;
   teachingMode?: string;
   preferredSchedule?: string;
+  selectedClassId?: string;
   preferredTeacherId?: string;
+  paymentRound?: number;
+  teacherPayPerSession?: number;
+  teacherPayPerStudent?: number;
+  subject?: string;
+  learningGoals?: string;
+  maxStudents?: number;
+  invoiceDescription?: string;
+  invoiceNumber?: string;
   notes?: string;
 }
 
@@ -41,9 +55,18 @@ export interface OrderData {
   parentPhone: string;
   parentEmail?: string;
   parentUserId?: string;
+  parentUserCode?: string;
+  parentAddress?: string;
+  parentFacebookLink?: string;
   studentName: string;
+  studentCode?: string;
   studentDob?: string;
   studentGrade?: string;
+  studentLevel?: string;
+  studentAge?: number;
+  studentBirthMonth?: number;
+  parentBirthMonth?: number;
+  studentFaceImage?: string;
   existingStudentId?: string;
   items: OrderItem[];
   totalAmount: number;
@@ -51,15 +74,21 @@ export interface OrderData {
   discountReason?: string;
   finalAmount: number;
   paymentPlan?: string;
+  paymentDate?: string;
+  receiptImage?: string;
   saleId: string;
   saleName?: string;
   saleCommission?: number;
   leadSource?: string;
   leadId?: string;
+  adGroupId?: string;
+  adGroupName?: string;
+  referredByUserId?: string;
   consultationNotes?: string;
-  processedResults?: any;
+  processedResults?: OrderProcessedResults;
   approvedBy?: string;
   approvedAt?: string;
+  approvalImage?: string;
   rejectionReason?: string;
   needsInfoReason?: string;
   createdAt?: string;
@@ -102,12 +131,49 @@ export class OrderService {
   private http = inject(HttpClient);
   private base = `${environment.apiBase}/orders`;
 
+  private normalizeErrorMessage(error: any, fallback: string): string {
+    const payload = error?.error;
+    const rawMessage = payload?.message;
+
+    if (typeof rawMessage === 'string' && rawMessage.trim()) {
+      return rawMessage;
+    }
+
+    if (Array.isArray(rawMessage)) {
+      return rawMessage.map((item) => String(item)).join('\n');
+    }
+
+    if (rawMessage && typeof rawMessage === 'object') {
+      const nestedMessage = (rawMessage as any).message;
+      if (typeof nestedMessage === 'string' && nestedMessage.trim()) {
+        return nestedMessage;
+      }
+      if (Array.isArray(nestedMessage)) {
+        return nestedMessage.map((item) => String(item)).join('\n');
+      }
+
+      const nestedError = (rawMessage as any).error;
+      if (typeof nestedError === 'string' && nestedError.trim()) {
+        return nestedError;
+      }
+    }
+
+    const payloadError = payload?.error;
+    if (typeof payloadError === 'string' && payloadError.trim()) {
+      return payloadError;
+    }
+
+    return fallback;
+  }
+
   async list(params?: Record<string, string>): Promise<OrderData[]> {
     try {
       return await firstValueFrom(
         this.http.get<OrderData[]>(this.base, { withCredentials: true, params }),
       );
-    } catch { return []; }
+    } catch {
+      return [];
+    }
   }
 
   async getOne(id: string): Promise<OrderData | null> {
@@ -115,7 +181,9 @@ export class OrderService {
       return await firstValueFrom(
         this.http.get<OrderData>(`${this.base}/${id}`, { withCredentials: true }),
       );
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   async create(payload: any): Promise<{ ok: boolean; message?: string; data?: OrderData }> {
@@ -125,7 +193,7 @@ export class OrderService {
       );
       return { ok: true, data };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi tạo đơn' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi tạo đơn') };
     }
   }
 
@@ -136,7 +204,7 @@ export class OrderService {
       );
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi cập nhật' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi cập nhật') };
     }
   }
 
@@ -147,18 +215,18 @@ export class OrderService {
       );
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi gửi duyệt' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi gửi duyệt') };
     }
   }
 
-  async approve(id: string): Promise<{ ok: boolean; message?: string; data?: ApproveResponse }> {
+  async approve(id: string, approvalImage?: string): Promise<{ ok: boolean; message?: string; data?: ApproveResponse }> {
     try {
       const data = await firstValueFrom(
-        this.http.post<ApproveResponse>(`${this.base}/${id}/approve`, {}, { withCredentials: true }),
+        this.http.post<ApproveResponse>(`${this.base}/${id}/approve`, { ...(approvalImage ? { approvalImage } : {}) }, { withCredentials: true }),
       );
       return { ok: true, data };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi duyệt' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi duyệt') };
     }
   }
 
@@ -169,7 +237,7 @@ export class OrderService {
       );
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi từ chối' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi từ chối') };
     }
   }
 
@@ -180,7 +248,7 @@ export class OrderService {
       );
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi') };
     }
   }
 
@@ -191,7 +259,7 @@ export class OrderService {
       );
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi hủy' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi hủy') };
     }
   }
 
@@ -202,7 +270,7 @@ export class OrderService {
       );
       return { ok: true };
     } catch (e: any) {
-      return { ok: false, message: e?.error?.message || 'Lỗi xóa' };
+      return { ok: false, message: this.normalizeErrorMessage(e, 'Lỗi xóa') };
     }
   }
 
@@ -211,7 +279,9 @@ export class OrderService {
       return await firstValueFrom(
         this.http.get<OrderPipeline>(`${this.base}/pipeline`, { withCredentials: true }),
       );
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 
   async getStats(): Promise<OrderStats | null> {
@@ -219,6 +289,8 @@ export class OrderService {
       return await firstValueFrom(
         this.http.get<OrderStats>(`${this.base}/stats`, { withCredentials: true }),
       );
-    } catch { return null; }
+    } catch {
+      return null;
+    }
   }
 }

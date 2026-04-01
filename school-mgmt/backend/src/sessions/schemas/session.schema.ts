@@ -229,6 +229,75 @@ export class ParentFeedback {
 export const ParentFeedbackSchema =
   SchemaFactory.createForClass(ParentFeedback);
 
+@Schema({ _id: false })
+export class SessionEditHistoryChange {
+  @Prop({ type: String, required: true, trim: true })
+  field!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  label!: string;
+
+  @Prop({ type: String, trim: true })
+  beforeValue?: string;
+
+  @Prop({ type: String, trim: true })
+  afterValue?: string;
+}
+
+export const SessionEditHistoryChangeSchema =
+  SchemaFactory.createForClass(SessionEditHistoryChange);
+
+@Schema({ _id: false })
+export class SessionDurationRemainingSnapshot {
+  @Prop({ type: Number, min: 1, required: true })
+  newDurationMinutes!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  paidRemainingMinutes?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusRemainingMinutes?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalRemainingMinutes?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  paidSessionsRemaining?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusSessionsRemaining?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalSessionsRemaining?: number;
+}
+
+export const SessionDurationRemainingSnapshotSchema =
+  SchemaFactory.createForClass(SessionDurationRemainingSnapshot);
+
+@Schema({ _id: false })
+export class SessionEditHistoryEntry {
+  @Prop({ type: Date, required: true })
+  editedAt!: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  editedByUserId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  editedByName?: string;
+
+  @Prop({ type: String, trim: true })
+  editedByRole?: string;
+
+  @Prop({ type: [SessionEditHistoryChangeSchema], default: [] })
+  changes!: SessionEditHistoryChange[];
+
+  @Prop({ type: SessionDurationRemainingSnapshotSchema })
+  durationSnapshot?: SessionDurationRemainingSnapshot;
+}
+
+export const SessionEditHistoryEntrySchema =
+  SchemaFactory.createForClass(SessionEditHistoryEntry);
+
 // ─── Main Schema ────────────────────────────────────────────────────
 
 @Schema({ timestamps: true })
@@ -399,10 +468,11 @@ export class Session {
   @Prop({ type: Boolean, default: false })
   trialConverted!: boolean;
 
-  /** HS không học tiếp sau trial → vẫn trả lương GV nhưng không trừ ví PH */
+  /** HS không học tiếp sau trial → KHÔNG trả lương GV, không trừ ví PH (deprecated, dùng trialRejectedNoPay) */
   @Prop({ type: Boolean, default: false })
   trialTeacherPaidOnly!: boolean;
 
+  /** Trial bị từ chối → GV không được trả lương từ HS này, không trừ ví PH */
   @Prop({ type: Boolean, default: false })
   trialRejectedNoPay!: boolean;
 
@@ -419,6 +489,9 @@ export class Session {
 
   @Prop({ type: Date })
   updatedAt?: Date;
+
+  @Prop({ type: [SessionEditHistoryEntrySchema], default: [] })
+  editHistory!: SessionEditHistoryEntry[];
 }
 
 export const SessionSchema = SchemaFactory.createForClass(Session);

@@ -8,6 +8,10 @@ import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.
 import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
 import { Ticket, TicketSchema } from '../tickets/schemas/ticket.schema';
 import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
+import {
+  SessionChangeRequest,
+  SessionChangeRequestSchema,
+} from '../sessions/schemas/session-change-request.schema';
 
 @Module({
   imports: [
@@ -18,6 +22,7 @@ import { Classroom, ClassroomSchema } from '../classes/schemas/class.schema';
       { name: TeacherProfile.name, schema: TeacherProfileSchema },
       { name: Ticket.name, schema: TicketSchema },
       { name: Classroom.name, schema: ClassroomSchema },
+      { name: SessionChangeRequest.name, schema: SessionChangeRequestSchema },
     ]),
   ],
   controllers: [PendingApprovalsController],

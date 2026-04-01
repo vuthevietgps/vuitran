@@ -29,6 +29,12 @@ export class ClassesController {
     return this.classesService.findAll(req.user);
   }
 
+  @Get('sale-offline-options')
+  @Roles(Role.SALE)
+  findSaleOfflineOptions(@Req() req: AuthenticatedRequest) {
+    return this.classesService.findSaleOfflineOptions(req.user);
+  }
+
   @Get('suggest-teachers')
   @Roles(Role.DIRECTOR, Role.OPS)
   suggestTeachers(

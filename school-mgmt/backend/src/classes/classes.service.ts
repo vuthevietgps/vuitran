@@ -10,7 +10,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
   Classroom,
+  ClassMode,
+  ClassStatus,
   ClassDocument,
+  ClassEditHistoryAction,
   ClassUpdateRequestStatus,
   DurationSnapshotSource,
   PendingClassUpdateType,
@@ -28,11 +31,13 @@ import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/inv
 import { TeacherProfile } from '../teachers/schemas/teacher-profile.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { Order, OrderDocument, OrderStatus } from '../orders/schemas/order.schema';
 import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
 import { Session, SessionDocument, SessionStatus } from '../sessions/schemas/session.schema';
 import {
   getCurrentTeacherIdForStudent,
   getCurrentDurationForStudent,
+  getClassPricingConfigAt,
   getTeacherOwnedStudentIds,
 } from './student-config.utils';
 
@@ -45,6 +50,7 @@ export class ClassesService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     @InjectModel(TeacherProfile.name) private readonly teacherProfileModel: Model<any>,
     @InjectModel(Product.name) private readonly productModel: Model<ProductDocument>,
     @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
@@ -137,6 +143,546 @@ export class ClassesService {
     return normalize(left) === normalize(right);
   }
 
+  private objectIdToString(value: unknown): string | null {
+    if (!value) return null;
+    if (typeof value === 'string') return value;
+    return (value as any)?._id?.toString?.() || (value as any)?.toString?.() || null;
+  }
+
+  private sanitizeClassCodeToken(value?: string | null, fallback = 'AUTO'): string {
+    const normalized = String(value || '')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '')
+      .slice(-8);
+    return normalized || fallback;
+  }
+
+  private buildAutoClassName(options: {
+    studentName?: string | null;
+    productName?: string | null;
+    classMode?: string | null;
+  }): string {
+    const productName = String(options.productName || '').trim();
+    const studentName = String(options.studentName || '').trim();
+    const fallbackMode = String(options.classMode || '').toUpperCase() === ClassMode.OFFLINE
+      ? 'OFFLINE'
+      : 'ONLINE';
+    const label = productName || fallbackMode;
+    return studentName ? `Lop ${label} - ${studentName}` : `Lop ${label}`;
+  }
+
+  private async generateAutoClassCode(orderCode?: string | null, invoiceId?: string | null): Promise<string> {
+    const orderToken = this.sanitizeClassCodeToken(orderCode, 'ORD');
+    const invoiceToken = this.sanitizeClassCodeToken(invoiceId, 'AUTO').slice(-4);
+    const baseCode = `CLS-${orderToken}-${invoiceToken}`;
+    let attempt = 0;
+    let candidate = baseCode;
+
+    while (await this.classModel.exists({ code: candidate })) {
+      attempt += 1;
+      candidate = `${baseCode}-${attempt}`;
+    }
+
+    return candidate;
+  }
+
+  private async syncOrderProgressForInvoiceIds(invoiceIds: string[]): Promise<void> {
+    const normalizedInvoiceIds = invoiceIds
+      .filter((invoiceId) => Types.ObjectId.isValid(invoiceId))
+      .map((invoiceId) => new Types.ObjectId(invoiceId));
+
+    if (!normalizedInvoiceIds.length) {
+      return;
+    }
+
+    const sourceInvoices = await this.invoiceModel
+      .find({ _id: { $in: normalizedInvoiceIds } })
+      .select('_id orderId')
+      .lean();
+
+    const orderIds = Array.from(
+      new Set(
+        sourceInvoices
+          .map((invoice: any) => invoice?.orderId?.toString?.())
+          .filter((orderId: string | undefined): orderId is string => !!orderId),
+      ),
+    );
+
+    if (!orderIds.length) {
+      return;
+    }
+
+    const orderInvoices = await this.invoiceModel
+      .find({ orderId: { $in: orderIds.map((orderId) => new Types.ObjectId(orderId)) } })
+      .select('_id orderId classId')
+      .lean();
+
+    const invoicesByOrder = new Map<string, any[]>();
+    for (const invoice of orderInvoices) {
+      const orderId = invoice?.orderId?.toString?.();
+      if (!orderId) continue;
+      if (!invoicesByOrder.has(orderId)) {
+        invoicesByOrder.set(orderId, []);
+      }
+      invoicesByOrder.get(orderId)!.push(invoice);
+    }
+
+    for (const orderId of orderIds) {
+      const relatedInvoices = invoicesByOrder.get(orderId) || [];
+      const allInvoicesAssignedToClass = relatedInvoices.length > 0
+        && relatedInvoices.every((invoice) => !!invoice.classId);
+      const uniqueClassIds = Array.from(
+        new Set(
+          relatedInvoices
+            .map((invoice) => invoice?.classId?.toString?.())
+            .filter((classId: string | undefined): classId is string => !!classId),
+        ),
+      );
+
+      await this.orderModel.findByIdAndUpdate(orderId, {
+        $set: {
+          status: allInvoicesAssignedToClass ? OrderStatus.COMPLETED : OrderStatus.APPROVED,
+          'processedResults.invoiceIds': relatedInvoices.map((invoice) => new Types.ObjectId(invoice._id)),
+          'processedResults.classIds': uniqueClassIds.map((classId) => new Types.ObjectId(classId)),
+        },
+      });
+    }
+  }
+
+  private getClassHistoryFieldLabel(field: string): string {
+    const labels: Record<string, string> = {
+      name: 'Ten lop',
+      code: 'Ma lop',
+      teacherId: 'Giao vien',
+      productPackageId: 'Goi san pham',
+      classMode: 'Loai lop',
+      pricePerSession: 'Gia theo buoi',
+      teacherPayPerSession: 'Luong GV/buoi',
+      teacherPayPerStudent: 'Luong GV/HS',
+      baseDuration: 'Thoi luong co so',
+      sessionDuration: 'Thoi luong buoi hoc',
+      subject: 'Mon hoc',
+      grade: 'Khoi lop',
+      learningGoals: 'Muc tieu hoc',
+      maxStudents: 'Si so toi da',
+    };
+    return labels[field] || field;
+  }
+
+  private formatCurrencyForHistory(value: unknown): string {
+    const amount = this.toSafeNumber(value, 0);
+    return `${amount.toLocaleString('vi-VN')}d`;
+  }
+
+  private formatClassModeLabel(value: unknown): string {
+    return String(value || '').toUpperCase() === 'OFFLINE' ? 'OFFLINE' : 'ONLINE';
+  }
+
+  private formatClassHistoryValue(
+    field: string,
+    value: unknown,
+    lookupMaps?: {
+      teacherNames?: Map<string, string>;
+      productNames?: Map<string, string>;
+    },
+  ): string {
+    if (value === null || value === undefined) {
+      return '(trong)';
+    }
+
+    if (typeof value === 'string' && !value.trim()) {
+      return '(trong)';
+    }
+
+    switch (field) {
+      case 'teacherId': {
+        const teacherId = this.objectIdToString(value);
+        if (!teacherId) return '(trong)';
+        return lookupMaps?.teacherNames?.get(teacherId) || teacherId;
+      }
+      case 'productPackageId': {
+        const productId = this.objectIdToString(value);
+        if (!productId) return '(trong)';
+        return lookupMaps?.productNames?.get(productId) || productId;
+      }
+      case 'classMode':
+        return this.formatClassModeLabel(value);
+      case 'pricePerSession':
+      case 'teacherPayPerSession':
+      case 'teacherPayPerStudent':
+        return this.formatCurrencyForHistory(value);
+      case 'baseDuration':
+      case 'sessionDuration':
+        return `${this.toSafeNumber(value, 0)} phut`;
+      case 'maxStudents':
+        return `${this.toSafeNumber(value, 0)}`;
+      default:
+        return String(value);
+    }
+  }
+
+  private async buildClassHistoryLookupMaps(
+    classroom: any,
+    dto: Partial<CreateClassDto>,
+  ): Promise<{
+    teacherNames: Map<string, string>;
+    productNames: Map<string, string>;
+  }> {
+    const teacherIds = new Set<string>();
+    const productIds = new Set<string>();
+
+    const currentTeacherId = this.objectIdToString(classroom?.teacher);
+    const requestedTeacherId = this.objectIdToString(dto.teacherId);
+    if (currentTeacherId) teacherIds.add(currentTeacherId);
+    if (requestedTeacherId) teacherIds.add(requestedTeacherId);
+
+    const currentProductId = this.objectIdToString(classroom?.productPackage);
+    const requestedProductId = this.objectIdToString(dto.productPackageId);
+    if (currentProductId) productIds.add(currentProductId);
+    if (requestedProductId) productIds.add(requestedProductId);
+
+    const [teachers, products] = await Promise.all([
+      teacherIds.size
+        ? this.userModel.find({ _id: { $in: Array.from(teacherIds).map((id) => new Types.ObjectId(id)) } })
+            .select('fullName userCode')
+            .lean()
+        : Promise.resolve([]),
+      productIds.size
+        ? this.productModel.find({ _id: { $in: Array.from(productIds).map((id) => new Types.ObjectId(id)) } })
+            .select('name code')
+            .lean()
+        : Promise.resolve([]),
+    ]);
+
+    return {
+      teacherNames: new Map(
+        (teachers as any[]).map((teacher) => [
+          teacher._id.toString(),
+          teacher.userCode
+            ? `${teacher.userCode} - ${teacher.fullName || teacher._id.toString()}`
+            : (teacher.fullName || teacher._id.toString()),
+        ]),
+      ),
+      productNames: new Map(
+        (products as any[]).map((product) => [
+          product._id.toString(),
+          product.code
+            ? `${product.name || product._id.toString()} (${product.code})`
+            : (product.name || product._id.toString()),
+        ]),
+      ),
+    };
+  }
+
+  private async buildClassChangeSummary(
+    classroom: any,
+    dto: Partial<CreateClassDto>,
+  ): Promise<Array<{
+    field: string;
+    label: string;
+    beforeValue: string;
+    afterValue: string;
+  }>> {
+    const lookupMaps = await this.buildClassHistoryLookupMaps(classroom, dto);
+    const fields = Object.keys(dto).filter((field) => field !== 'requestType');
+    const changes: Array<{
+      field: string;
+      label: string;
+      beforeValue: string;
+      afterValue: string;
+    }> = [];
+
+    const beforeValueMap: Record<string, unknown> = {
+      name: classroom?.name,
+      code: classroom?.code,
+      teacherId: classroom?.teacher,
+      productPackageId: classroom?.productPackage,
+      classMode: classroom?.classMode,
+      pricePerSession: classroom?.pricePerSession,
+      teacherPayPerSession: classroom?.teacherPayPerSession,
+      teacherPayPerStudent: classroom?.teacherPayPerStudent,
+      baseDuration: classroom?.baseDuration,
+      sessionDuration: classroom?.sessionDuration,
+      subject: classroom?.subject,
+      grade: classroom?.grade,
+      learningGoals: classroom?.learningGoals,
+      maxStudents: classroom?.maxStudents,
+    };
+
+    for (const field of fields) {
+      const beforeValue = this.formatClassHistoryValue(field, beforeValueMap[field], lookupMaps);
+      const afterValue = this.formatClassHistoryValue(field, (dto as any)[field], lookupMaps);
+      if (beforeValue === afterValue) {
+        continue;
+      }
+
+      changes.push({
+        field,
+        label: this.getClassHistoryFieldLabel(field),
+        beforeValue,
+        afterValue,
+      });
+    }
+
+    return changes;
+  }
+
+  private async buildClassDurationPreview(
+    classroom: any,
+    nextBaseDuration: number,
+    nextSessionDuration: number,
+  ): Promise<{
+    oldBaseDuration: number;
+    oldSessionDuration: number;
+    newBaseDuration: number;
+    newSessionDuration: number;
+    students: Array<{
+      studentId?: Types.ObjectId;
+      studentName?: string;
+      studentCode?: string;
+      oldDurationMinutes: number;
+      newDurationMinutes: number;
+      paidSessionsRemainingBefore?: number;
+      bonusSessionsRemainingBefore?: number;
+      totalSessionsRemainingBefore?: number;
+      paidSessionsRemainingAfter?: number;
+      bonusSessionsRemainingAfter?: number;
+      totalSessionsRemainingAfter?: number;
+      projectedTotalSessionsBefore?: number;
+      projectedTotalSessionsAfter?: number;
+    }>;
+  }> {
+    const studentIds = ((classroom?.students || []) as any[])
+      .map((studentId) => this.objectIdToString(studentId))
+      .filter((studentId: string | null): studentId is string => !!studentId);
+
+    const currentDurationState = this.buildDurationSnapshotData(classroom);
+    if (!studentIds.length) {
+      return {
+        oldBaseDuration: currentDurationState.baseDuration,
+        oldSessionDuration: currentDurationState.sessionDuration,
+        newBaseDuration: nextBaseDuration,
+        newSessionDuration: nextSessionDuration,
+        students: [],
+      };
+    }
+
+    const [completedSessionMap, remainingAllowanceMap, students] = await Promise.all([
+      this.buildStudentCompletedSessionMap(classroom, studentIds),
+      this.buildStudentRemainingAllowanceMap(classroom, studentIds),
+      this.studentModel
+        .find({ _id: { $in: studentIds.map((studentId) => new Types.ObjectId(studentId)) } })
+        .select('fullName studentCode')
+        .lean(),
+    ]);
+
+    const studentMetaMap = new Map(
+      (students as any[]).map((student) => [student._id.toString(), student]),
+    );
+
+    return {
+      oldBaseDuration: currentDurationState.baseDuration,
+      oldSessionDuration: currentDurationState.sessionDuration,
+      newBaseDuration: nextBaseDuration,
+      newSessionDuration: nextSessionDuration,
+      students: studentIds.map((studentId) => {
+        const currentDuration = getCurrentDurationForStudent(classroom, studentId);
+        const completedSessions = this.toSafeNumber(completedSessionMap.get(studentId), 0);
+        const remainingAllowance = remainingAllowanceMap.get(studentId) || {
+          paidRemainingMinutes: 0,
+          bonusRemainingMinutes: 0,
+          totalRemainingMinutes: 0,
+        };
+        const oldDurationMinutes =
+          this.toSafeNumber(currentDuration.sessionDuration, currentDurationState.sessionDuration)
+          || currentDurationState.sessionDuration;
+        const oldBaseDuration =
+          this.toSafeNumber(currentDuration.baseDuration, currentDurationState.baseDuration)
+          || currentDurationState.baseDuration;
+        const studentMeta = studentMetaMap.get(studentId) as any;
+
+        const paidSessionsRemainingBefore = oldDurationMinutes > 0
+          ? this.floorSessionCount(remainingAllowance.paidRemainingMinutes / oldDurationMinutes)
+          : 0;
+        const bonusSessionsRemainingBefore = oldDurationMinutes > 0
+          ? this.floorSessionCount(remainingAllowance.bonusRemainingMinutes / oldDurationMinutes)
+          : 0;
+        const totalSessionsRemainingBefore = oldDurationMinutes > 0
+          ? this.floorSessionCount(remainingAllowance.totalRemainingMinutes / oldDurationMinutes)
+          : 0;
+        const paidSessionsRemainingAfter = nextSessionDuration > 0
+          ? this.floorSessionCount(remainingAllowance.paidRemainingMinutes / nextSessionDuration)
+          : 0;
+        const bonusSessionsRemainingAfter = nextSessionDuration > 0
+          ? this.floorSessionCount(remainingAllowance.bonusRemainingMinutes / nextSessionDuration)
+          : 0;
+        const totalSessionsRemainingAfter = nextSessionDuration > 0
+          ? this.floorSessionCount(remainingAllowance.totalRemainingMinutes / nextSessionDuration)
+          : 0;
+
+        return {
+          studentId: new Types.ObjectId(studentId),
+          studentName: studentMeta?.fullName,
+          studentCode: studentMeta?.studentCode,
+          oldDurationMinutes,
+          newDurationMinutes: nextSessionDuration,
+          paidSessionsRemainingBefore,
+          bonusSessionsRemainingBefore,
+          totalSessionsRemainingBefore,
+          paidSessionsRemainingAfter,
+          bonusSessionsRemainingAfter,
+          totalSessionsRemainingAfter,
+          projectedTotalSessionsBefore: completedSessions + totalSessionsRemainingBefore,
+          projectedTotalSessionsAfter: completedSessions + totalSessionsRemainingAfter,
+          oldBaseDuration,
+        };
+      }).map((studentPreview) => {
+        const { oldBaseDuration, ...rest } = studentPreview as any;
+        return rest;
+      }),
+    };
+  }
+
+  private async buildClassHistoryArtifacts(
+    classroom: any,
+    dto: Partial<CreateClassDto> & Partial<Pick<UpdateClassDto, 'requestType'>>,
+    actor: JwtPayload | undefined,
+    action: ClassEditHistoryAction,
+    note?: string,
+  ): Promise<{
+    changeSummary: Array<{
+      field: string;
+      label: string;
+      beforeValue: string;
+      afterValue: string;
+    }>;
+    durationPreview?: {
+      oldBaseDuration: number;
+      oldSessionDuration: number;
+      newBaseDuration: number;
+      newSessionDuration: number;
+      students: Array<{
+        studentId?: Types.ObjectId;
+        studentName?: string;
+        studentCode?: string;
+        oldDurationMinutes: number;
+        newDurationMinutes: number;
+        paidSessionsRemainingBefore?: number;
+        bonusSessionsRemainingBefore?: number;
+        totalSessionsRemainingBefore?: number;
+        paidSessionsRemainingAfter?: number;
+        bonusSessionsRemainingAfter?: number;
+        totalSessionsRemainingAfter?: number;
+        projectedTotalSessionsBefore?: number;
+        projectedTotalSessionsAfter?: number;
+      }>;
+    } | undefined;
+    historyEntry: {
+      editedAt: Date;
+      editedByUserId?: Types.ObjectId;
+      editedByName?: string;
+      editedByRole?: string;
+      action: ClassEditHistoryAction;
+      requestType: PendingClassUpdateType;
+      changes: Array<{
+        field: string;
+        label: string;
+        beforeValue: string;
+        afterValue: string;
+      }>;
+      durationPreview?: {
+        oldBaseDuration: number;
+        oldSessionDuration: number;
+        newBaseDuration: number;
+        newSessionDuration: number;
+        students: Array<{
+          studentId?: Types.ObjectId;
+          studentName?: string;
+          studentCode?: string;
+          oldDurationMinutes: number;
+          newDurationMinutes: number;
+          paidSessionsRemainingBefore?: number;
+          bonusSessionsRemainingBefore?: number;
+          totalSessionsRemainingBefore?: number;
+          paidSessionsRemainingAfter?: number;
+          bonusSessionsRemainingAfter?: number;
+          totalSessionsRemainingAfter?: number;
+          projectedTotalSessionsBefore?: number;
+          projectedTotalSessionsAfter?: number;
+        }>;
+      };
+      note?: string;
+    };
+  }> {
+    const requestType = this.resolveRequestedUpdateType(dto);
+    const dtoWithoutMeta = this.stripUpdateMetaFields(dto);
+    const changeSummary = await this.buildClassChangeSummary(classroom, dtoWithoutMeta);
+
+    let durationPreview:
+      | {
+        oldBaseDuration: number;
+        oldSessionDuration: number;
+        newBaseDuration: number;
+        newSessionDuration: number;
+        students: Array<{
+          studentId?: Types.ObjectId;
+          studentName?: string;
+          studentCode?: string;
+          oldDurationMinutes: number;
+          newDurationMinutes: number;
+          paidSessionsRemainingBefore?: number;
+          bonusSessionsRemainingBefore?: number;
+          totalSessionsRemainingBefore?: number;
+          paidSessionsRemainingAfter?: number;
+          bonusSessionsRemainingAfter?: number;
+          totalSessionsRemainingAfter?: number;
+          projectedTotalSessionsBefore?: number;
+          projectedTotalSessionsAfter?: number;
+        }>;
+      }
+      | undefined;
+
+    const nextBaseDuration =
+      this.toSafeNumber(dtoWithoutMeta.baseDuration, this.toSafeNumber(classroom?.baseDuration, 60))
+      || this.toSafeNumber(classroom?.baseDuration, 60)
+      || 60;
+    const nextSessionDuration =
+      this.toSafeNumber(dtoWithoutMeta.sessionDuration, this.toSafeNumber(classroom?.sessionDuration, nextBaseDuration))
+      || this.toSafeNumber(classroom?.sessionDuration, nextBaseDuration)
+      || nextBaseDuration;
+
+    if (
+      dtoWithoutMeta.baseDuration !== undefined
+      || dtoWithoutMeta.sessionDuration !== undefined
+      || requestType === PendingClassUpdateType.DURATION_CHANGE
+    ) {
+      durationPreview = await this.buildClassDurationPreview(
+        classroom,
+        nextBaseDuration,
+        nextSessionDuration,
+      );
+    }
+
+    const actorId = this.getActorId(actor);
+    const historyEntry = {
+      editedAt: new Date(),
+      editedByUserId: actorId ? new Types.ObjectId(actorId) : undefined,
+      editedByName: actor?.fullName || actor?.email,
+      editedByRole: actor?.role,
+      action,
+      requestType,
+      changes: changeSummary,
+      durationPreview,
+      note: note?.trim() || undefined,
+    };
+
+    return {
+      changeSummary,
+      durationPreview,
+      historyEntry,
+    };
+  }
+
   private splitSaleUpdateChanges(
     dto: UpdateClassDto,
     existing: any,
@@ -152,7 +698,6 @@ export class ClassesService {
     const directFieldNames: Array<keyof UpdateClassDto> = [
       'name',
       'productPackageId',
-      'pricePerSession',
       'subject',
       'grade',
       'learningGoals',
@@ -166,6 +711,14 @@ export class ClassesService {
       if (saleChanges[fieldName] !== undefined) {
         directChanges[fieldName] = saleChanges[fieldName] as never;
       }
+    }
+
+    if (
+      saleChanges.pricePerSession !== undefined
+      && this.toSafeNumber(saleChanges.pricePerSession, 0)
+        !== this.toSafeNumber(existing?.pricePerSession, 0)
+    ) {
+      approvalChanges.pricePerSession = saleChanges.pricePerSession;
     }
 
     if (
@@ -209,11 +762,7 @@ export class ClassesService {
 
     const hasApprovalChanges = Object.keys(approvalChanges).length > 0;
     const requestType = hasApprovalChanges
-      ? (
-        approvalChanges.baseDuration !== undefined || approvalChanges.sessionDuration !== undefined
-          ? PendingClassUpdateType.DURATION_CHANGE
-          : PendingClassUpdateType.GENERAL
-      )
+      ? this.resolveRequestedUpdateType(dto)
       : null;
 
     if (requestType) {
@@ -232,6 +781,13 @@ export class ClassesService {
       throw new ForbiddenException('Ban khong co quyen duyet thay doi lop hoc');
     }
 
+    if (
+      pendingSaleUpdate?.requestType === PendingClassUpdateType.DURATION_CHANGE
+      && actor.role !== Role.DIRECTOR
+    ) {
+      throw new ForbiddenException('Chi Director moi duoc duyet thay doi thoi luong lop hoc');
+    }
+
     if (pendingSaleUpdate?.status && pendingSaleUpdate.status !== ClassUpdateRequestStatus.PENDING) {
       throw new BadRequestException('Yeu cau sua lop hoc khong con cho duyet');
     }
@@ -244,28 +800,42 @@ export class ClassesService {
     teacherPayPerSession: number;
     teacherPayPerStudent: number;
   } {
+    const classPricing = getClassPricingConfigAt(classState);
     const snapshot = classState?.pricingSnapshot || {};
     const baseDuration =
-      this.toSafeNumber(snapshot.referenceDuration, this.toSafeNumber(classState?.baseDuration, 60)) || 60;
+      this.pickFirstPositiveNumber(
+        classState?.baseDuration,
+        classPricing.baseDuration,
+        snapshot.referenceDuration,
+        60,
+      ) || 60;
     const sessionDuration =
-      this.toSafeNumber(snapshot.sessionDuration, this.toSafeNumber(classState?.sessionDuration, baseDuration))
+      this.pickFirstPositiveNumber(
+        classState?.sessionDuration,
+        classPricing.sessionDuration,
+        snapshot.sessionDuration,
+        baseDuration,
+      )
       || baseDuration;
 
     return {
       baseDuration,
       sessionDuration,
-      pricePerSession: this.toSafeNumber(
+      pricePerSession: this.roundMoneyToThousand(this.pickFirstPositiveNumber(
+        classState?.pricePerSession,
+        classPricing.pricePerSession,
         snapshot.pricePerSession,
-        this.toSafeNumber(classState?.pricePerSession, 0),
-      ),
-      teacherPayPerSession: this.toSafeNumber(
+      )),
+      teacherPayPerSession: this.roundMoneyDownToThousand(this.pickFirstPositiveNumber(
+        classState?.teacherPayPerSession,
+        classPricing.teacherPayPerSession,
         snapshot.teacherPayPerSession,
-        this.toSafeNumber(classState?.teacherPayPerSession, 0),
-      ),
-      teacherPayPerStudent: this.toSafeNumber(
+      )),
+      teacherPayPerStudent: this.roundMoneyDownToThousand(this.pickFirstPositiveNumber(
+        classState?.teacherPayPerStudent,
+        classPricing.teacherPayPerStudent,
         snapshot.teacherPayPerStudent,
-        this.toSafeNumber(classState?.teacherPayPerStudent, 0),
-      ),
+      )),
     };
   }
 
@@ -284,8 +854,14 @@ export class ClassesService {
     };
   }
 
-  private roundTo2(value: number): number {
-    return Math.round((Number.isFinite(value) ? value : 0) * 100) / 100;
+  private roundMoneyToThousand(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.round(value / 1000) * 1000;
+  }
+
+  private floorSessionCount(value: number): number {
+    const normalized = Number.isFinite(value) ? value : 0;
+    return normalized > 0 ? Math.floor(normalized) : 0;
   }
 
   private buildInitialStudentConfigRecord(
@@ -318,7 +894,7 @@ export class ClassesService {
           effectiveBy: actorId ? new Types.ObjectId(actorId) : undefined,
           baseDuration: durationSnapshot.baseDuration,
           sessionDuration: durationSnapshot.sessionDuration,
-          totalSessions: this.roundTo2(totalSessions),
+          totalSessions: this.floorSessionCount(totalSessions),
         },
       ],
       updatedAt: new Date(),
@@ -362,8 +938,30 @@ export class ClassesService {
     studentIds: string[],
   ): Promise<Map<string, number>> {
     const remainingMinutesMap = new Map<string, number>();
+    const remainingAllowanceMap = await this.buildStudentRemainingAllowanceMap(classroom, studentIds);
+    for (const [studentId, allowance] of remainingAllowanceMap.entries()) {
+      remainingMinutesMap.set(studentId, this.toSafeNumber(allowance.totalRemainingMinutes, 0));
+    }
+    return remainingMinutesMap;
+  }
+
+  private async buildStudentRemainingAllowanceMap(
+    classroom: any,
+    studentIds: string[],
+  ): Promise<Map<string, {
+    paidRemainingMinutes: number;
+    bonusRemainingMinutes: number;
+    trialRemainingMinutes: number;
+    totalRemainingMinutes: number;
+  }>> {
+    const remainingAllowanceMap = new Map<string, {
+      paidRemainingMinutes: number;
+      bonusRemainingMinutes: number;
+      trialRemainingMinutes: number;
+      totalRemainingMinutes: number;
+    }>();
     if (!studentIds.length || !classroom?._id) {
-      return remainingMinutesMap;
+      return remainingAllowanceMap;
     }
 
     const fallbackReferenceDuration =
@@ -377,7 +975,7 @@ export class ClassesService {
         studentId: { $in: studentIds.map((studentId) => new Types.ObjectId(studentId)) },
         status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
       })
-      .select('studentId referenceDuration sessionsRemaining bonusSessionsRemaining')
+      .select('studentId referenceDuration sessionsRemaining bonusSessionsRemaining trialSessionsRemaining')
       .lean();
 
     for (const invoice of invoices) {
@@ -388,14 +986,30 @@ export class ClassesService {
 
       const referenceDuration =
         this.toSafeNumber((invoice as any)?.referenceDuration, fallbackReferenceDuration) || fallbackReferenceDuration;
-      const remainingUnits =
-        this.toSafeNumber((invoice as any)?.sessionsRemaining, 0)
-        + this.toSafeNumber((invoice as any)?.bonusSessionsRemaining, 0);
-      const currentMinutes = remainingMinutesMap.get(studentId) || 0;
-      remainingMinutesMap.set(studentId, currentMinutes + (remainingUnits * referenceDuration));
+      const current = remainingAllowanceMap.get(studentId) || {
+        paidRemainingMinutes: 0,
+        bonusRemainingMinutes: 0,
+        trialRemainingMinutes: 0,
+        totalRemainingMinutes: 0,
+      };
+      const paidRemainingMinutes =
+        current.paidRemainingMinutes
+        + (this.toSafeNumber((invoice as any)?.sessionsRemaining, 0) * referenceDuration);
+      const bonusRemainingMinutes =
+        current.bonusRemainingMinutes
+        + (this.toSafeNumber((invoice as any)?.bonusSessionsRemaining, 0) * referenceDuration);
+      const trialRemainingMinutes =
+        current.trialRemainingMinutes
+        + (this.toSafeNumber((invoice as any)?.trialSessionsRemaining, 0) * referenceDuration);
+      remainingAllowanceMap.set(studentId, {
+        paidRemainingMinutes,
+        bonusRemainingMinutes,
+        trialRemainingMinutes,
+        totalRemainingMinutes: paidRemainingMinutes + bonusRemainingMinutes + trialRemainingMinutes,
+      });
     }
 
-    return remainingMinutesMap;
+    return remainingAllowanceMap;
   }
 
   private async buildProjectedStudentTotalSessionsMap(
@@ -417,17 +1031,68 @@ export class ClassesService {
         || 60;
       const completedSessions = this.toSafeNumber(completedSessionMap.get(studentId), 0);
       const remainingMinutes = this.toSafeNumber(remainingMinutesMap.get(studentId), 0);
-      const projectedTotal = completedSessions + (sessionDuration > 0 ? remainingMinutes / sessionDuration : 0);
+      const remainingSessionsAtDuration = sessionDuration > 0
+        ? this.floorSessionCount(remainingMinutes / sessionDuration)
+        : 0;
+      const projectedTotal = completedSessions + remainingSessionsAtDuration;
       const fallbackTotal =
         this.toSafeNumber(currentDuration.totalSessions, this.toSafeNumber((classroom as any)?.totalSessions, 0));
 
       totalSessionsMap.set(
         studentId,
-        projectedTotal > 0 ? this.roundTo2(projectedTotal) : this.roundTo2(fallbackTotal),
+        projectedTotal > 0 ? projectedTotal : this.floorSessionCount(fallbackTotal),
       );
     }
 
     return totalSessionsMap;
+  }
+
+  private async withProjectedStudentTotals(classroom: any) {
+    if (!classroom || !Array.isArray(classroom.studentConfigs) || !classroom.studentConfigs.length) {
+      return classroom;
+    }
+
+    const studentIds = classroom.studentConfigs
+      .map((config: any) => config?.studentId?._id?.toString?.() || config?.studentId?.toString?.())
+      .filter((studentId: string | undefined): studentId is string => !!studentId);
+    if (!studentIds.length) {
+      return classroom;
+    }
+
+    const projectedTotalSessions = await this.buildProjectedStudentTotalSessionsMap(classroom, studentIds);
+    const nextStudentConfigs = classroom.studentConfigs.map((config: any) => {
+      const studentId = config?.studentId?._id?.toString?.() || config?.studentId?.toString?.();
+      const nextTotal = studentId ? projectedTotalSessions.get(studentId) : undefined;
+      if (nextTotal === undefined || !Array.isArray(config?.durationSlots) || !config.durationSlots.length) {
+        return config;
+      }
+
+      let latestSlotIndex = 0;
+      let latestSlotOrder = Number(config.durationSlots[0]?.slotIndex || 0);
+      config.durationSlots.forEach((slot: any, index: number) => {
+        const slotOrder = Number(slot?.slotIndex || 0);
+        if (slotOrder >= latestSlotOrder) {
+          latestSlotOrder = slotOrder;
+          latestSlotIndex = index;
+        }
+      });
+
+      const nextDurationSlots = config.durationSlots.map((slot: any, index: number) =>
+        index === latestSlotIndex
+          ? { ...slot, totalSessions: this.floorSessionCount(nextTotal) }
+          : slot,
+      );
+
+      return {
+        ...config,
+        durationSlots: nextDurationSlots,
+      };
+    });
+
+    return {
+      ...classroom,
+      studentConfigs: nextStudentConfigs,
+    };
   }
 
   private async syncStudentConfigsOnClass(classId: string, actorId?: string | null): Promise<void> {
@@ -558,9 +1223,133 @@ export class ClassesService {
     });
   }
 
-  private async validateTeacherForClassSale(classroom: any, teacherId: string): Promise<Types.ObjectId> {
+  private async syncDurationSlotsOnClass(
+    classId: string,
+    actorId?: string | null,
+  ): Promise<void> {
+    await this.syncStudentConfigsOnClass(classId, actorId);
+
+    const classroom = await this.classModel.findById(classId).lean();
+    if (!classroom) {
+      return;
+    }
+
+    const studentConfigs = Array.isArray((classroom as any).studentConfigs)
+      ? (classroom as any).studentConfigs
+      : [];
+    if (!studentConfigs.length) {
+      return;
+    }
+
+    const targetDuration = this.buildDurationSnapshotData(classroom);
+    const studentIds = studentConfigs
+      .map((config: any) => config?.studentId?.toString?.())
+      .filter((studentId: string | undefined): studentId is string => !!studentId);
+    const totalSessionsMap = await this.buildProjectedStudentTotalSessionsMap(
+      classroom,
+      studentIds,
+      new Map(studentIds.map((studentId) => [studentId, targetDuration.sessionDuration])),
+    );
+
+    const effectiveAt = new Date();
+    const effectiveBy = actorId ? new Types.ObjectId(actorId) : undefined;
+    let hasChanges = false;
+
+    const nextStudentConfigs = studentConfigs.map((config: any) => {
+      const studentId = config?.studentId?.toString?.();
+      if (!studentId) {
+        return config;
+      }
+
+      const durationSlots = Array.isArray(config?.durationSlots)
+        ? [...config.durationSlots]
+        : [];
+      durationSlots.sort((left: any, right: any) => Number(left?.slotIndex || 0) - Number(right?.slotIndex || 0));
+
+      const currentDurationSlot = durationSlots.at(-1);
+      const nextTotalSessions = this.floorSessionCount(
+        totalSessionsMap.get(studentId)
+        || this.toSafeNumber(
+          currentDurationSlot?.totalSessions,
+          this.toSafeNumber((classroom as any)?.totalSessions, 0),
+        ),
+      );
+
+      const currentBaseDuration = this.toSafeNumber(currentDurationSlot?.baseDuration, 0);
+      const currentSessionDuration = this.toSafeNumber(currentDurationSlot?.sessionDuration, 0);
+      const currentTotalSessions = this.floorSessionCount(
+        this.toSafeNumber(
+          currentDurationSlot?.totalSessions,
+          this.toSafeNumber((classroom as any)?.totalSessions, 0),
+        ),
+      );
+
+      if (
+        currentBaseDuration === targetDuration.baseDuration
+        && currentSessionDuration === targetDuration.sessionDuration
+        && currentTotalSessions === nextTotalSessions
+        && durationSlots.length > 0
+      ) {
+        return config;
+      }
+
+      hasChanges = true;
+      const nextDurationSlot = {
+        effectiveAt,
+        effectiveBy,
+        baseDuration: targetDuration.baseDuration,
+        sessionDuration: targetDuration.sessionDuration,
+        totalSessions: nextTotalSessions,
+      };
+
+      const nextDurationSlots = durationSlots.length === 0
+        ? [
+            {
+              slotIndex: 1,
+              slotType: StudentConfigSlotType.INITIAL,
+              ...nextDurationSlot,
+            },
+          ]
+        : durationSlots.length >= 3
+          ? [
+              {
+                slotIndex: 1,
+                slotType: StudentConfigSlotType.INITIAL,
+                ...nextDurationSlot,
+              },
+            ]
+          : [
+              ...durationSlots,
+              {
+                slotIndex: durationSlots.length + 1,
+                slotType: StudentConfigSlotType.UPDATE,
+                ...nextDurationSlot,
+              },
+            ];
+
+      return {
+        ...config,
+        durationSlots: nextDurationSlots,
+        updatedAt: effectiveAt,
+      };
+    });
+
+    if (!hasChanges) {
+      return;
+    }
+
+    await this.classModel.findByIdAndUpdate(classId, {
+      $set: {
+        studentConfigs: nextStudentConfigs,
+      },
+    });
+  }
+
+  private async validateTeacherForSaleScope(
+    teacherId: string,
+    saleId?: string | null,
+  ): Promise<Types.ObjectId> {
     const validatedTeacherId = await this.validateUserRole(teacherId, Role.TEACHER);
-    const saleId = classroom?.sale?.toString?.();
     if (!saleId) {
       return validatedTeacherId;
     }
@@ -579,6 +1368,33 @@ export class ClassesService {
     }
 
     return validatedTeacherId;
+  }
+
+  private async validateTeacherForClassSale(classroom: any, teacherId: string): Promise<Types.ObjectId> {
+    return this.validateTeacherForSaleScope(
+      teacherId,
+      classroom?.sale?.toString?.() || null,
+    );
+  }
+
+  private async assertStudentsBelongToSale(studentIds: string[], saleId?: string | null): Promise<void> {
+    if (!saleId || !studentIds?.length) {
+      return;
+    }
+
+    const validStudentIds = studentIds.filter((studentId) => Types.ObjectId.isValid(studentId));
+    if (validStudentIds.length !== studentIds.length) {
+      throw new BadRequestException('Danh sach hoc sinh khong hop le');
+    }
+
+    const ownedStudentCount = await this.studentModel.countDocuments({
+      _id: { $in: validStudentIds.map((studentId) => new Types.ObjectId(studentId)) },
+      saleId: new Types.ObjectId(saleId),
+    });
+
+    if (ownedStudentCount !== validStudentIds.length) {
+      throw new BadRequestException('Sale chi duoc quan ly hoc sinh thuoc sale cua minh');
+    }
   }
 
   private async assertClassAccess(classroom: any, actor?: JwtPayload): Promise<void> {
@@ -661,6 +1477,16 @@ export class ClassesService {
       if (invoice.status !== InvoiceStatus.APPROVED && invoice.status !== InvoiceStatus.PAID) {
         throw new ForbiddenException('Hoa don chua duoc duyet');
       }
+      if (!dto.studentIds?.length && invoice.studentId) {
+        dto.studentIds = [invoice.studentId.toString()];
+      }
+      if (!dto.classMode && invoice.classType) {
+        dto.classMode = invoice.classType;
+      }
+      if (!dto.productPackageId && invoice.productId) {
+        dto.productPackageId = invoice.productId.toString();
+      }
+      invoice = await this.hydrateInvoicePricingContext(invoice);
     }
 
     // SALE must create class from their own approved invoice
@@ -678,6 +1504,11 @@ export class ClassesService {
     // Auto-bind sale from invoice if present
     if (!dto.saleId && invoice?.saleId) {
       dto.saleId = invoice.saleId.toString();
+    }
+
+    if (actor?.role === Role.SALE) {
+      await this.validateTeacherForSaleScope(dto.teacherId, dto.saleId);
+      await this.assertStudentsBelongToSale(dto.studentIds || [], dto.saleId);
     }
 
     const payload = await this.buildPayload(dto);
@@ -703,6 +1534,7 @@ export class ClassesService {
         { _id: dto.invoiceId },
         { $set: { classId: created._id } },
       );
+      await this.syncOrderProgressForInvoiceIds([dto.invoiceId]);
     }
 
     await this.syncStudentConfigsOnClass(created._id.toString(), this.getActorId(actor));
@@ -778,15 +1610,22 @@ export class ClassesService {
       .sort({ createdAt: -1 })
       .populate('teacher', 'fullName email role')
       .populate('sale', 'fullName email role')
+      .populate('pendingSaleUpdate.requestedBy', 'fullName email role')
+      .populate('pendingSaleUpdate.reviewedBy', 'fullName email role')
       .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
       .populate('students', 'fullName age parentName studentCode')
       .populate('studentConfigs.studentId', 'fullName studentCode')
       .populate('studentConfigs.teacherSlots.teacherId', 'fullName email role userCode')
+      .populate('studentConfigs.teacherSlots.assignedBy', 'fullName email role')
       .lean();
 
-    const mapped = classrooms.map((classroom) => ({
-      ...classroom,
-      ...this.buildClassFinancialSummary(classroom),
+    const sourceInvoiceMap = await this.buildClassSourceInvoiceMap(classrooms);
+    const mapped = await Promise.all(classrooms.map(async (classroom) => {
+      const projectedClassroom = await this.withProjectedStudentTotals(classroom);
+      return this.decorateClassroomForDisplay(
+        projectedClassroom,
+        this.getClassSourceInvoice(projectedClassroom, sourceInvoiceMap),
+      );
     }));
 
     if (actor.role === Role.TEACHER && actorId) {
@@ -808,6 +1647,191 @@ export class ClassesService {
     return mapped.map((classroom) =>
       this.filterClassStudentsByIds(classroom, parentStudentIdSet!),
     );
+  }
+
+  async findSaleOfflineOptions(actor: JwtPayload) {
+    const actorId = this.getActorId(actor);
+    if (actor.role !== Role.SALE || !actorId) {
+      throw new ForbiddenException('Ban khong co quyen truy cap danh sach lop offline');
+    }
+
+    const classrooms = await this.classModel
+      .find({
+        classMode: ClassMode.OFFLINE,
+        status: ClassStatus.ACTIVE,
+        sale: new Types.ObjectId(actorId),
+        $or: [
+          { invoiceId: { $exists: false } },
+          { invoiceId: null },
+        ],
+      })
+      .sort({ createdAt: -1 })
+      .populate('teacher', 'fullName email role')
+      .populate('sale', 'fullName email role')
+      .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
+      .populate('students', 'fullName age parentName studentCode')
+      .lean();
+
+    const sourceInvoiceMap = await this.buildClassSourceInvoiceMap(classrooms);
+    return classrooms
+      .filter((classroom) => {
+        if (!classroom.maxStudents) {
+          return true;
+        }
+
+        const currentStudentCount = Array.isArray(classroom.students) ? classroom.students.length : 0;
+        return currentStudentCount < classroom.maxStudents;
+      })
+      .map((classroom) =>
+        this.decorateClassroomForDisplay(
+          classroom,
+          this.getClassSourceInvoice(classroom, sourceInvoiceMap),
+        ),
+      );
+  }
+
+  async autoPlaceApprovedInvoice(
+    params: {
+      invoiceId: string;
+      studentId: string;
+      requestedClassId?: string | null;
+      requestedClassCode?: string | null;
+      requestedTeacherId?: string | null;
+    },
+    actor?: JwtPayload,
+  ): Promise<{ action: 'SKIPPED' | 'ASSIGNED_EXISTING' | 'CREATED_NEW'; classId?: string }> {
+    const invoiceId = this.objectIdToString(params.invoiceId);
+    const studentId = this.objectIdToString(params.studentId);
+    const requestedClassId = this.objectIdToString(params.requestedClassId);
+    const requestedClassCode = String(params.requestedClassCode || '').trim().toUpperCase() || null;
+    const requestedTeacherId = this.objectIdToString(params.requestedTeacherId);
+
+    if (!invoiceId || !studentId || (!requestedClassId && !requestedClassCode)) {
+      if (!requestedClassId && requestedTeacherId && !requestedClassCode) {
+        this.logger.warn(
+          `Skip auto-placing invoice ${invoiceId || params.invoiceId}: class code must be entered manually`,
+        );
+      }
+      return { action: 'SKIPPED' };
+    }
+
+    if (requestedClassId) {
+      const classroom = await this.classModel
+        .findById(requestedClassId)
+        .select('_id classMode')
+        .lean();
+      if (!classroom) {
+        throw new NotFoundException('Lop duoc chon tren order khong ton tai');
+      }
+
+      const invoice = await this.invoiceModel
+        .findById(invoiceId)
+        .select('_id classId classType')
+        .lean();
+      if (!invoice) {
+        throw new NotFoundException('Hoa don khong ton tai');
+      }
+      if ((invoice as any).classId) {
+        return { action: 'SKIPPED', classId: this.objectIdToString((invoice as any).classId) || undefined };
+      }
+      if ((invoice as any).classType && classroom.classMode && (invoice as any).classType !== classroom.classMode) {
+        throw new BadRequestException('Loai lop duoc chon tren order khong khop voi hoa don');
+      }
+
+      const assigned = await this.assignStudentsBySale(
+        requestedClassId,
+        { studentIds: [studentId], invoiceId },
+        actor as JwtPayload,
+      );
+      return {
+        action: 'ASSIGNED_EXISTING',
+        classId: this.objectIdToString((assigned as any)?._id) || requestedClassId,
+      };
+    }
+
+    const invoice = await this.invoiceModel
+      .findById(invoiceId)
+      .select('_id classId classType orderId orderItemIndex productId productName saleId studentId')
+      .lean();
+    if (!invoice) {
+      throw new NotFoundException('Hoa don khong ton tai');
+    }
+    if ((invoice as any).classId) {
+      return {
+        action: 'SKIPPED',
+        classId: this.objectIdToString((invoice as any).classId) || undefined,
+      };
+    }
+
+    const matchedClass = requestedClassCode
+      ? await this.classModel
+          .findOne({ code: requestedClassCode })
+          .select('_id classMode')
+          .lean()
+      : null;
+
+    if (matchedClass) {
+      if ((invoice as any).classType && matchedClass.classMode && (invoice as any).classType !== matchedClass.classMode) {
+        throw new BadRequestException('Loai lop theo ma lop du kien khong khop voi hoa don');
+      }
+
+      const assigned = await this.assignStudentsBySale(
+        matchedClass._id.toString(),
+        { studentIds: [studentId], invoiceId },
+        actor as JwtPayload,
+      );
+      return {
+        action: 'ASSIGNED_EXISTING',
+        classId: this.objectIdToString((assigned as any)?._id) || matchedClass._id.toString(),
+      };
+    }
+
+    if (!requestedTeacherId) {
+      this.logger.warn(
+        `Skip auto-creating class for invoice ${invoiceId}: missing requestedTeacherId for class code ${requestedClassCode}`,
+      );
+      return { action: 'SKIPPED' };
+    }
+
+    const [student, order] = await Promise.all([
+      this.studentModel.findById(studentId).select('fullName').lean(),
+      (invoice as any).orderId
+        ? this.orderModel.findById((invoice as any).orderId).select('items').lean()
+        : Promise.resolve(null),
+    ]);
+
+    const orderItemIndex = Number((invoice as any).orderItemIndex ?? -1);
+    const orderItems = Array.isArray((order as any)?.items) ? (order as any).items : [];
+    const orderItem = orderItemIndex >= 0 ? orderItems[orderItemIndex] || null : null;
+
+    const created = await this.create(
+      {
+        name: this.buildAutoClassName({
+          studentName: (student as any)?.fullName,
+          productName: (invoice as any)?.productName,
+          classMode: (invoice as any)?.classType,
+        }),
+        code: requestedClassCode || '',
+        teacherId: requestedTeacherId,
+        saleId: this.objectIdToString((invoice as any)?.saleId) || undefined,
+        invoiceId,
+        classMode: (invoice as any)?.classType || undefined,
+        productPackageId: this.objectIdToString((invoice as any)?.productId) || undefined,
+        studentIds: [studentId],
+        subject: String(orderItem?.subject || '').trim() || undefined,
+        learningGoals: String(orderItem?.learningGoals || '').trim() || undefined,
+        maxStudents:
+          orderItem?.maxStudents !== undefined && orderItem?.maxStudents !== null
+            ? Number(orderItem.maxStudents)
+            : undefined,
+      },
+      actor,
+    );
+
+    return {
+      action: 'CREATED_NEW',
+      classId: this.objectIdToString((created as any)?._id) || undefined,
+    };
   }
 
   async update(id: string, dto: UpdateClassDto, actor?: JwtPayload) {
@@ -835,17 +1859,30 @@ export class ClassesService {
       }
 
       if (hasDirectChanges) {
+        const directHistoryArtifacts = await this.buildClassHistoryArtifacts(
+          existing,
+          directChanges,
+          actor,
+          ClassEditHistoryAction.SALE_DIRECT_UPDATED,
+        );
         await this.applyPreparedClassUpdate(id, directPrepared, 'saleDirectUpdateClass', {
           durationSnapshotSource: directPrepared.durationSnapshotData
             ? DurationSnapshotSource.MANAGER_DIRECT
             : undefined,
           requestType: this.resolveRequestedUpdateType(directChanges),
           effectiveById: actorId,
+          historyEntry: directHistoryArtifacts.historyEntry,
         });
       }
 
       if (hasApprovalChanges) {
         const persistedRequestedChanges = this.stripUpdateMetaFields(approvalChanges as UpdateClassDto);
+        const approvalHistoryArtifacts = await this.buildClassHistoryArtifacts(
+          existing,
+          approvalChanges,
+          actor,
+          ClassEditHistoryAction.SALE_REQUESTED,
+        );
         await this.classModel.findByIdAndUpdate(id, {
           $set: {
             pendingSaleUpdate: {
@@ -854,10 +1891,15 @@ export class ClassesService {
               requestedChanges: persistedRequestedChanges,
               requestedBy: new Types.ObjectId(actorId),
               requestedAt: new Date(),
+              changeSummary: approvalHistoryArtifacts.changeSummary,
+              durationPreview: approvalHistoryArtifacts.durationPreview,
               reviewedBy: null,
               reviewedAt: null,
               rejectionReason: null,
             },
+          },
+          $push: {
+            editHistory: approvalHistoryArtifacts.historyEntry,
           },
         });
 
@@ -888,6 +1930,12 @@ export class ClassesService {
     }
 
     const prepared = await this.prepareClassUpdate(id, dto, existing);
+    const managerHistoryArtifacts = await this.buildClassHistoryArtifacts(
+      existing,
+      dto,
+      actor,
+      ClassEditHistoryAction.MANAGER_UPDATED,
+    );
     await this.applyPreparedClassUpdate(id, prepared, 'updateClass', {
       clearPendingSaleUpdate: true,
       durationSnapshotSource: prepared.durationSnapshotData
@@ -895,6 +1943,7 @@ export class ClassesService {
         : undefined,
       requestType: this.resolveRequestedUpdateType(dto),
       effectiveById: actorId,
+      historyEntry: managerHistoryArtifacts.historyEntry,
     });
 
     return this.findByIdPopulated(id);
@@ -921,6 +1970,12 @@ export class ClassesService {
     }
 
     const actorId = this.getActorId(actor);
+    const approvalHistoryArtifacts = await this.buildClassHistoryArtifacts(
+      existing,
+      requestedChanges,
+      actor,
+      ClassEditHistoryAction.APPROVED,
+    );
     await this.applyPreparedClassUpdate(id, prepared, 'approvePendingSaleUpdate', {
       clearPendingSaleUpdate: true,
       durationSnapshotSource: prepared.durationSnapshotData
@@ -932,6 +1987,7 @@ export class ClassesService {
         : undefined,
       requestType,
       effectiveById: actorId,
+      historyEntry: approvalHistoryArtifacts.historyEntry,
     });
     return this.findByIdPopulated(id);
   }
@@ -951,12 +2007,27 @@ export class ClassesService {
       throw new ForbiddenException('Khong xac dinh duoc nguoi duyet');
     }
 
+    const rejectionHistoryEntry = {
+      editedAt: new Date(),
+      editedByUserId: new Types.ObjectId(actorId),
+      editedByName: actor?.fullName || actor?.email,
+      editedByRole: actor?.role,
+      action: ClassEditHistoryAction.REJECTED,
+      requestType: (pendingSaleUpdate.requestType || PendingClassUpdateType.GENERAL) as PendingClassUpdateType,
+      changes: Array.isArray(pendingSaleUpdate.changeSummary) ? pendingSaleUpdate.changeSummary : [],
+      durationPreview: pendingSaleUpdate.durationPreview,
+      note: reason?.trim() || 'Khong dat yeu cau',
+    };
+
     await this.classModel.findByIdAndUpdate(id, {
       $set: {
         'pendingSaleUpdate.status': ClassUpdateRequestStatus.REJECTED,
         'pendingSaleUpdate.reviewedBy': new Types.ObjectId(actorId),
         'pendingSaleUpdate.reviewedAt': new Date(),
         'pendingSaleUpdate.rejectionReason': reason?.trim() || 'Khong dat yeu cau',
+      },
+      $push: {
+        editHistory: rejectionHistoryEntry,
       },
     });
 
@@ -1002,6 +2073,32 @@ export class ClassesService {
       }
     }
     const studentIds = dto.studentIds || [];
+    let invoice: any = null;
+    if (dto.invoiceId) {
+      invoice = await this.invoiceModel.findById(dto.invoiceId).lean();
+      if (!invoice) {
+        throw new NotFoundException('Hoa don khong ton tai');
+      }
+      if (invoice.status !== InvoiceStatus.APPROVED && invoice.status !== InvoiceStatus.PAID) {
+        throw new ForbiddenException('Hoa don chua duoc duyet');
+      }
+      if (invoice.classId) {
+        throw new BadRequestException('Hoa don nay da duoc gan vao lop hoc khac');
+      }
+      if (invoice.classType && invoice.classType !== classroom.classMode) {
+        throw new BadRequestException('Loai lop cua hoa don khong khop voi lop duoc chon');
+      }
+      const invoiceStudentId = invoice.studentId?.toString?.();
+      if (!invoiceStudentId || !studentIds.includes(invoiceStudentId)) {
+        throw new BadRequestException('Hoc sinh tren hoa don phai nam trong danh sach them vao lop');
+      }
+      if (actor.role === Role.SALE && actorId) {
+        const invoiceSaleId = invoice.saleId?.toString?.();
+        if (invoiceSaleId && invoiceSaleId !== actorId) {
+          throw new ForbiddenException('Sale chi duoc su dung hoa don cua minh');
+        }
+      }
+    }
     if (!studentIds.length) throw new BadRequestException('Vui lòng chọn học viên');
     // Only allow APPROVED students to be enrolled
     const studentFilter: any = {
@@ -1030,6 +2127,13 @@ export class ClassesService {
     
     // Cập nhật danh sách học sinh trong lớp
     await this.classModel.findByIdAndUpdate(id, { students: merged });
+    if (dto.invoiceId) {
+      await this.invoiceModel.updateOne(
+        { _id: dto.invoiceId },
+        { $set: { classId: new Types.ObjectId(id) } },
+      );
+      await this.syncOrderProgressForInvoiceIds([dto.invoiceId]);
+    }
     await this.syncStudentConfigsOnClass(id, actorId);
 
     this.triggerStudentSupportSnapshotRefreshForClass(id, 'assignStudentsBySale');
@@ -1136,7 +2240,9 @@ export class ClassesService {
           effectiveBy: actorId ? new Types.ObjectId(actorId) : undefined,
           baseDuration: nextBaseDuration,
           sessionDuration: nextSessionDuration,
-          totalSessions: this.roundTo2(projectedTotalSessions.get(studentId) || currentDuration.totalSessions),
+          totalSessions: this.floorSessionCount(
+            projectedTotalSessions.get(studentId) || currentDuration.totalSessions,
+          ),
         };
         hasChanges = true;
       }
@@ -1289,6 +2395,42 @@ export class ClassesService {
       durationSnapshotSource?: DurationSnapshotSource;
       requestType?: PendingClassUpdateType;
       effectiveById?: string | null;
+      historyEntry?: {
+        editedAt: Date;
+        editedByUserId?: Types.ObjectId;
+        editedByName?: string;
+        editedByRole?: string;
+        action: ClassEditHistoryAction;
+        requestType: PendingClassUpdateType;
+        changes: Array<{
+          field: string;
+          label: string;
+          beforeValue: string;
+          afterValue: string;
+        }>;
+        durationPreview?: {
+          oldBaseDuration: number;
+          oldSessionDuration: number;
+          newBaseDuration: number;
+          newSessionDuration: number;
+          students: Array<{
+            studentId?: Types.ObjectId;
+            studentName?: string;
+            studentCode?: string;
+            oldDurationMinutes: number;
+            newDurationMinutes: number;
+            paidSessionsRemainingBefore?: number;
+            bonusSessionsRemainingBefore?: number;
+            totalSessionsRemainingBefore?: number;
+            paidSessionsRemainingAfter?: number;
+            bonusSessionsRemainingAfter?: number;
+            totalSessionsRemainingAfter?: number;
+            projectedTotalSessionsBefore?: number;
+            projectedTotalSessionsAfter?: number;
+          }>;
+        };
+        note?: string;
+      };
     },
   ): Promise<void> {
     const updateQuery: Record<string, unknown> = {};
@@ -1309,6 +2451,12 @@ export class ClassesService {
         },
       };
     }
+    if (options?.historyEntry) {
+      updateQuery.$push = {
+        ...(updateQuery.$push as Record<string, unknown> || {}),
+        editHistory: options.historyEntry,
+      };
+    }
 
     if (Object.keys(updateQuery).length) {
       await this.classModel.findByIdAndUpdate(id, updateQuery, { new: true }).lean();
@@ -1319,6 +2467,10 @@ export class ClassesService {
       if (teacherId) {
         await this.syncTeacherSlotsOnClass(id, teacherId, options?.effectiveById);
       }
+    }
+
+    if (prepared.durationSnapshotData) {
+      await this.syncDurationSlotsOnClass(id, options?.effectiveById);
     }
 
     if (Object.prototype.hasOwnProperty.call(prepared.update, 'students')) {
@@ -1341,7 +2493,173 @@ export class ClassesService {
     return Number.isFinite(n) ? n : fallback;
   }
 
-  private buildClassFinancialSummary(classroom: any): {
+  private pickFirstPositiveNumber(...values: unknown[]): number {
+    for (const value of values) {
+      const normalized = Number(value);
+      if (Number.isFinite(normalized) && normalized > 0) {
+        return normalized;
+      }
+    }
+    return 0;
+  }
+
+  private roundMoneyDownToThousand(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.floor(value / 1000) * 1000;
+  }
+
+  private getOrderItemForInvoice(order: any | null, invoice: any | null): any | null {
+    if (!order || !Array.isArray(order.items) || !order.items.length || !invoice) {
+      return null;
+    }
+
+    const itemIndex = Number(invoice.orderItemIndex);
+    if (Number.isInteger(itemIndex) && itemIndex >= 0 && itemIndex < order.items.length) {
+      return order.items[itemIndex] || null;
+    }
+
+    const invoiceNumber = String(invoice.invoiceNumber || '').trim().toUpperCase();
+    if (invoiceNumber) {
+      const matchedByNumber = order.items.find(
+        (item: any) => String(item?.invoiceNumber || '').trim().toUpperCase() === invoiceNumber,
+      );
+      if (matchedByNumber) {
+        return matchedByNumber;
+      }
+    }
+
+    const productId = this.objectIdToString(invoice.productId);
+    if (productId) {
+      const matchedByProduct = order.items.filter(
+        (item: any) => this.objectIdToString(item?.productId) === productId,
+      );
+      if (matchedByProduct.length === 1) {
+        return matchedByProduct[0];
+      }
+    }
+
+    return order.items[0] || null;
+  }
+
+  private buildInvoicePricingContext(invoice: any | null, orderItem?: any | null): any | null {
+    if (!invoice) {
+      return null;
+    }
+
+    const orderItemPricePerSession = this.roundMoneyToThousand(
+      this.toSafeNumber(orderItem?.pricePerSession, 0),
+    );
+    const orderItemReferenceDuration = this.pickFirstPositiveNumber(
+      orderItem?.baseDuration,
+      orderItem?.sessionDuration,
+    );
+    const orderItemTeacherPayPerSession = this.roundMoneyDownToThousand(
+      this.toSafeNumber(orderItem?.teacherPayPerSession, 0),
+    );
+    const orderItemTeacherPayPerStudent = this.roundMoneyDownToThousand(
+      this.toSafeNumber(orderItem?.teacherPayPerStudent, 0),
+    );
+
+    return {
+      ...invoice,
+      pricePerSession: this.roundMoneyToThousand(
+        this.pickFirstPositiveNumber(invoice?.pricePerSession, orderItemPricePerSession),
+      ),
+      referenceDuration:
+        this.pickFirstPositiveNumber(
+          invoice?.referenceDuration,
+          orderItemReferenceDuration,
+          60,
+        ) || 60,
+      teacherPayPerSession: this.roundMoneyDownToThousand(
+        this.pickFirstPositiveNumber(
+          invoice?.teacherPayPerSession,
+          orderItemTeacherPayPerSession,
+        ),
+      ),
+      teacherPayPerStudent: this.roundMoneyDownToThousand(
+        this.pickFirstPositiveNumber(
+          (invoice as any)?.teacherPayPerStudent,
+          orderItemTeacherPayPerStudent,
+        ),
+      ),
+    };
+  }
+
+  private async hydrateInvoicePricingContext(invoice: any | null): Promise<any | null> {
+    if (!invoice) {
+      return null;
+    }
+
+    const orderId = this.objectIdToString(invoice.orderId);
+    if (!orderId || !Types.ObjectId.isValid(orderId)) {
+      return this.buildInvoicePricingContext(invoice, null);
+    }
+
+    const order = await this.orderModel
+      .findById(orderId)
+      .select('items')
+      .lean();
+
+    return this.buildInvoicePricingContext(
+      invoice,
+      this.getOrderItemForInvoice(order, invoice),
+    );
+  }
+
+  private resolveCurrentClassPricingState(classroom: any, sourceInvoice?: any | null): {
+    baseDuration: number;
+    sessionDuration: number;
+    pricePerSession: number;
+    teacherPayPerSession: number;
+    teacherPayPerStudent: number;
+  } {
+    const classPricing = getClassPricingConfigAt(classroom);
+    const pricingSnapshot = classroom?.pricingSnapshot || {};
+    const baseDuration = this.pickFirstPositiveNumber(
+      classroom?.baseDuration,
+      classPricing.baseDuration,
+      pricingSnapshot.referenceDuration,
+      sourceInvoice?.referenceDuration,
+      60,
+    ) || 60;
+    const sessionDuration = this.pickFirstPositiveNumber(
+      classroom?.sessionDuration,
+      classPricing.sessionDuration,
+      pricingSnapshot.sessionDuration,
+      baseDuration,
+    ) || baseDuration;
+    const pricePerSession = this.roundMoneyToThousand(this.pickFirstPositiveNumber(
+      classroom?.pricePerSession,
+      classPricing.pricePerSession,
+      pricingSnapshot.pricePerSession,
+      sourceInvoice?.pricePerSession,
+      classroom?.revenuePerStudent,
+    ));
+    const teacherPayPerSession = this.roundMoneyDownToThousand(this.pickFirstPositiveNumber(
+      classroom?.teacherPayPerSession,
+      classPricing.teacherPayPerSession,
+      pricingSnapshot.teacherPayPerSession,
+      sourceInvoice?.teacherPayPerSession,
+      classroom?.teacherSalaryCost,
+    ));
+    const teacherPayPerStudent = this.roundMoneyDownToThousand(this.pickFirstPositiveNumber(
+      classroom?.teacherPayPerStudent,
+      classPricing.teacherPayPerStudent,
+      pricingSnapshot.teacherPayPerStudent,
+      sourceInvoice?.teacherPayPerStudent,
+    ));
+
+    return {
+      baseDuration,
+      sessionDuration,
+      pricePerSession,
+      teacherPayPerSession,
+      teacherPayPerStudent,
+    };
+  }
+
+  private buildClassFinancialSummary(classroom: any, sourceInvoice?: any | null): {
     actualPricePerSession: number;
     actualTeacherPayPerSession: number;
     totalRevenue: number;
@@ -1350,31 +2668,18 @@ export class ClassesService {
     studentCount: number;
   } {
     const studentCount = classroom.students?.length || 0;
-    const snapshot = classroom?.pricingSnapshot || {};
-    const baseDur =
-      this.toSafeNumber(snapshot.referenceDuration, this.toSafeNumber(classroom.baseDuration, 60)) || 60;
-    const sessDur =
-      this.toSafeNumber(snapshot.sessionDuration, this.toSafeNumber(classroom.sessionDuration, baseDur)) || baseDur;
+    const currentPricing = this.resolveCurrentClassPricingState(classroom, sourceInvoice);
+    const baseDur = currentPricing.baseDuration;
+    const sessDur = currentPricing.sessionDuration;
     const ratio = sessDur / baseDur;
-    const snapshotPrice = this.toSafeNumber(
-      snapshot.pricePerSession,
-      this.toSafeNumber(classroom.pricePerSession, this.toSafeNumber(classroom.revenuePerStudent, 0)),
+    const actualPricePerSession = this.roundMoneyToThousand(currentPricing.pricePerSession * ratio);
+    const actualTeacherPayPerSession = this.roundMoneyDownToThousand(
+      currentPricing.teacherPayPerSession * ratio,
     );
-    const snapshotTeacherPay = this.toSafeNumber(
-      snapshot.teacherPayPerSession,
-      this.toSafeNumber(classroom.teacherPayPerSession, this.toSafeNumber(classroom.teacherSalaryCost, 0)),
-    );
-    const snapshotTeacherPayPerStudent = this.toSafeNumber(
-      snapshot.teacherPayPerStudent,
-      this.toSafeNumber(classroom.teacherPayPerStudent, 0),
-    );
-
-    const actualPricePerSession = Math.round(snapshotPrice * ratio);
-    const actualTeacherPayPerSession = Math.round(snapshotTeacherPay * ratio);
     const isOffline = classroom.classMode === 'OFFLINE';
     const totalRevenue = actualPricePerSession * studentCount;
     const totalCost = isOffline
-      ? Math.round(snapshotTeacherPayPerStudent * studentCount)
+      ? this.roundMoneyDownToThousand(currentPricing.teacherPayPerStudent * studentCount)
       : actualTeacherPayPerSession;
     const profit = totalRevenue - totalCost;
 
@@ -1388,6 +2693,90 @@ export class ClassesService {
     };
   }
 
+  private async buildClassSourceInvoiceMap(classrooms: any[]): Promise<Map<string, any>> {
+    const invoiceIds = Array.from(
+      new Set(
+        classrooms
+          .flatMap((classroom) => [
+            this.objectIdToString(classroom?.invoiceId),
+            this.objectIdToString(classroom?.pricingSnapshot?.sourceInvoiceId),
+          ])
+          .filter((invoiceId): invoiceId is string => !!invoiceId && Types.ObjectId.isValid(invoiceId)),
+      ),
+    );
+
+    if (!invoiceIds.length) {
+      return new Map<string, any>();
+    }
+
+    const invoices = await this.invoiceModel
+      .find({ _id: { $in: invoiceIds.map((invoiceId) => new Types.ObjectId(invoiceId)) } })
+      .select('_id invoiceNumber orderId orderItemIndex productId pricePerSession referenceDuration teacherPayPerSession')
+      .lean();
+
+    const orderIds = Array.from(
+      new Set(
+        invoices
+          .map((invoice: any) => this.objectIdToString(invoice?.orderId))
+          .filter((orderId): orderId is string => !!orderId && Types.ObjectId.isValid(orderId)),
+      ),
+    );
+
+    const orders = orderIds.length
+      ? await this.orderModel
+          .find({ _id: { $in: orderIds.map((orderId) => new Types.ObjectId(orderId)) } })
+          .select('_id items')
+          .lean()
+      : [];
+    const orderMap = new Map(
+      orders.map((order: any) => [order._id.toString(), order]),
+    );
+
+    return new Map(
+      invoices.map((invoice: any) => {
+        const order = orderMap.get(this.objectIdToString(invoice?.orderId) || '');
+        return [
+          invoice._id.toString(),
+          this.buildInvoicePricingContext(
+            invoice,
+            this.getOrderItemForInvoice(order, invoice),
+          ),
+        ];
+      }),
+    );
+  }
+
+  private getClassSourceInvoice(classroom: any, invoiceMap: Map<string, any>): any | null {
+    const linkedInvoiceIds = [
+      this.objectIdToString(classroom?.invoiceId),
+      this.objectIdToString(classroom?.pricingSnapshot?.sourceInvoiceId),
+    ].filter((invoiceId): invoiceId is string => !!invoiceId);
+
+    for (const invoiceId of linkedInvoiceIds) {
+      const invoice = invoiceMap.get(invoiceId);
+      if (invoice) {
+        return invoice;
+      }
+    }
+
+    return null;
+  }
+
+  private decorateClassroomForDisplay(classroom: any, sourceInvoice?: any | null) {
+    const resolvedPricing = this.resolveCurrentClassPricingState(classroom, sourceInvoice);
+    return {
+      ...classroom,
+      ...resolvedPricing,
+      ...this.buildClassFinancialSummary(
+        {
+          ...classroom,
+          ...resolvedPricing,
+        },
+        sourceInvoice,
+      ),
+    };
+  }
+
   /**
    * If class is created from an approved invoice and pricing fields are not provided,
    * seed class pricing from invoice snapshot to keep sale quote consistent.
@@ -1396,7 +2785,9 @@ export class ClassesService {
     if (!invoice) return;
 
     const invoiceReferenceDuration = this.toSafeNumber(invoice.referenceDuration, 60);
-    const invoicePricePerSession = this.toSafeNumber(invoice.pricePerSession, 0);
+    const invoicePricePerSession = this.roundMoneyToThousand(
+      this.toSafeNumber(invoice.pricePerSession, 0),
+    );
 
     if (payload.baseDuration === undefined && invoiceReferenceDuration > 0) {
       payload.baseDuration = invoiceReferenceDuration;
@@ -1404,6 +2795,20 @@ export class ClassesService {
 
     if (payload.pricePerSession === undefined && invoicePricePerSession > 0) {
       payload.pricePerSession = invoicePricePerSession;
+    }
+
+    const invoiceTeacherPayPerSession = this.roundMoneyDownToThousand(
+      this.toSafeNumber(invoice.teacherPayPerSession, 0),
+    );
+    if (payload.teacherPayPerSession === undefined && invoiceTeacherPayPerSession > 0) {
+      payload.teacherPayPerSession = invoiceTeacherPayPerSession;
+    }
+
+    const invoiceTeacherPayPerStudent = this.roundMoneyDownToThousand(
+      this.toSafeNumber(invoice.teacherPayPerStudent, 0),
+    );
+    if (payload.teacherPayPerStudent === undefined && invoiceTeacherPayPerStudent > 0) {
+      payload.teacherPayPerStudent = invoiceTeacherPayPerStudent;
     }
   }
 
@@ -1415,9 +2820,13 @@ export class ClassesService {
     const referenceDuration = this.toSafeNumber(payload.baseDuration, 60) || 60;
     const sessionDuration =
       this.toSafeNumber(payload.sessionDuration, referenceDuration) || referenceDuration;
-    const pricePerSession = this.toSafeNumber(payload.pricePerSession, 0);
-    const teacherPayPerSession = this.toSafeNumber(payload.teacherPayPerSession, 0);
-    const teacherPayPerStudent = this.toSafeNumber(payload.teacherPayPerStudent, 0);
+    const pricePerSession = this.roundMoneyToThousand(this.toSafeNumber(payload.pricePerSession, 0));
+    const teacherPayPerSession = this.roundMoneyDownToThousand(
+      this.toSafeNumber(payload.teacherPayPerSession, 0),
+    );
+    const teacherPayPerStudent = this.roundMoneyDownToThousand(
+      this.toSafeNumber(payload.teacherPayPerStudent, 0),
+    );
 
     let perMinuteRate = this.toSafeNumber(invoice?.perMinuteRate, 0);
     if (perMinuteRate <= 0 && pricePerSession > 0 && referenceDuration > 0) {
@@ -1475,9 +2884,19 @@ export class ClassesService {
     if (!allowPartial || dto.code) payload.code = dto.code?.toUpperCase();
     
     // Per-session pricing (new model)
-    if (dto.pricePerSession !== undefined) payload.pricePerSession = dto.pricePerSession;
-    if (dto.teacherPayPerSession !== undefined) payload.teacherPayPerSession = dto.teacherPayPerSession;
-    if (dto.teacherPayPerStudent !== undefined) payload.teacherPayPerStudent = dto.teacherPayPerStudent;
+    if (dto.pricePerSession !== undefined) {
+      payload.pricePerSession = this.roundMoneyToThousand(Number(dto.pricePerSession || 0));
+    }
+    if (dto.teacherPayPerSession !== undefined) {
+      payload.teacherPayPerSession = this.roundMoneyDownToThousand(
+        Number(dto.teacherPayPerSession || 0),
+      );
+    }
+    if (dto.teacherPayPerStudent !== undefined) {
+      payload.teacherPayPerStudent = this.roundMoneyDownToThousand(
+        Number(dto.teacherPayPerStudent || 0),
+      );
+    }
     if ((dto as any).baseDuration !== undefined) payload.baseDuration = (dto as any).baseDuration;
     if (dto.sessionDuration !== undefined) payload.sessionDuration = dto.sessionDuration;
     if ((dto as any).classMode !== undefined) payload.classMode = (dto as any).classMode;
@@ -1491,8 +2910,14 @@ export class ClassesService {
     if (dto.curriculum !== undefined) payload.curriculum = dto.curriculum;
 
     // Legacy fields
-    if (dto.revenuePerStudent !== undefined) payload.revenuePerStudent = dto.revenuePerStudent;
-    if (dto.teacherSalaryCost !== undefined) payload.teacherSalaryCost = dto.teacherSalaryCost;
+    if (dto.revenuePerStudent !== undefined) {
+      payload.revenuePerStudent = this.roundMoneyToThousand(Number(dto.revenuePerStudent || 0));
+    }
+    if (dto.teacherSalaryCost !== undefined) {
+      payload.teacherSalaryCost = this.roundMoneyDownToThousand(
+        Number(dto.teacherSalaryCost || 0),
+      );
+    }
 
     return payload;
   }
@@ -1526,19 +2951,27 @@ export class ClassesService {
       .findById(id)
       .populate('teacher', 'fullName email role')
       .populate('sale', 'fullName email role')
+      .populate('pendingSaleUpdate.requestedBy', 'fullName email role')
+      .populate('pendingSaleUpdate.reviewedBy', 'fullName email role')
       .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
-      .populate('students', 'fullName age parentName')
+      .populate('students', 'fullName age parentName studentCode')
       .populate('studentConfigs.studentId', 'fullName studentCode')
       .populate('studentConfigs.teacherSlots.teacherId', 'fullName email role userCode')
       .populate('studentConfigs.teacherSlots.assignedBy', 'fullName email role')
       .populate('studentConfigs.durationSlots.effectiveBy', 'fullName email role')
+      .populate('durationSnapshots.effectiveBy', 'fullName email role')
       .lean();
 
     if (classroom) {
-      const financialSummary = this.buildClassFinancialSummary(classroom);
+      const projectedClassroom = await this.withProjectedStudentTotals(classroom);
+      const sourceInvoiceMap = await this.buildClassSourceInvoiceMap([projectedClassroom]);
+      const decoratedClassroom = this.decorateClassroomForDisplay(
+        projectedClassroom,
+        this.getClassSourceInvoice(projectedClassroom, sourceInvoiceMap),
+      );
 
       // Tinh tien do chuong trinh hoc
-      const curriculum = (classroom as any).curriculum || [];
+      const curriculum = (decoratedClassroom as any).curriculum || [];
       const totalItems = curriculum.length;
       const completedItems = curriculum.filter((item: any) => item.isCompleted).length;
       const curriculumProgress = totalItems > 0
@@ -1546,8 +2979,7 @@ export class ClassesService {
         : 0;
 
       return {
-        ...classroom,
-        ...financialSummary,
+        ...decoratedClassroom,
         curriculumProgress,
       };
     }

@@ -35,8 +35,10 @@ set -euo pipefail
 #   ADMIN_EMAIL=...
 #   ADMIN_PASSWORD=...
 #   ADMIN_FULLNAME=...
+#   ADMIN_SYNC_EXISTING=false
 #   DEMO_PASSWORD=...
 #   DEMO_SYNC_EXISTING=true
+#   ENABLE_SAMPLE_SEED=false
 
 VERSION="${1:-version8-atlas-hotfix1}"
 IMAGE_NAMESPACE="${IMAGE_NAMESPACE:-vutheviet}"
@@ -73,8 +75,10 @@ TOKEN_ENCRYPTION_KEY="${TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef01
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@tungtran.online}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin123!}"
 ADMIN_FULLNAME="${ADMIN_FULLNAME:-Director Admin}"
+ADMIN_SYNC_EXISTING="${ADMIN_SYNC_EXISTING:-false}"
 DEMO_PASSWORD="${DEMO_PASSWORD:-Demo123456!}"
 DEMO_SYNC_EXISTING="${DEMO_SYNC_EXISTING:-true}"
+ENABLE_SAMPLE_SEED="${ENABLE_SAMPLE_SEED:-false}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_IMAGE="${IMAGE_NAMESPACE}/school-mgmt-backend:${VERSION}"
@@ -82,6 +86,18 @@ FRONTEND_IMAGE="${IMAGE_NAMESPACE}/school-mgmt-frontend:${VERSION}"
 
 log() {
   echo "[deploy] $*"
+}
+
+normalize_path_for_python() {
+  local value="${1:-}"
+  if [ -z "$value" ]; then
+    return
+  fi
+  if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]] && command -v cygpath >/dev/null 2>&1; then
+    cygpath -m "$value"
+    return
+  fi
+  printf '%s' "$value"
 }
 
 require_cmd() {
@@ -148,19 +164,194 @@ TOKEN_ENCRYPTION_KEY="${TOKEN_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef01
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@tungtran.online}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-Admin123!}"
 ADMIN_FULLNAME="${ADMIN_FULLNAME:-Director Admin}"
+ADMIN_SYNC_EXISTING="${ADMIN_SYNC_EXISTING:-false}"
 DEMO_PASSWORD="${DEMO_PASSWORD:-Demo123456!}"
 DEMO_SYNC_EXISTING="${DEMO_SYNC_EXISTING:-true}"
-
-compose() {
-  if sudo docker compose version >/dev/null 2>&1; then
-    sudo docker compose "$@"
-  else
-    sudo docker-compose "$@"
-  fi
-}
+ENABLE_SAMPLE_SEED="${ENABLE_SAMPLE_SEED:-false}"
+SUDO_PASSWORD="${SUDO_PASSWORD:-}"
 
 log() {
   echo "[remote-deploy] $*"
+}
+
+SUDO_MODE="none"
+if command -v sudo >/dev/null 2>&1; then
+  if sudo -n true >/dev/null 2>&1; then
+    SUDO_MODE="nopass"
+  elif [ -n "${SUDO_PASSWORD}" ] && printf '%s\n' "${SUDO_PASSWORD}" | sudo -S true >/dev/null 2>&1; then
+    SUDO_MODE="password"
+  fi
+fi
+
+sudo_cmd() {
+  case "${SUDO_MODE}" in
+    nopass)
+      sudo -n "$@"
+      ;;
+    password)
+      printf '%s\n' "${SUDO_PASSWORD}" | sudo -S "$@"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+DOCKER_MODE="none"
+if docker info >/dev/null 2>&1; then
+  DOCKER_MODE="direct"
+elif sudo_cmd docker info >/dev/null 2>&1; then
+  DOCKER_MODE="sudo"
+fi
+
+docker_cmd() {
+  case "${DOCKER_MODE}" in
+    direct)
+      docker "$@"
+      ;;
+    sudo)
+      sudo_cmd docker "$@"
+      ;;
+    *)
+      echo "[remote-deploy] Docker is not accessible for this user." >&2
+      exit 1
+      ;;
+  esac
+}
+
+compose() {
+  case "${DOCKER_MODE}" in
+    direct)
+      if docker compose version >/dev/null 2>&1; then
+        docker compose "$@"
+      else
+        docker-compose "$@"
+      fi
+      ;;
+    sudo)
+      if sudo_cmd docker compose version >/dev/null 2>&1; then
+        sudo_cmd docker compose "$@"
+      else
+        sudo_cmd docker-compose "$@"
+      fi
+      ;;
+    *)
+      echo "[remote-deploy] Docker Compose is not accessible for this user." >&2
+      exit 1
+      ;;
+  esac
+}
+
+SITE_ROOT_PARENT="$(dirname "${SITE_ROOT}")"
+SITE_ROOT_BASENAME="$(basename "${SITE_ROOT}")"
+
+ensure_site_dir() {
+  if mkdir -p "${SITE_DIR}" >/dev/null 2>&1; then
+    return
+  fi
+  docker_cmd run --rm -i \
+    -v "${SITE_ROOT_PARENT}:/mnt/site-root-parent" \
+    alpine sh -lc "mkdir -p \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}\""
+}
+
+ensure_runtime_dirs() {
+  if mkdir -p "${SITE_DIR}/uploads/attendance" "${SITE_DIR}/uploads/invoices" "${SITE_DIR}/uploads/students" >/dev/null 2>&1; then
+    return
+  fi
+  docker_cmd run --rm -i \
+    -v "${SITE_ROOT_PARENT}:/mnt/site-root-parent" \
+    alpine sh -lc "mkdir -p \
+      \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}/uploads/attendance\" \
+      \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}/uploads/invoices\" \
+      \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}/uploads/students\""
+}
+
+write_site_file() {
+  local name="$1"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  cat >"${tmp_file}"
+
+  if cp "${tmp_file}" "${SITE_DIR}/${name}" >/dev/null 2>&1; then
+    chmod 644 "${SITE_DIR}/${name}" >/dev/null 2>&1 || true
+    rm -f "${tmp_file}"
+    return
+  fi
+
+  docker_cmd run --rm -i \
+    -v "${SITE_ROOT_PARENT}:/mnt/site-root-parent" \
+    -v "${tmp_file}:/tmp/source-file:ro" \
+    alpine sh -lc "set -e && \
+      mkdir -p \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}\" && \
+      cp /tmp/source-file \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}/${name}\" && \
+      chmod 644 \"/mnt/site-root-parent/${SITE_ROOT_BASENAME}/${CONTAINER_NAME}/${name}\""
+
+  rm -f "${tmp_file}"
+}
+
+update_cloudflared_config() {
+  local tmp_script
+  tmp_script="$(mktemp)"
+  cat >"${tmp_script}" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+config_path = Path('/etc/cloudflared/config.yml')
+domain = sys.argv[1].strip()
+www_domain = f'www.{domain}'
+text = config_path.read_text()
+
+def remove_block(content: str, hostname: str) -> str:
+    pattern = (
+        rf"  - hostname: {re.escape(hostname)}\n"
+        r"    service: http://127\.0\.0\.1:80\n"
+        r"    originRequest:\n"
+        r"      noTLSVerify: true\n"
+        r"      connectTimeout: 30s\n"
+        r"      tlsTimeout: 30s\n"
+    )
+    return re.sub(pattern, '', content)
+
+collapsed_pattern = re.compile(
+    rf"- hostname: {re.escape(domain)}\s+service: http://127\.0\.0\.1:80\s+originRequest:\s+noTLSVerify: true\s+connectTimeout: 30s\s+tlsTimeout: 30s\s+"
+    rf"- hostname: {re.escape(www_domain)}\s+service: http://127\.0\.0\.1:80\s+originRequest:\s+noTLSVerify: true\s+connectTimeout: 30s\s+tlsTimeout: 30s\n?",
+    re.MULTILINE,
+)
+
+text = remove_block(text, domain)
+text = remove_block(text, www_domain)
+text = re.sub(collapsed_pattern, '', text)
+
+marker = '  - service: http_status:404'
+if marker not in text:
+    raise SystemExit('http_status:404 marker not found in /etc/cloudflared/config.yml')
+
+block = (
+    f"  - hostname: {domain}\n"
+    "    service: http://127.0.0.1:80\n"
+    "    originRequest:\n"
+    "      noTLSVerify: true\n"
+    "      connectTimeout: 30s\n"
+    "      tlsTimeout: 30s\n"
+    f"  - hostname: {www_domain}\n"
+    "    service: http://127.0.0.1:80\n"
+    "    originRequest:\n"
+    "      noTLSVerify: true\n"
+    "      connectTimeout: 30s\n"
+    "      tlsTimeout: 30s\n"
+)
+
+config_path.write_text(text.replace(marker, block + marker, 1))
+PY
+
+  if sudo_cmd python3 "${tmp_script}" "${DOMAIN}"; then
+    rm -f "${tmp_script}"
+    return 0
+  fi
+
+  rm -f "${tmp_script}"
+  return 1
 }
 
 log "Deploying ${DOMAIN}"
@@ -168,20 +359,15 @@ log "Version: ${VERSION}"
 log "Backend image: ${BACKEND_IMAGE}"
 log "Frontend image: ${FRONTEND_IMAGE}"
 
-sudo mkdir -p "${SITE_DIR}"
+ensure_site_dir
 cd "${SITE_DIR}"
 
-if [ -f docker-compose.yml ] || [ -f docker-compose.yaml ]; then
-  log "Stopping previous stack (if any)..."
-  compose down --remove-orphans || true
-fi
-
 log "Preparing runtime folders..."
-sudo mkdir -p uploads/attendance uploads/invoices uploads/students
+ensure_runtime_dirs
 
 log "Writing .env ..."
-sudo tee .env >/dev/null <<EOF
-NODE_ENV=development
+write_site_file .env <<EOF
+NODE_ENV=production
 PORT=3000
 MONGODB_URI=${MONGODB_URI}
 CORS_ORIGIN=https://${DOMAIN},https://www.${DOMAIN},http://${DOMAIN},http://www.${DOMAIN},http://localhost:${FRONTEND_PORT}
@@ -192,12 +378,14 @@ TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
 ADMIN_EMAIL=${ADMIN_EMAIL}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 ADMIN_FULLNAME=${ADMIN_FULLNAME}
+ADMIN_SYNC_EXISTING=${ADMIN_SYNC_EXISTING}
 DEMO_PASSWORD=${DEMO_PASSWORD}
 DEMO_SYNC_EXISTING=${DEMO_SYNC_EXISTING}
+ENABLE_SAMPLE_SEED=${ENABLE_SAMPLE_SEED}
 EOF
 
 log "Writing docker-compose.yml ..."
-sudo tee docker-compose.yml >/dev/null <<EOF
+write_site_file docker-compose.yml <<EOF
 services:
   backend:
     image: ${BACKEND_IMAGE}
@@ -212,7 +400,21 @@ services:
     ports:
       - "${BACKEND_PORT}:3000"
     labels:
-      - "traefik.enable=false"
+      - "traefik.enable=true"
+      - "traefik.docker.network=${TRAEFIK_NETWORK}"
+      - "traefik.http.routers.${CONTAINER_NAME}-api.rule=(Host(\`${DOMAIN}\`) || Host(\`www.${DOMAIN}\`)) && PathPrefix(\`/api\`)"
+      - "traefik.http.routers.${CONTAINER_NAME}-api.entrypoints=websecure"
+      - "traefik.http.routers.${CONTAINER_NAME}-api.tls=true"
+      - "traefik.http.routers.${CONTAINER_NAME}-api.priority=200"
+      - "traefik.http.routers.${CONTAINER_NAME}-api.service=${CONTAINER_NAME}-api"
+      - "traefik.http.routers.${CONTAINER_NAME}-api.middlewares=${CONTAINER_NAME}-api-strip"
+      - "traefik.http.routers.${CONTAINER_NAME}-api-http.rule=(Host(\`${DOMAIN}\`) || Host(\`www.${DOMAIN}\`)) && PathPrefix(\`/api\`)"
+      - "traefik.http.routers.${CONTAINER_NAME}-api-http.entrypoints=web"
+      - "traefik.http.routers.${CONTAINER_NAME}-api-http.priority=200"
+      - "traefik.http.routers.${CONTAINER_NAME}-api-http.service=${CONTAINER_NAME}-api"
+      - "traefik.http.routers.${CONTAINER_NAME}-api-http.middlewares=${CONTAINER_NAME}-api-strip"
+      - "traefik.http.services.${CONTAINER_NAME}-api.loadbalancer.server.port=3000"
+      - "traefik.http.middlewares.${CONTAINER_NAME}-api-strip.stripprefix.prefixes=/api"
 
   frontend:
     image: ${FRONTEND_IMAGE}
@@ -240,8 +442,8 @@ networks:
 EOF
 
 log "Pulling images..."
-sudo docker pull "${BACKEND_IMAGE}"
-sudo docker pull "${FRONTEND_IMAGE}"
+docker_cmd pull "${BACKEND_IMAGE}"
+docker_cmd pull "${FRONTEND_IMAGE}"
 
 log "Starting containers..."
 compose up -d --remove-orphans
@@ -263,39 +465,40 @@ if [ "$READY" -ne 1 ]; then
   exit 1
 fi
 
-log "Seeding sample data with /app/scripts/seed-all.js ..."
-if ! sudo docker exec "${CONTAINER_NAME}-backend" node /app/scripts/seed-all.js; then
-  log "seed-all.js failed. Check MONGODB_URI and backend logs."
+log "Ensuring commercial admin with /app/scripts/ensure-commercial-admin.js ..."
+if ! docker_cmd exec "${CONTAINER_NAME}-backend" node /app/scripts/ensure-commercial-admin.js; then
+  log "ensure-commercial-admin.js failed. Check ADMIN_* env vars and backend logs."
+  exit 1
 fi
 
-log "Normalizing demo passwords with /app/scripts/update-demo-passwords.js ..."
-if ! sudo docker exec "${CONTAINER_NAME}-backend" node /app/scripts/update-demo-passwords.js; then
-  log "update-demo-passwords.js failed. Continue deployment."
+if [ "${ENABLE_SAMPLE_SEED,,}" = "true" ]; then
+  log "Seeding sample data with /app/scripts/seed-all.js ..."
+  if ! docker_cmd exec "${CONTAINER_NAME}-backend" node /app/scripts/seed-all.js; then
+    log "seed-all.js failed. Check MONGODB_URI and backend logs."
+  fi
+
+  log "Normalizing demo passwords with /app/scripts/update-demo-passwords.js ..."
+  if ! docker_cmd exec "${CONTAINER_NAME}-backend" node /app/scripts/update-demo-passwords.js; then
+    log "update-demo-passwords.js failed. Continue deployment."
+  fi
+else
+  log "Sample seed disabled (ENABLE_SAMPLE_SEED=${ENABLE_SAMPLE_SEED})."
 fi
 
-log "Checking Cloudflared config..."
+  log "Checking Cloudflared config..."
 if [ -f /etc/cloudflared/config.yml ]; then
   if grep -q "hostname: ${DOMAIN}" /etc/cloudflared/config.yml; then
     log "Cloudflared already contains ${DOMAIN}."
   else
-    log "Adding ${DOMAIN} + www.${DOMAIN} into /etc/cloudflared/config.yml ..."
-    sudo sed -i "/- service: http_status:404/i\\
-      - hostname: ${DOMAIN}\\
-        service: http://127.0.0.1:80\\
-        originRequest:\\
-          noTLSVerify: true\\
-          connectTimeout: 30s\\
-          tlsTimeout: 30s\\
-      - hostname: www.${DOMAIN}\\
-        service: http://127.0.0.1:80\\
-        originRequest:\\
-          noTLSVerify: true\\
-          connectTimeout: 30s\\
-          tlsTimeout: 30s" /etc/cloudflared/config.yml
+    if update_cloudflared_config; then
+      log "Added ${DOMAIN} + www.${DOMAIN} into /etc/cloudflared/config.yml."
+    else
+      log "Skipping Cloudflared config update because sudo is unavailable."
+    fi
   fi
 
   log "Restarting cloudflared..."
-  sudo systemctl restart cloudflared || true
+  sudo_cmd systemctl restart cloudflared || true
 else
   log "/etc/cloudflared/config.yml not found, skip Cloudflared step."
 fi
@@ -327,6 +530,7 @@ log "Backend image: ${BACKEND_IMAGE}"
 log "Frontend image: ${FRONTEND_IMAGE}"
 log "Target server: ${SSH_USER}@${SSH_HOST}:${SSH_PORT}"
 if [ -n "${SSH_KEY_PATH}" ]; then
+  SSH_KEY_PATH="$(normalize_path_for_python "${SSH_KEY_PATH}")"
   log "SSH auth mode: key (${SSH_KEY_PATH})"
 else
   log "SSH auth mode: password"
@@ -347,7 +551,7 @@ export SSH_HOST SSH_PORT SSH_USER SSH_KEY_PATH SSH_PASSWORD SUDO_PASSWORD
 export VERSION IMAGE_NAMESPACE DOMAIN BACKEND_PORT FRONTEND_PORT TRAEFIK_NETWORK SITE_ROOT
 export MONGODB_URI ATLAS_USER ATLAS_DB_PASSWORD ATLAS_CLUSTER ATLAS_DB ATLAS_APP_NAME
 export JWT_SECRET JWT_EXPIRES TOKEN_ENCRYPTION_KEY ADMIN_EMAIL ADMIN_PASSWORD ADMIN_FULLNAME
-export DEMO_PASSWORD DEMO_SYNC_EXISTING
+export ADMIN_SYNC_EXISTING DEMO_PASSWORD DEMO_SYNC_EXISTING ENABLE_SAMPLE_SEED
 
 log "Uploading and executing remote deploy script over SSH"
 if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* ]]; then
@@ -399,8 +603,11 @@ env_keys = [
     "ADMIN_EMAIL",
     "ADMIN_PASSWORD",
     "ADMIN_FULLNAME",
+    "ADMIN_SYNC_EXISTING",
     "DEMO_PASSWORD",
     "DEMO_SYNC_EXISTING",
+    "ENABLE_SAMPLE_SEED",
+    "SUDO_PASSWORD",
 ]
 
 remote_script = base64.b64decode(os.environ["REMOTE_SCRIPT_B64"]).decode("utf-8")
@@ -466,26 +673,10 @@ try:
     env_export = " ".join(
         f"{k}={shlex.quote(os.environ.get(k, ''))}" for k in env_keys
     )
-    stdin, stdout, stderr = client.exec_command("sudo -n true", get_pty=True)
-    stdout.read()
-    stderr.read()
-    sudo_no_password = stdout.channel.recv_exit_status() == 0
-
-    if sudo_no_password:
-        command = (
-            f"sudo -n env {env_export} "
-            f"bash {shlex.quote(remote_path)} {shlex.quote(version)}"
-        )
-    elif sudo_password:
-        command = (
-            f"printf '%s\\n' {shlex.quote(sudo_password)} | sudo -S env {env_export} "
-            f"bash {shlex.quote(remote_path)} {shlex.quote(version)}"
-        )
-    else:
-        raise RuntimeError(
-            "sudo requires a password, but SUDO_PASSWORD is empty. "
-            "Provide SUDO_PASSWORD or configure passwordless sudo."
-        )
+    command = (
+        f"env {env_export} "
+        f"bash {shlex.quote(remote_path)} {shlex.quote(version)}"
+    )
     run(command, check=True)
 finally:
     try:

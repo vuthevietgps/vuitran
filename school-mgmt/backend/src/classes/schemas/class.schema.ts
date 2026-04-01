@@ -41,6 +41,14 @@ export enum PendingClassUpdateType {
   DURATION_CHANGE = 'DURATION_CHANGE',
 }
 
+export enum ClassEditHistoryAction {
+  SALE_DIRECT_UPDATED = 'SALE_DIRECT_UPDATED',
+  SALE_REQUESTED = 'SALE_REQUESTED',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  MANAGER_UPDATED = 'MANAGER_UPDATED',
+}
+
 export enum DurationSnapshotSource {
   INITIAL = 'INITIAL',
   MANAGER_DIRECT = 'MANAGER_DIRECT',
@@ -282,6 +290,123 @@ export class StudentClassConfig {
 export const StudentClassConfigSchema = SchemaFactory.createForClass(StudentClassConfig);
 
 @Schema({ _id: false })
+export class ClassEditHistoryChange {
+  @Prop({ type: String, required: true, trim: true })
+  field!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  label!: string;
+
+  @Prop({ type: String, trim: true })
+  beforeValue?: string;
+
+  @Prop({ type: String, trim: true })
+  afterValue?: string;
+}
+
+export const ClassEditHistoryChangeSchema =
+  SchemaFactory.createForClass(ClassEditHistoryChange);
+
+@Schema({ _id: false })
+export class ClassDurationPreviewStudent {
+  @Prop({ type: SchemaTypes.ObjectId, ref: Student.name })
+  studentId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  studentName?: string;
+
+  @Prop({ type: String, trim: true })
+  studentCode?: string;
+
+  @Prop({ type: Number, min: 15, required: true })
+  oldDurationMinutes!: number;
+
+  @Prop({ type: Number, min: 15, required: true })
+  newDurationMinutes!: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  paidSessionsRemainingBefore?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusSessionsRemainingBefore?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalSessionsRemainingBefore?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  paidSessionsRemainingAfter?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  bonusSessionsRemainingAfter?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  totalSessionsRemainingAfter?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  projectedTotalSessionsBefore?: number;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  projectedTotalSessionsAfter?: number;
+}
+
+export const ClassDurationPreviewStudentSchema =
+  SchemaFactory.createForClass(ClassDurationPreviewStudent);
+
+@Schema({ _id: false })
+export class ClassDurationPreview {
+  @Prop({ type: Number, min: 15, required: true })
+  oldBaseDuration!: number;
+
+  @Prop({ type: Number, min: 15, required: true })
+  oldSessionDuration!: number;
+
+  @Prop({ type: Number, min: 15, required: true })
+  newBaseDuration!: number;
+
+  @Prop({ type: Number, min: 15, required: true })
+  newSessionDuration!: number;
+
+  @Prop({ type: [ClassDurationPreviewStudentSchema], default: [] })
+  students!: ClassDurationPreviewStudent[];
+}
+
+export const ClassDurationPreviewSchema =
+  SchemaFactory.createForClass(ClassDurationPreview);
+
+@Schema({ _id: false })
+export class ClassEditHistoryEntry {
+  @Prop({ type: Date, required: true })
+  editedAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  editedByUserId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  editedByName?: string;
+
+  @Prop({ type: String, trim: true })
+  editedByRole?: string;
+
+  @Prop({ type: String, enum: ClassEditHistoryAction, required: true })
+  action!: ClassEditHistoryAction;
+
+  @Prop({ type: String, enum: PendingClassUpdateType, default: PendingClassUpdateType.GENERAL })
+  requestType!: PendingClassUpdateType;
+
+  @Prop({ type: [ClassEditHistoryChangeSchema], default: [] })
+  changes!: ClassEditHistoryChange[];
+
+  @Prop({ type: ClassDurationPreviewSchema })
+  durationPreview?: ClassDurationPreview;
+
+  @Prop({ type: String, trim: true })
+  note?: string;
+}
+
+export const ClassEditHistoryEntrySchema =
+  SchemaFactory.createForClass(ClassEditHistoryEntry);
+
+@Schema({ _id: false })
 export class PendingSaleUpdate {
   @Prop({ type: String, enum: ClassUpdateRequestStatus, default: ClassUpdateRequestStatus.PENDING })
   status!: ClassUpdateRequestStatus;
@@ -297,6 +422,12 @@ export class PendingSaleUpdate {
 
   @Prop({ type: Date, required: true })
   requestedAt!: Date;
+
+  @Prop({ type: [ClassEditHistoryChangeSchema], default: [] })
+  changeSummary?: ClassEditHistoryChange[];
+
+  @Prop({ type: ClassDurationPreviewSchema })
+  durationPreview?: ClassDurationPreview;
 
   @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
   reviewedBy?: Types.ObjectId;
@@ -425,6 +556,9 @@ export class Classroom {
 
   @Prop({ type: [StudentClassConfigSchema], default: [] })
   studentConfigs!: StudentClassConfig[];
+
+  @Prop({ type: [ClassEditHistoryEntrySchema], default: [] })
+  editHistory!: ClassEditHistoryEntry[];
 }
 
 export const ClassroomSchema = SchemaFactory.createForClass(Classroom);

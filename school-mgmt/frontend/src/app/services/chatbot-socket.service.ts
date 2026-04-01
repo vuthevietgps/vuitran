@@ -22,8 +22,15 @@ export class ChatbotSocketService implements OnDestroy {
   connect() {
     if (this.socket?.connected) return;
 
-    const wsUrl = environment.apiBase.replace(/^http/, 'ws');
-    this.socket = io(`${wsUrl}/chatbot`, {
+    const apiBase = environment.apiBase.replace(/\/$/, '');
+    const usesAbsoluteApiBase = /^https?:\/\//i.test(apiBase);
+    const socketOrigin = usesAbsoluteApiBase
+      ? apiBase.replace(/^http/i, 'ws')
+      : window.location.origin;
+    const socketPath = usesAbsoluteApiBase ? '/socket.io' : `${apiBase}/socket.io`;
+
+    this.socket = io(`${socketOrigin}/chatbot`, {
+      path: socketPath,
       withCredentials: true,
       transports: ['websocket'],
     });

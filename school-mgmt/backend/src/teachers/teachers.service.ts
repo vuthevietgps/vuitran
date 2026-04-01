@@ -242,14 +242,13 @@ export class TeachersService {
 
   private async getVisibleTeacherUserIdsForSale(saleId: string): Promise<Types.ObjectId[]> {
     const saleObjectId = new Types.ObjectId(saleId);
-    const [managedTeacherIds, classTeacherIds] = await Promise.all([
-      this.teacherProfileModel.distinct('userId', { managedSales: saleObjectId }),
-      this.classModel.distinct('teacher', { sale: saleObjectId }),
-    ]);
+    const managedTeacherIds = await this.teacherProfileModel.distinct('userId', {
+      managedSales: saleObjectId,
+    });
 
     const mergedIds = Array.from(
       new Set(
-        [...managedTeacherIds, ...classTeacherIds]
+        managedTeacherIds
           .map((value: any) => value?.toString?.())
           .filter((value: string | undefined): value is string => !!value),
       ),

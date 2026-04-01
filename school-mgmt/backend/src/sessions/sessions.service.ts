@@ -12,11 +12,18 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types, FilterQuery } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 
-import { Session, SessionDocument, SessionStatus, CancelledByRole } from './schemas/session.schema';
-import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
+import {
+  Session,
+  SessionDocument,
+  SessionStatus,
+  CancelledByRole,
+  SessionType,
+} from './schemas/session.schema';
+import { Classroom, ClassDocument, ClassMode } from '../classes/schemas/class.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
+import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
 import { TeacherProfile, TeacherProfileDocument } from '../teachers/schemas/teacher-profile.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   Attendance,
   AttendanceDocument,
@@ -47,7 +54,11 @@ import { HoldReason } from '../payroll/schemas/payroll-transaction.schema';
 import { TicketsService } from '../tickets/tickets.service';
 import { TicketType, TicketPriority } from '../tickets/schemas/ticket.schema';
 import { StudentSupportSnapshotService } from '../messages/student-support-snapshot.service';
-import { isTeacherAssignedToStudent } from '../classes/student-config.utils';
+import {
+  getClassPricingConfigAt,
+  getDurationForStudentAt,
+  isTeacherAssignedToStudentAt,
+} from '../classes/student-config.utils';
 
 // ─── Constants ───────────────────────────────────────────────────────
 const TEACHING_REPORT_DEADLINE_HOURS = 24; // Deadline nộp báo cáo: 24h sau buổi học
@@ -64,6 +75,7 @@ export class SessionsService {
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
     @InjectModel(TeacherProfile.name) private teacherProfileModel: Model<TeacherProfileDocument>,
     @InjectModel(Attendance.name) private attendanceModel: Model<AttendanceDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     @Inject(forwardRef(() => WalletsService))
     private walletsService: WalletsService,
     private notificationsService: NotificationsService,
@@ -84,17 +96,47 @@ export class SessionsService {
     return null;
   }
 
+  private async ensureAttendanceForCompletedSession(session: SessionDocument): Promise<void> {
+    const attendanceDate = new Date(session.scheduledDate);
+    attendanceDate.setUTCHours(0, 0, 0, 0);
+
+    await this.attendanceModel.findOneAndUpdate(
+      {
+        classId: session.classId,
+        studentId: session.studentId,
+        date: attendanceDate,
+      },
+      {
+        $set: {
+          teacherId: session.teacherId,
+          status: AttendanceStatus.PRESENT,
+          sessionId: session._id,
+          sessionDuration: session.durationMinutes,
+          attendedAt: session.confirmation?.teacherCompletedAt || new Date(),
+        },
+        $setOnInsert: {
+          notes: '',
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      },
+    );
+  }
+
   private isTeacherAssignedToClassOnDate(
     classroom: any,
     teacherId: string,
     scheduledDate: Date,
     studentId?: string,
   ): boolean {
-    if (studentId && isTeacherAssignedToStudent(classroom, studentId, teacherId)) {
+    if (studentId && isTeacherAssignedToStudentAt(classroom, studentId, teacherId, scheduledDate)) {
       return true;
     }
 
-    if (this.objectIdToString(classroom?.teacher) === teacherId) {
+    if (!studentId && this.objectIdToString(classroom?.teacher) === teacherId) {
       return true;
     }
 
@@ -129,6 +171,40 @@ export class SessionsService {
       .select('parentUserId')
       .lean();
     return this.objectIdToString((student as any)?.parentUserId);
+  }
+
+  private async ensureSessionParentUserId(session: SessionDocument): Promise<string | null> {
+    const existingParentUserId = this.objectIdToString(session.parentUserId);
+    if (existingParentUserId) {
+      return existingParentUserId;
+    }
+
+    const resolvedParentUserId = await this.resolveParentUserIdForSession({
+      parentUserId: session.parentUserId,
+      studentId: session.studentId,
+    });
+    if (!resolvedParentUserId || !Types.ObjectId.isValid(resolvedParentUserId)) {
+      return resolvedParentUserId;
+    }
+
+    const parentObjectId = new Types.ObjectId(resolvedParentUserId);
+    session.parentUserId = parentObjectId as any;
+    await this.sessionModel.updateOne(
+      { _id: session._id },
+      { $set: { parentUserId: parentObjectId } },
+    );
+
+    return resolvedParentUserId;
+  }
+
+  private async ensureOfflineTrialClass(classId: string): Promise<void> {
+    const classroom = await this.classModel.findById(classId).select('classMode').lean();
+    if (!classroom) {
+      throw new NotFoundException('Lop hoc khong ton tai');
+    }
+    if ((classroom as any).classMode !== ClassMode.OFFLINE) {
+      throw new BadRequestException('Hoc thu chi ap dung cho lop OFFLINE');
+    }
   }
 
   private triggerStudentSupportSnapshotRefreshForSession(
@@ -212,39 +288,402 @@ export class SessionsService {
     return Number.isFinite(n) ? n : fallback;
   }
 
-  private resolveClassPricing(classroom: any): {
+  private resolveClassPricing(classroom: any, effectiveAt?: Date | string | null): {
     referenceDuration: number;
     pricePerSession: number;
     teacherPayPerSession: number;
   } {
-    const snapshot = classroom?.pricingSnapshot || {};
-    const referenceDuration =
-      this.toSafeNumber(snapshot.referenceDuration, this.toSafeNumber(classroom?.baseDuration, 60)) || 60;
-    const pricePerSession = this.toSafeNumber(
-      snapshot.pricePerSession,
-      this.toSafeNumber(classroom?.pricePerSession, 0),
-    );
-    const teacherPayPerSession = this.toSafeNumber(
-      snapshot.teacherPayPerSession,
-      this.toSafeNumber(classroom?.teacherPayPerSession, 0),
-    );
+    const pricing = getClassPricingConfigAt(classroom, effectiveAt);
+    const referenceDuration = this.toSafeNumber(pricing.baseDuration, 60) || 60;
+    const pricePerSession = this.toSafeNumber(pricing.pricePerSession, 0);
+    const teacherPayPerSession = this.toSafeNumber(pricing.teacherPayPerSession, 0);
 
     return { referenceDuration, pricePerSession, teacherPayPerSession };
   }
 
-  private resolveSessionFinancials(classroom: any, durationMinutes: number): {
+  private resolveSessionFinancials(
+    classroom: any,
+    durationMinutes: number,
+    effectiveAt?: Date | string | null,
+  ): {
     amountCharged: number;
     teacherPayout: number;
     pricePerSession: number;
   } {
-    const pricing = this.resolveClassPricing(classroom);
+    const pricing = this.resolveClassPricing(classroom, effectiveAt);
     const baseDuration = pricing.referenceDuration > 0 ? pricing.referenceDuration : 60;
     const ratio = durationMinutes / baseDuration;
 
     return {
-      amountCharged: Math.round(pricing.pricePerSession * ratio),
-      teacherPayout: Math.round(pricing.teacherPayPerSession * ratio),
+      amountCharged: this.roundMoneyToThousand(pricing.pricePerSession * ratio),
+      teacherPayout: this.roundMoneyDownToThousand(pricing.teacherPayPerSession * ratio),
       pricePerSession: pricing.pricePerSession,
+    };
+  }
+
+  private shouldKeepZeroTeacherPayout(session: { status?: SessionStatus | string }): boolean {
+    return [
+      SessionStatus.CANCELLED,
+      SessionStatus.NO_SHOW,
+      SessionStatus.RESCHEDULED,
+    ].includes(session.status as SessionStatus);
+  }
+
+  private computeTeacherPayoutFallback(
+    session: {
+      teacherPayout?: number;
+      status?: SessionStatus | string;
+      scheduledDate?: Date | string | null;
+      durationMinutes?: number | null;
+    },
+    classroom: any | null,
+  ): number {
+    const currentTeacherPayout = this.toSafeNumber(session.teacherPayout, 0);
+    if (currentTeacherPayout > 0 || !classroom || this.shouldKeepZeroTeacherPayout(session)) {
+      return currentTeacherPayout;
+    }
+
+    const effectiveAt = session.scheduledDate || undefined;
+    const classPricing = getClassPricingConfigAt(classroom, effectiveAt);
+
+    if (classroom.classMode === ClassMode.OFFLINE) {
+      return this.roundMoneyDownToThousand(
+        this.toSafeNumber(classPricing.teacherPayPerStudent, 0),
+      );
+    }
+
+    const durationMinutes =
+      this.toSafeNumber(session.durationMinutes, classPricing.sessionDuration || 60)
+      || classPricing.sessionDuration
+      || 60;
+
+    return this.resolveSessionFinancials(classroom, durationMinutes, effectiveAt).teacherPayout;
+  }
+
+  private async buildTeacherPayoutOverrideMap(
+    sessions: Array<{
+      _id?: unknown;
+      classId?: unknown;
+      teacherPayout?: number;
+      status?: SessionStatus | string;
+      scheduledDate?: Date | string | null;
+      durationMinutes?: number | null;
+    }>,
+  ): Promise<Map<string, number>> {
+    const candidates = sessions.filter((session) => {
+      if (!this.objectIdToString(session._id) || !this.objectIdToString(session.classId)) {
+        return false;
+      }
+      if (this.toSafeNumber(session.teacherPayout, 0) > 0) {
+        return false;
+      }
+      return !this.shouldKeepZeroTeacherPayout(session);
+    });
+
+    if (!candidates.length) {
+      return new Map<string, number>();
+    }
+
+    const classIds = [...new Set(
+      candidates
+        .map((session) => this.objectIdToString(session.classId))
+        .filter((classId): classId is string => !!classId),
+    )];
+
+    const classrooms = await this.classModel
+      .find({
+        _id: { $in: classIds.map((classId) => new Types.ObjectId(classId)) },
+      })
+      .select(
+        'classMode pricingSnapshot durationSnapshots pricePerSession teacherPayPerSession teacherPayPerStudent baseDuration sessionDuration',
+      )
+      .lean();
+
+    const classroomById = new Map<string, any>();
+    for (const classroom of classrooms as any[]) {
+      const classroomId = this.objectIdToString(classroom?._id);
+      if (!classroomId) continue;
+      classroomById.set(classroomId, classroom);
+    }
+
+    const overrides = new Map<string, number>();
+    for (const session of candidates) {
+      const sessionId = this.objectIdToString(session._id);
+      const classId = this.objectIdToString(session.classId);
+      if (!sessionId || !classId) continue;
+
+      const overrideTeacherPayout = this.computeTeacherPayoutFallback(
+        session,
+        classroomById.get(classId) || null,
+      );
+      if (overrideTeacherPayout > 0) {
+        overrides.set(sessionId, overrideTeacherPayout);
+      }
+    }
+
+    return overrides;
+  }
+
+  private roundMoneyToThousand(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.round(value / 1000) * 1000;
+  }
+
+  private roundMoneyDownToThousand(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) return 0;
+    return Math.floor(value / 1000) * 1000;
+  }
+
+  private roundTo2(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  private floorSessionCount(value: number): number {
+    const normalized = Number.isFinite(value) ? value : 0;
+    return normalized > 0 ? Math.floor(normalized) : 0;
+  }
+
+  private formatDateForHistory(value: unknown): string {
+    const date = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(date.getTime())) return this.emptyHistoryValue();
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    return `${day}/${month}/${year}`;
+  }
+
+  private emptyHistoryValue(): string {
+    return 'Khong co';
+  }
+
+  private formatSessionTypeLabel(value?: string | null): string {
+    const labels: Record<string, string> = {
+      [SessionType.REGULAR]: 'Buoi hoc thuong',
+      [SessionType.TRIAL]: 'Buoi hoc thu',
+      [SessionType.MAKE_UP]: 'Buoi hoc bu',
+      [SessionType.EXAM_PREP]: 'On thi',
+      [SessionType.REVIEW]: 'On tap',
+      [SessionType.EXTRA]: 'Buoi hoc them',
+    };
+    if (!value) return this.emptyHistoryValue();
+    return labels[value] || value;
+  }
+
+  private getSessionEditFieldLabel(field: string): string {
+    const labels: Record<string, string> = {
+      teacherId: 'Giao vien',
+      scheduledDate: 'Ngay hoc',
+      scheduledStartTime: 'Gio bat dau',
+      scheduledEndTime: 'Gio ket thuc',
+      durationMinutes: 'Thoi luong',
+      sessionType: 'Loai buoi hoc',
+      topicsCovered: 'Noi dung',
+      homework: 'BTVN',
+      teacherNotes: 'Ghi chu GV',
+      amountCharged: 'Hoc phi',
+      teacherPayout: 'Luong GV',
+      autoConfirmAfterHours: 'So gio auto-confirm',
+      lessonObjective: 'Muc tieu buoi hoc',
+    };
+    return labels[field] || field;
+  }
+
+  private async getUserDisplayNameMap(ids: string[]): Promise<Map<string, string>> {
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    if (!uniqueIds.length) {
+      return new Map();
+    }
+
+    const users = await this.userModel
+      .find({ _id: { $in: uniqueIds.map((id) => new Types.ObjectId(id)) } })
+      .select('fullName')
+      .lean();
+
+    return new Map(
+      users
+        .map((user: any) => [this.objectIdToString(user?._id), user?.fullName || 'Nguoi dung'] as const)
+        .filter(([id]) => !!id) as Array<[string, string]>,
+    );
+  }
+
+  private formatSessionHistoryValue(
+    field: string,
+    value: unknown,
+    teacherNameMap: Map<string, string>,
+  ): string {
+    if (value === undefined || value === null) {
+      return this.emptyHistoryValue();
+    }
+
+    if (typeof value === 'string' && !value.trim()) {
+      return this.emptyHistoryValue();
+    }
+
+    switch (field) {
+      case 'teacherId': {
+        const teacherId = this.objectIdToString(value);
+        if (!teacherId) return this.emptyHistoryValue();
+        return teacherNameMap.get(teacherId) || teacherId;
+      }
+      case 'scheduledDate':
+        return this.formatDateForHistory(value);
+      case 'durationMinutes':
+        return `${this.toSafeNumber(value, 0)} phut`;
+      case 'amountCharged':
+      case 'teacherPayout':
+        return `${this.toSafeNumber(value, 0).toLocaleString('vi-VN')}d`;
+      case 'autoConfirmAfterHours':
+        return `${this.toSafeNumber(value, 0)} gio`;
+      case 'sessionType':
+        return this.formatSessionTypeLabel(String(value));
+      default:
+        return String(value);
+    }
+  }
+
+  private async buildRemainingSessionsAtNewDurationSnapshot(
+    session: SessionDocument,
+    newDurationMinutes: number,
+  ) {
+    const classroom = await this.classModel
+      .findById(session.classId)
+      .select('pricingSnapshot baseDuration')
+      .lean();
+
+    const fallbackReferenceDuration =
+      this.toSafeNumber((classroom as any)?.pricingSnapshot?.referenceDuration, 0)
+      || this.toSafeNumber((classroom as any)?.baseDuration, 60)
+      || 60;
+
+    const invoices = await this.invoiceModel
+      .find({
+        classId: session.classId,
+        studentId: session.studentId,
+        status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
+      })
+      .select('referenceDuration sessionsRemaining bonusSessionsRemaining trialSessionsRemaining')
+      .lean();
+
+    let paidRemainingMinutes = 0;
+    let bonusRemainingMinutes = 0;
+    let trialRemainingMinutes = 0;
+    for (const invoice of invoices as any[]) {
+      const referenceDuration =
+        this.toSafeNumber(invoice?.referenceDuration, fallbackReferenceDuration) || fallbackReferenceDuration;
+      paidRemainingMinutes += this.toSafeNumber(invoice?.sessionsRemaining, 0) * referenceDuration;
+      bonusRemainingMinutes += this.toSafeNumber(invoice?.bonusSessionsRemaining, 0) * referenceDuration;
+      trialRemainingMinutes += this.toSafeNumber(invoice?.trialSessionsRemaining, 0) * referenceDuration;
+    }
+
+    const totalRemainingMinutes = paidRemainingMinutes + bonusRemainingMinutes + trialRemainingMinutes;
+
+    return {
+      newDurationMinutes,
+      paidRemainingMinutes: this.roundTo2(paidRemainingMinutes),
+      bonusRemainingMinutes: this.roundTo2(bonusRemainingMinutes),
+      totalRemainingMinutes: this.roundTo2(totalRemainingMinutes),
+      paidSessionsRemaining:
+        newDurationMinutes > 0 ? this.floorSessionCount(paidRemainingMinutes / newDurationMinutes) : 0,
+      bonusSessionsRemaining:
+        newDurationMinutes > 0 ? this.floorSessionCount(bonusRemainingMinutes / newDurationMinutes) : 0,
+      totalSessionsRemaining:
+        newDurationMinutes > 0 ? this.floorSessionCount(totalRemainingMinutes / newDurationMinutes) : 0,
+    };
+  }
+
+  private buildSessionEditHistoryEntry(params: {
+    session: SessionDocument;
+    dto: UpdateSessionDto;
+    actor?: JwtPayload;
+    teacherNameMap: Map<string, string>;
+    durationSnapshot?: {
+      newDurationMinutes: number;
+      paidRemainingMinutes?: number;
+      bonusRemainingMinutes?: number;
+      totalRemainingMinutes?: number;
+      paidSessionsRemaining?: number;
+      bonusSessionsRemaining?: number;
+      totalSessionsRemaining?: number;
+    } | null;
+  }) {
+    const { session, dto, actor, teacherNameMap, durationSnapshot } = params;
+    const changes: Array<{
+      field: string;
+      label: string;
+      beforeValue: string;
+      afterValue: string;
+    }> = [];
+
+    const registerChange = (
+      field: string,
+      beforeRaw: unknown,
+      afterRaw: unknown,
+    ) => {
+      const beforeValue = this.formatSessionHistoryValue(field, beforeRaw, teacherNameMap);
+      const afterValue = this.formatSessionHistoryValue(field, afterRaw, teacherNameMap);
+      if (beforeValue === afterValue) {
+        return;
+      }
+
+      changes.push({
+        field,
+        label: this.getSessionEditFieldLabel(field),
+        beforeValue,
+        afterValue,
+      });
+    };
+
+    if (dto.teacherId !== undefined) {
+      registerChange('teacherId', session.teacherId, dto.teacherId);
+    }
+    if (dto.scheduledDate !== undefined) {
+      registerChange('scheduledDate', session.scheduledDate, dto.scheduledDate);
+    }
+    if (dto.scheduledStartTime !== undefined) {
+      registerChange('scheduledStartTime', session.scheduledStartTime, dto.scheduledStartTime);
+    }
+    if (dto.scheduledEndTime !== undefined) {
+      registerChange('scheduledEndTime', session.scheduledEndTime, dto.scheduledEndTime);
+    }
+    if (dto.durationMinutes !== undefined) {
+      registerChange('durationMinutes', session.durationMinutes, dto.durationMinutes);
+    }
+    if (dto.sessionType !== undefined) {
+      registerChange('sessionType', session.sessionType, dto.sessionType);
+    }
+    if (dto.topicsCovered !== undefined) {
+      registerChange('topicsCovered', session.topicsCovered, dto.topicsCovered);
+    }
+    if (dto.homework !== undefined) {
+      registerChange('homework', session.homework, dto.homework);
+    }
+    if (dto.teacherNotes !== undefined) {
+      registerChange('teacherNotes', session.teacherNotes, dto.teacherNotes);
+    }
+    if (dto.amountCharged !== undefined) {
+      registerChange('amountCharged', session.amountCharged, dto.amountCharged);
+    }
+    if (dto.teacherPayout !== undefined) {
+      registerChange('teacherPayout', session.teacherPayout, dto.teacherPayout);
+    }
+    if (dto.autoConfirmAfterHours !== undefined) {
+      registerChange('autoConfirmAfterHours', session.autoConfirmAfterHours, dto.autoConfirmAfterHours);
+    }
+    if (dto.lessonObjective !== undefined) {
+      registerChange('lessonObjective', session.evaluation?.lessonObjective, dto.lessonObjective);
+    }
+
+    if (!changes.length) {
+      return null;
+    }
+
+    return {
+      editedAt: new Date(),
+      editedByUserId: actor?.sub ? new Types.ObjectId(actor.sub) : undefined,
+      editedByName: actor?.fullName || undefined,
+      editedByRole: actor?.role || undefined,
+      changes,
+      durationSnapshot: durationSnapshot || undefined,
     };
   }
 
@@ -494,13 +933,22 @@ export class SessionsService {
 
     // Auto-fill financials from class pricing snapshot (fallback to class fields for legacy data)
     const defaultDuration =
-      this.toSafeNumber((classroom as any)?.pricingSnapshot?.sessionDuration, 0) ||
-      this.toSafeNumber((classroom as any)?.sessionDuration, 60) ||
+      this.toSafeNumber(
+        getDurationForStudentAt(classroom, dto.studentId, scheduledDate).sessionDuration,
+        0,
+      ) ||
+      this.toSafeNumber(getClassPricingConfigAt(classroom, scheduledDate).sessionDuration, 60) ||
       60;
     const durationMinutes = dto.durationMinutes ?? defaultDuration;
-    const pricing = this.resolveSessionFinancials(classroom, durationMinutes);
-    const amountCharged = dto.amountCharged ?? pricing.amountCharged;
-    const teacherPayout = dto.teacherPayout ?? pricing.teacherPayout;
+    const pricing = this.resolveSessionFinancials(classroom, durationMinutes, scheduledDate);
+    const amountCharged =
+      dto.amountCharged !== undefined
+        ? this.roundMoneyToThousand(dto.amountCharged)
+        : pricing.amountCharged;
+    const teacherPayout =
+      dto.teacherPayout !== undefined
+        ? this.roundMoneyDownToThousand(dto.teacherPayout)
+        : pricing.teacherPayout;
 
     // Build evaluation if lesson objective provided
     const evaluation = dto.lessonObjective
@@ -642,11 +1090,17 @@ export class SessionsService {
       }
     }
 
+    const teacherPayoutOverrides = await this.buildTeacherPayoutOverrideMap(data as any[]);
+
     return {
       data: data.map((session: any) => {
-        const attendance = attendanceBySessionId.get(session._id?.toString());
+        const sessionId = this.objectIdToString(session._id);
+        const attendance = attendanceBySessionId.get(sessionId || '');
         return {
           ...session,
+          teacherPayout:
+            (sessionId ? teacherPayoutOverrides.get(sessionId) : undefined)
+            ?? session.teacherPayout,
           attendedAt: attendance?.attendedAt || null,
           attendanceStatus: attendance?.status || null,
         };
@@ -662,7 +1116,8 @@ export class SessionsService {
       .populate('studentId', 'fullName studentCode parentUserId parentName parentPhone')
       .populate('teacherId', 'fullName email phone')
       .populate('parentUserId', 'fullName email phone')
-      .populate('createdBy', 'fullName');
+      .populate('createdBy', 'fullName')
+      .populate('editHistory.editedByUserId', 'fullName role');
 
     if (!session) throw new NotFoundException('Buổi học không tồn tại');
 
@@ -682,6 +1137,20 @@ export class SessionsService {
       }
     }
 
+    if (this.toSafeNumber(session.teacherPayout, 0) <= 0 && !this.shouldKeepZeroTeacherPayout(session)) {
+      const classroomId = this.objectIdToString(session.classId);
+      const classroom = await this.classModel
+        .findById(classroomId)
+        .select(
+          'classMode pricingSnapshot durationSnapshots pricePerSession teacherPayPerSession teacherPayPerStudent baseDuration sessionDuration',
+        )
+        .lean();
+      const fallbackTeacherPayout = this.computeTeacherPayoutFallback(session, classroom);
+      if (fallbackTeacherPayout > 0) {
+        session.teacherPayout = fallbackTeacherPayout;
+      }
+    }
+
     return session;
   }
 
@@ -689,7 +1158,11 @@ export class SessionsService {
   //  UPDATE (basic edit - only SCHEDULED sessions)
   // ──────────────────────────────────────────────────────────────────
 
-  async update(id: string, dto: UpdateSessionDto): Promise<SessionDocument> {
+  async update(
+    id: string,
+    dto: UpdateSessionDto,
+    actor?: JwtPayload,
+  ): Promise<SessionDocument> {
     const session = await this.sessionModel.findById(id);
     if (!session) throw new NotFoundException('Buổi học không tồn tại');
 
@@ -699,11 +1172,153 @@ export class SessionsService {
       );
     }
 
-    Object.assign(session, dto);
-    if (dto.scheduledDate) session.scheduledDate = new Date(dto.scheduledDate);
+    const classroom = await this.classModel.findById(session.classId).lean();
+    if (!classroom) {
+      throw new NotFoundException('Lop hoc khong ton tai');
+    }
+
+    const scheduledDate = dto.scheduledDate ? new Date(dto.scheduledDate) : new Date(session.scheduledDate);
+    const nextTeacherId = dto.teacherId || session.teacherId.toString();
+    const nextStartTime =
+      dto.scheduledStartTime !== undefined ? dto.scheduledStartTime : session.scheduledStartTime;
+    const nextEndTime =
+      dto.scheduledEndTime !== undefined ? dto.scheduledEndTime : session.scheduledEndTime;
+    const nextDurationMinutes =
+      dto.durationMinutes !== undefined ? dto.durationMinutes : session.durationMinutes;
+
+    const studentId = this.objectIdToString(session.studentId);
+    if (!studentId) {
+      throw new BadRequestException('Session khong co hoc sinh hop le');
+    }
+
+    if (!this.isTeacherAssignedToClassOnDate(classroom, nextTeacherId, scheduledDate, studentId)) {
+      throw new BadRequestException('Giao vien khong phu trach lop nay trong ngay duoc chon');
+    }
+
+    if (nextStartTime && nextEndTime) {
+      const conflictResult = await this.checkConflicts({
+        teacherId: nextTeacherId,
+        studentId,
+        scheduledDate: scheduledDate.toISOString(),
+        scheduledStartTime: nextStartTime,
+        scheduledEndTime: nextEndTime,
+        excludeSessionId: id,
+      });
+      if (conflictResult.hasConflict) {
+        const messages = conflictResult.conflicts.map((item: any) => item.message).join('; ');
+        throw new ConflictException(`Trung lich: ${messages}`);
+      }
+
+      await this.checkTeacherAvailability(
+        nextTeacherId,
+        scheduledDate,
+        nextStartTime,
+        nextEndTime,
+      );
+    }
+
+    const recomputedFinancials =
+      dto.durationMinutes !== undefined
+        ? this.resolveSessionFinancials(classroom, nextDurationMinutes, scheduledDate)
+        : null;
+
+    const normalizedAmountCharged =
+      dto.amountCharged !== undefined
+        ? this.roundMoneyToThousand(dto.amountCharged)
+        : undefined;
+    const normalizedTeacherPayout =
+      dto.teacherPayout !== undefined
+        ? this.roundMoneyDownToThousand(dto.teacherPayout)
+        : undefined;
+
+    const dtoForHistory: UpdateSessionDto = {
+      ...dto,
+      ...(normalizedAmountCharged !== undefined ? { amountCharged: normalizedAmountCharged } : {}),
+      ...(normalizedTeacherPayout !== undefined ? { teacherPayout: normalizedTeacherPayout } : {}),
+    };
+    if (recomputedFinancials && dto.amountCharged === undefined) {
+      dtoForHistory.amountCharged = recomputedFinancials.amountCharged;
+    }
+    if (recomputedFinancials && dto.teacherPayout === undefined) {
+      dtoForHistory.teacherPayout = recomputedFinancials.teacherPayout;
+    }
+
+    const teacherNameMap = await this.getUserDisplayNameMap(
+      [this.objectIdToString(session.teacherId), dto.teacherId].filter(
+        (value): value is string => !!value,
+      ),
+    );
+
+    const durationSnapshot =
+      dto.durationMinutes !== undefined && dto.durationMinutes !== session.durationMinutes
+        ? await this.buildRemainingSessionsAtNewDurationSnapshot(session, dto.durationMinutes)
+        : null;
+
+    const historyEntry = this.buildSessionEditHistoryEntry({
+      session,
+      dto: dtoForHistory,
+      actor,
+      teacherNameMap,
+      durationSnapshot,
+    });
+
+    if (!historyEntry) {
+      return this.findById(id, actor);
+    }
+
+    if (dto.teacherId !== undefined) {
+      session.teacherId = new Types.ObjectId(dto.teacherId);
+    }
+    if (dto.scheduledDate !== undefined) {
+      session.scheduledDate = scheduledDate;
+    }
+    if (dto.sessionType !== undefined) {
+      session.sessionType = dto.sessionType;
+    }
+    if (dto.scheduledStartTime !== undefined) {
+      session.scheduledStartTime = dto.scheduledStartTime;
+    }
+    if (dto.scheduledEndTime !== undefined) {
+      session.scheduledEndTime = dto.scheduledEndTime;
+    }
+    if (dto.durationMinutes !== undefined) {
+      session.durationMinutes = dto.durationMinutes;
+      if (dto.amountCharged === undefined && recomputedFinancials) {
+        session.amountCharged = recomputedFinancials.amountCharged;
+      }
+      if (dto.teacherPayout === undefined && recomputedFinancials) {
+        session.teacherPayout = recomputedFinancials.teacherPayout;
+      }
+    }
+    if (dto.topicsCovered !== undefined) {
+      session.topicsCovered = dto.topicsCovered;
+    }
+    if (dto.homework !== undefined) {
+      session.homework = dto.homework;
+    }
+    if (dto.teacherNotes !== undefined) {
+      session.teacherNotes = dto.teacherNotes;
+    }
+    if (dto.amountCharged !== undefined) {
+      session.amountCharged = normalizedAmountCharged ?? 0;
+    }
+    if (dto.teacherPayout !== undefined) {
+      session.teacherPayout = normalizedTeacherPayout ?? 0;
+    }
+    if (dto.autoConfirmAfterHours !== undefined) {
+      session.autoConfirmAfterHours = dto.autoConfirmAfterHours;
+    }
+    if (dto.lessonObjective !== undefined) {
+      const evaluation = session.evaluation || ({} as any);
+      evaluation.lessonObjective = dto.lessonObjective;
+      session.evaluation = evaluation;
+    }
+
+    session.editHistory = [...(session.editHistory || []), historyEntry];
+
     const savedSession = await session.save();
     this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'updateSession');
-    return savedSession;
+    return this.findById((savedSession._id as Types.ObjectId).toString(), actor);
   }
 
   // ──────────────────────────────────────────────────────────────────
@@ -763,6 +1378,7 @@ export class SessionsService {
     session.confirmation.teacherCompletedAt = new Date();
 
     const savedSession = await session.save();
+    await this.ensureAttendanceForCompletedSession(savedSession);
     this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'teacherComplete');
     return savedSession;
   }
@@ -848,6 +1464,20 @@ export class SessionsService {
       lastUpdatedAt: now,
     };
     session.hasTeachingReport = true;
+
+    if (this.toSafeNumber(session.teacherPayout, 0) <= 0 && !this.shouldKeepZeroTeacherPayout(session)) {
+      const classroomId = this.objectIdToString(session.classId);
+      const classroom = await this.classModel
+        .findById(classroomId)
+        .select(
+          'classMode pricingSnapshot durationSnapshots pricePerSession teacherPayPerSession teacherPayPerStudent baseDuration sessionDuration',
+        )
+        .lean();
+      const fallbackTeacherPayout = this.computeTeacherPayoutFallback(session, classroom);
+      if (fallbackTeacherPayout > 0) {
+        session.teacherPayout = fallbackTeacherPayout;
+      }
+    }
 
     // Log warning nếu nộp muộn
     if (isLate && !isUpdate) {
@@ -1039,6 +1669,15 @@ export class SessionsService {
       );
     }
 
+    const hasRequiredTeachingReport =
+      session.hasTeachingReport
+      && !!session.teachingReport?.lessonContent?.trim();
+    if (!hasRequiredTeachingReport) {
+      throw new BadRequestException(
+        'Ch\u1ec9 x\u00e1c nh\u1eadn \u0111\u01b0\u1ee3c khi bu\u1ed5i h\u1ecdc \u0111\u00e3 c\u00f3 b\u00e1o c\u00e1o gi\u1ea3ng d\u1ea1y',
+      );
+    }
+
     // Verify parent owns this student (fallback to student.parentUserId when session.parentUserId is missing)
     const ownerParentId = await this.resolveParentUserIdForSession({
       parentUserId: session.parentUserId,
@@ -1156,6 +1795,15 @@ export class SessionsService {
     if (!session) throw new NotFoundException('Buổi học không tồn tại');
 
     // Session đã FINALIZED bởi system/parent: cho phép OPS/DIRECTOR đóng dấu xác nhận payroll.
+    const hasRequiredTeachingReport =
+      session.hasTeachingReport
+      && !!session.teachingReport?.lessonContent?.trim();
+    if (!hasRequiredTeachingReport) {
+      throw new BadRequestException(
+        'Chỉ xác nhận lương được khi buổi học đã có báo cáo giảng dạy đầy đủ',
+      );
+    }
+
     if (session.status === SessionStatus.FINALIZED) {
       if (session.confirmation?.finalizedBy) {
         return session;
@@ -1467,7 +2115,30 @@ export class SessionsService {
 
     const totalSessions = result.reduce((acc, r) => acc + r.count, 0);
     const totalRevenue = result.reduce((acc, r) => acc + r.totalCharged, 0);
-    const totalTeacherCost = result.reduce((acc, r) => acc + r.totalPayout, 0);
+    let totalTeacherCost = result.reduce((acc, r) => acc + r.totalPayout, 0);
+
+    const zeroPayoutSessions = await this.sessionModel
+      .find({ ...match, teacherPayout: { $lte: 0 } })
+      .select('_id classId scheduledDate durationMinutes teacherPayout status')
+      .lean();
+    const teacherPayoutOverrides = await this.buildTeacherPayoutOverrideMap(zeroPayoutSessions as any[]);
+    for (const session of zeroPayoutSessions as any[]) {
+      const sessionId = this.objectIdToString(session._id);
+      const overrideTeacherPayout = sessionId ? teacherPayoutOverrides.get(sessionId) : undefined;
+      if (!overrideTeacherPayout || overrideTeacherPayout <= 0) continue;
+
+      const statusKey = String(session.status || '');
+      if (!summary[statusKey]) {
+        summary[statusKey] = {
+          count: 0,
+          totalCharged: 0,
+          totalPayout: 0,
+        };
+      }
+
+      summary[statusKey].totalPayout += overrideTeacherPayout;
+      totalTeacherCost += overrideTeacherPayout;
+    }
 
     return { totalSessions, totalRevenue, totalTeacherCost, byStatus: summary };
   }
@@ -1485,6 +2156,8 @@ export class SessionsService {
     const sessions = await this.sessionModel.find({
       status: SessionStatus.TEACHER_COMPLETED,
       'confirmation.teacherCompletedAt': { $exists: true },
+      hasTeachingReport: true,
+      'teachingReport.lessonContent': { $exists: true, $ne: '' },
     });
 
     let confirmed = 0;
@@ -1723,7 +2396,7 @@ export class SessionsService {
 
   private async hasInvoiceCoverageForAmount(
     session: SessionDocument,
-    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining',
+    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining' | 'trialSessionsRemaining',
   ): Promise<boolean> {
     const coverageAmount = this.getSessionCoverageAmount(session);
     if (coverageAmount <= 0) {
@@ -1755,13 +2428,13 @@ export class SessionsService {
 
       const amountCovered = Math.min(
         remainingAmount,
-        this.roundTo4(remainingUnits * pricePerSession),
+        this.roundTo2(remainingUnits * pricePerSession),
       );
       if (amountCovered <= 0) {
         continue;
       }
 
-      remainingAmount = Math.max(0, this.roundTo4(remainingAmount - amountCovered));
+      remainingAmount = Math.max(0, this.roundTo2(remainingAmount - amountCovered));
     }
 
     return remainingAmount <= 0;
@@ -1824,6 +2497,8 @@ export class SessionsService {
       return;
     }
 
+    await this.ensureSessionParentUserId(session);
+
     const bonusSession = await this.tryMarkBonusSession(session);
     const sessionToSettle = bonusSession || session;
 
@@ -1836,7 +2511,7 @@ export class SessionsService {
 
   private async consumeInvoiceAllowanceForAmount(
     claim: any,
-    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining',
+    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining' | 'trialSessionsRemaining',
   ): Promise<{
     primaryInvoiceId: Types.ObjectId | null;
     consumedUnits: number;
@@ -1875,7 +2550,7 @@ export class SessionsService {
         continue;
       }
 
-      let unitsToConsume = this.roundTo4(
+      let unitsToConsume = this.roundTo2(
         Math.min(invoiceRemaining, remainingAmount / pricePerSession),
       );
       if (unitsToConsume <= 0) {
@@ -1893,7 +2568,7 @@ export class SessionsService {
           .select(allowanceField)
           .lean();
         const latestRemaining = this.toSafeNumber((latestInvoice as any)?.[allowanceField], 0);
-        const fallbackUnits = this.roundTo4(Math.min(latestRemaining, unitsToConsume));
+        const fallbackUnits = this.roundTo2(Math.min(latestRemaining, unitsToConsume));
         if (fallbackUnits <= 0) {
           continue;
         }
@@ -1910,7 +2585,7 @@ export class SessionsService {
 
       const amountToConsume = Math.min(
         remainingAmount,
-        this.roundTo4(unitsToConsume * pricePerSession),
+        this.roundTo2(unitsToConsume * pricePerSession),
       );
       if (amountToConsume <= 0) {
         continue;
@@ -1921,12 +2596,12 @@ export class SessionsService {
       }
       consumedAmount += amountToConsume;
       consumedUnits += unitsToConsume;
-      remainingAmount = Math.max(0, this.roundTo4(remainingAmount - amountToConsume));
+      remainingAmount = Math.max(0, this.roundTo2(remainingAmount - amountToConsume));
     }
 
     return {
       primaryInvoiceId,
-      consumedUnits: this.roundTo4(consumedUnits),
+      consumedUnits: this.roundTo2(consumedUnits),
       consumedAmount: Math.round(consumedAmount),
       remainingAmount,
     };
@@ -1937,7 +2612,7 @@ export class SessionsService {
    * Quy ước:
    * - Session trả phí consume vào sessionsRemaining
    * - Session buổi tặng consume vào bonusSessionsRemaining
-   * - TRIAL chỉ consume khi đã convert
+   * - Trial đã convert consume vào trialSessionsRemaining
    * - FIFO theo paymentDate/createdAt của invoice APPROVED
    * - Idempotent qua cờ session.invoiceConsumptionApplied
    */
@@ -1965,7 +2640,7 @@ export class SessionsService {
         { $set: { invoiceConsumptionApplied: true } },
         { new: true },
       )
-      .select('_id studentId classId amountCharged referenceAmountCharged isBonusSession')
+      .select('_id studentId classId amountCharged referenceAmountCharged isBonusSession sessionType')
       .lean();
 
     if (!claim) return;
@@ -1979,12 +2654,17 @@ export class SessionsService {
       return;
     }
 
-    const allowanceField = isBonusSession ? 'bonusSessionsRemaining' : 'sessionsRemaining';
-    const allowanceLabel = isBonusSession ? 'bonus sessions' : 'remaining sessions';
+    let allowanceField = isBonusSession ? 'bonusSessionsRemaining' : 'sessionsRemaining';
+    let allowanceLabel = isBonusSession ? 'bonus sessions' : 'remaining sessions';
+    if ((claim as any).sessionType === 'TRIAL') {
+      allowanceField = 'trialSessionsRemaining';
+      allowanceLabel = 'trial sessions';
+    }
+
     try {
       const consumptionResult = await this.consumeInvoiceAllowanceForAmount(
         claim,
-        allowanceField,
+        allowanceField as any,
       );
 
       if (consumptionResult.consumedAmount <= 0) {
@@ -2124,6 +2804,8 @@ export class SessionsService {
     studentId: string,
     classId: string,
   ): Promise<{ converted: number; deducted: number }> {
+    await this.ensureOfflineTrialClass(classId);
+
     const trialSessions = await this.sessionModel.find({
       studentId: new Types.ObjectId(studentId),
       classId: new Types.ObjectId(classId),
@@ -2164,6 +2846,8 @@ export class SessionsService {
     classId: string,
     actorUserId?: string,
   ): Promise<{ updated: number; excludedPayroll: number }> {
+    await this.ensureOfflineTrialClass(classId);
+
     const trialSessions = await this.sessionModel.find(
       {
         studentId: new Types.ObjectId(studentId),
@@ -2551,6 +3235,15 @@ export class SessionsService {
       const hasOpsConfirmation = confirmedByOpsInAttendance || confirmedByOpsInSession;
       return hasQualifiedAttendance && hasOpsConfirmation;
     });
+
+    const teacherPayoutOverrides = await this.buildTeacherPayoutOverrideMap(sessions as any[]);
+    for (const session of sessions) {
+      const sessionId = this.objectIdToString(session._id);
+      const overrideTeacherPayout = sessionId ? teacherPayoutOverrides.get(sessionId) : undefined;
+      if (overrideTeacherPayout && overrideTeacherPayout > 0) {
+        session.teacherPayout = overrideTeacherPayout;
+      }
+    }
 
     const totalPayout = sessions.reduce((acc, s) => acc + s.teacherPayout, 0);
     return { count: sessions.length, totalPayout, sessions };

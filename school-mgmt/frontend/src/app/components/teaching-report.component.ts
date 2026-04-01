@@ -95,7 +95,7 @@ import {
         </article>
         <article class="summary-card emphasis">
           <strong>{{ formatCurrency(payrollPreview()!.amounts.totalAttendedPayout) }}</strong>
-          <span>Tổng lương buổi dạy</span>
+          <span>Tổng lương dự kiến buổi dạy</span>
         </article>
         <article class="summary-card emphasis success">
           <strong>{{ formatCurrency(getPaidPayrollTotal()) }}</strong>

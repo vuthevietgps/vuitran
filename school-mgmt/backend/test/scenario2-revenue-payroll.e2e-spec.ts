@@ -200,6 +200,24 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
       .set('X-XSRF-TOKEN', session.xsrfToken);
   }
 
+  async function submitTeachingReport(
+    sessionId: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    const res = await authWrite(
+      request(app.getHttpServer()).patch(`/sessions/${sessionId}/teaching-report`),
+      teacherSession,
+    ).send({
+      lessonContent: 'E2E teaching report content',
+      studentAttitude: 'Student participated well',
+      teacherComment: 'Session completed and verified for payroll flow',
+      ...overrides,
+    });
+
+    expect(res.status).toBe(200);
+    return res;
+  }
+
   beforeAll(async () => {
     // ── 1. Khởi tạo in-memory replica set (required for transactions) ──
     replSet = await MongoMemoryReplSet.create({
@@ -568,6 +586,10 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
     });
     const raceSessionId = String(raceSession._id);
 
+    await submitTeachingReport(raceSessionId, {
+      lessonContent: 'Race condition finalize coverage',
+    });
+
     // Bắn 2 request finalize ĐỒNG THỜI
     const [res1, res2] = await Promise.all([
       authWrite(
@@ -662,6 +684,10 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
     });
     const emptySessionId = String(emptySession._id);
 
+    await submitTeachingReport(emptySessionId, {
+      lessonContent: 'Insufficient balance finalize coverage',
+    });
+
     // Gọi finalize — hệ thống chốt session NHƯNG deduct ví thất bại (soft-fail)
     const finalizeRes = await authWrite(
       request(app.getHttpServer()).post(`/sessions/${emptySessionId}/finalize`),
@@ -728,6 +754,10 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
     });
     const bonusSessionId = String(bonusSession._id);
 
+    await submitTeachingReport(bonusSessionId, {
+      lessonContent: 'Bonus session finalize coverage',
+    });
+
     const finalizeRes = await authWrite(
       request(app.getHttpServer()).post(`/sessions/${bonusSessionId}/finalize`),
       opsSession,
@@ -768,6 +798,59 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
   // ─────────────────────────────────────────────────────────────────────────
   // EDGE CASE 3: Khóa báo cáo — không cho sửa khi lương đã APPROVED
   // ─────────────────────────────────────────────────────────────────────────
+
+  it('consumes converted trial sessions from trialSessionsRemaining without touching paid sessions', async () => {
+    await invoiceModel.updateOne(
+      { _id: new Types.ObjectId(invoiceId) },
+      {
+        $set: {
+          sessionsRemaining: 5,
+          bonusSessions: 0,
+          bonusSessionsRemaining: 0,
+          trialSessions: 1,
+          trialSessionsRemaining: 1,
+        },
+      },
+    );
+
+    await walletModel.updateOne(
+      { userId: new Types.ObjectId(parentId) },
+      { $set: { balance: 9_999_999 } },
+    );
+
+    const trialSession = await sessionModel.create({
+      classId: new Types.ObjectId(classId),
+      studentId: new Types.ObjectId(studentId),
+      teacherId: new Types.ObjectId(teacherId),
+      parentUserId: new Types.ObjectId(parentId),
+      sessionType: 'TRIAL',
+      trialConverted: true,
+      scheduledDate: utcDaysAgo(1),
+      durationMinutes: 60,
+      amountCharged: 200_000,
+      teacherPayout: 100_000,
+      status: 'TEACHER_COMPLETED',
+      confirmation: { teacherCompletedAt: utcDaysAgo(1) },
+      autoConfirmAfterHours: 48,
+      createdBy: new Types.ObjectId(teacherId),
+    });
+    const trialSessionId = String(trialSession._id);
+
+    await submitTeachingReport(trialSessionId, {
+      lessonContent: 'Converted trial session should consume trial invoice units',
+    });
+
+    const finalizeRes = await authWrite(
+      request(app.getHttpServer()).post(`/sessions/${trialSessionId}/finalize`),
+      opsSession,
+    ).send();
+
+    expect(finalizeRes.status).toBe(201);
+
+    const invoiceAfter = await invoiceModel.findById(invoiceId).lean() as any;
+    expect(invoiceAfter.sessionsRemaining).toBe(5);
+    expect(invoiceAfter.trialSessionsRemaining).toBe(0);
+  });
 
   it('Edge case 3 (freeze): Cannot edit teaching report when PayrollTransaction is APPROVED', async () => {
     // PayrollTransaction cho mainSession đã được tạo ở Step 2

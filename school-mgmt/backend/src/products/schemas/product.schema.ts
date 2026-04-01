@@ -35,7 +35,7 @@ export class Product {
   @Prop({ type: String, trim: true })
   description?: string;
 
-  @Prop({ type: String, enum: Object.values(ProductCategory), default: ProductCategory.OTHER })
+  @Prop({ type: String, enum: Object.values(ProductCategory), default: ProductCategory.ENGLISH })
   category?: string;
 
   @Prop({ type: String, enum: Object.values(TeachingMode), default: TeachingMode.BOTH })

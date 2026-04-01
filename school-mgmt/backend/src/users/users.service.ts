@@ -636,6 +636,22 @@ export class UsersService {
     return (await this.enrichUsersWithAdsAttribution(users as any)) as any;
   }
 
+  async findTeachers(actor: JwtPayload): Promise<User[]> {
+    if (actor.role === Role.SALE) {
+      const saleObjectId = new Types.ObjectId(actor.sub);
+      const teacherUserIds = await this.teacherProfileModel.distinct('userId', {
+        managedSales: saleObjectId,
+      });
+      if (!teacherUserIds.length) return [];
+      const users = await this.userModel
+        .find({ _id: { $in: teacherUserIds }, role: Role.TEACHER })
+        .select('-password')
+        .lean();
+      return (await this.enrichUsersWithAdsAttribution(users as any)) as any;
+    }
+    return this.findByRole(Role.TEACHER);
+  }
+
   async findDirectory(excludeUserId?: string): Promise<Partial<User>[]> {
     if (excludeUserId) {
       const requester = await this.userModel

@@ -35,8 +35,8 @@ export class UsersController {
 
   @Get('teachers')
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
-  findTeachers() {
-    return this.usersService.findByRole(Role.TEACHER);
+  findTeachers(@Req() req: AuthenticatedRequest) {
+    return this.usersService.findTeachers(req.user);
   }
 
   @Get('sales')

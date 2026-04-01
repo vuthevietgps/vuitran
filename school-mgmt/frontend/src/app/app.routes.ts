@@ -64,7 +64,7 @@ export const routes: Routes = [
       },
       {
         path: 'sessions',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT, Role.ACCOUNTING])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT, Role.ACCOUNTING, Role.SALE])],
         loadComponent: () =>
           import('./components/sessions.component').then((m) => m.SessionsComponent),
       },
@@ -352,6 +352,24 @@ export const routes: Routes = [
         path: 'internal-handbook',
         loadComponent: () =>
           import('./components/internal-handbook.component').then((m) => m.InternalHandbookComponent),
+      },
+      {
+        path: 'supplier-quotes',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])],
+        loadComponent: () =>
+          import('./components/supplier-quotes.component').then((m) => m.SupplierQuotesComponent),
+      },
+      {
+        path: 'payments/supplier',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])],
+        loadComponent: () =>
+          import('./components/supplier-payments.component').then((m) => m.SupplierPaymentsComponent),
+      },
+      {
+        path: 'agents',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])],
+        loadComponent: () =>
+          import('./components/agents.component').then((m) => m.AgentsComponent),
       },
       { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
     ],

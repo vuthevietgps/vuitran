@@ -14,6 +14,7 @@ import {
 import { StudentItem, StudentService } from '../services/student.service';
 import { AuthService } from '../services/auth.service';
 import { UserItem, UserService } from '../services/user.service';
+import { ClassItem, ClassService } from '../services/class.service';
 import { environment } from '../../environments/environment';
 import { FlowGuideComponent } from './shared/flow-guide.component';
 
@@ -21,10 +22,12 @@ interface InvoiceForm {
   invoiceNumber: string;
   courseStatus: InvoiceCourseStatus;
   studentId: string;
+  classId: string;
   classType: 'ONLINE' | 'OFFLINE' | '';
   saleId: string;
   sessions: number;
   bonusSessions: number;
+  trialSessions: number;
   paymentRound: number;
   amount: number;
   paymentDate: string;
@@ -153,7 +156,7 @@ interface InvoiceForm {
             <th>H\u1ecdc sinh</th>
             <th>Ph\u1ee5 huynh</th>
             <th>Lo\u1ea1i l\u1edbp</th>
-            <th>S\u1ed1 bu\u1ed5i</th>
+            <th>T\u1ed5ng bu\u1ed5i</th>
             <th>L\u1ea7n TT</th>
             <th>T\u1ed5ng ti\u1ec1n</th>
             <th>Sale ph\u1ee5 tr\u00e1ch</th>
@@ -181,6 +184,7 @@ interface InvoiceForm {
               <span *ngIf="invoice.classType === 'ONLINE'" class="chip chip-blue">Online</span>
               <span *ngIf="invoice.classType === 'OFFLINE'" class="chip chip-orange">Offline</span>
               <span *ngIf="!invoice.classType" class="muted-text">-</span>
+              <div *ngIf="invoice.classId" class="class-ref">{{ getInvoiceClassLabel(invoice.classId) }}</div>
             </td>
             <td class="center">{{ formatRegisteredSessions(invoice) }}</td>
             <td class="center">{{ invoice.paymentRound || '-' }}</td>
@@ -322,9 +326,22 @@ interface InvoiceForm {
           <span class="parent-info-phone"> - {{ selectedStudent.parentPhone }}</span>
         </div>
 
+        <label>L\u1edbp h\u1ecdc li\u00ean k\u1ebft
+          <select
+            name="classId"
+            [(ngModel)]="form.classId"
+            [disabled]="!form.studentId"
+            (ngModelChange)="onClassChange($event)">
+            <option value="">{{ form.studentId ? '-- Ch\u01b0a g\u1eafn l\u1edbp --' : '-- Ch\u1ecdn h\u1ecdc sinh tr\u01b0\u1edbc --' }}</option>
+            <option *ngFor="let c of availableClassOptions" [value]="c._id">{{ formatClassCodeOption(c) }}</option>
+          </select>
+        </label>
+        <p class="hint">Dropdown ch\u1ec9 hi\u1ec7n c\u00e1c m\u00e3 l\u1edbp m\u00e0 h\u1ecdc sinh n\u00e0y \u0111ang h\u1ecdc. N\u00ean ch\u1ecdn l\u1edbp cho h\u00f3a \u0111\u01a1n \u0111\u1ee3t 2/\u0111\u1ee3t 3 \u0111\u1ec3 m\u00e0n t\u1ed5ng h\u1ee3p theo l\u1edbp c\u1ed9ng \u0111\u00fang.</p>
+        <p class="hint" *ngIf="form.studentId && !availableClassOptions.length">H\u1ecdc sinh n\u00e0y hi\u1ec7n ch\u01b0a c\u00f3 l\u1edbp ph\u00f9 h\u1ee3p \u0111\u1ec3 g\u1eafn h\u00f3a \u0111\u01a1n.</p>
+
         <div class="form-row">
           <label>Lo\u1ea1i l\u1edbp h\u1ecdc <span class="req">*</span>
-            <select name="classType" [(ngModel)]="form.classType" required>
+            <select name="classType" [(ngModel)]="form.classType" required (ngModelChange)="onClassTypeChange($event)">
               <option value="">-- Ch\u1ecdn lo\u1ea1i l\u1edbp --</option>
               <option value="ONLINE">Online</option>
               <option value="OFFLINE">Offline</option>
@@ -336,6 +353,9 @@ interface InvoiceForm {
             </label>
             <label>Bu\u1ed5i t\u1eb7ng
               <input name="bonusSessions" type="number" min="0" [(ngModel)]="form.bonusSessions" placeholder="VD: 1" />
+            </label>
+            <label>Buổi học thử
+              <input name="trialSessions" type="number" min="0" [(ngModel)]="form.trialSessions" placeholder="VD: 0" />
             </label>
           </div>
         </div>
@@ -503,6 +523,7 @@ interface InvoiceForm {
     .chip { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:500; }
     .chip-blue { background:#dbeafe; color:#1d4ed8; }
     .chip-orange { background:#ffedd5; color:#c2410c; }
+    .class-ref { margin-top:4px; font-size:12px; color:#475569; white-space:normal; }
     .muted-text { color:#94a3b8; font-size:12px; }
 
     /* Status */
@@ -580,6 +601,7 @@ export class InvoicesComponent {
   items = signal<InvoiceItem[]>([]);
   students = signal<StudentItem[]>([]);
   sales = signal<UserItem[]>([]);
+  classes = signal<ClassItem[]>([]);
 
   // Filter signals
   keyword = signal('');
@@ -628,6 +650,7 @@ export class InvoicesComponent {
     private invoiceService: InvoiceService,
     private studentService: StudentService,
     private userService: UserService,
+    private classService: ClassService,
     private auth: AuthService,
     private http: HttpClient,
   ) {
@@ -650,6 +673,24 @@ export class InvoicesComponent {
   // Computed: selected student for parent info display in form
   get selectedStudent(): StudentItem | null {
     return this.students().find(s => s._id === this.form.studentId) ?? null;
+  }
+
+  get availableClassOptions(): ClassItem[] {
+    const selectedStudentId = this.form.studentId;
+    if (!selectedStudentId) {
+      return [];
+    }
+
+    return this.classes()
+      .filter((item) => {
+        return Array.isArray(item.students)
+          && item.students.some((student) => student?._id === selectedStudentId);
+      })
+      .sort((left, right) =>
+        this.formatClassOption(left).localeCompare(this.formatClassOption(right), 'vi', {
+          sensitivity: 'base',
+        }),
+      );
   }
 
   // Computed: filtered invoice list
@@ -794,16 +835,36 @@ export class InvoicesComponent {
   }
 
   async loadLookups(): Promise<void> {
-    const [studs, salesList] = await Promise.all([
+    const [studs, salesList, classList] = await Promise.all([
       this.studentService.list(),
       this.userService.listSales(),
+      this.classService.list(),
     ]);
     this.students.set(studs);
     this.sales.set(salesList);
+    this.classes.set(classList);
   }
 
   onStudentChange(): void {
-    // parent info auto-shows via selectedStudent getter
+    this.ensureSelectedClassStillValid();
+    this.autoPickSingleClassOption();
+  }
+
+  onClassTypeChange(_: 'ONLINE' | 'OFFLINE' | ''): void {
+    this.syncClassTypeFromSelectedClass();
+  }
+
+  onClassChange(classId: string): void {
+    this.form.classId = classId || '';
+    if (!this.form.classId) {
+      return;
+    }
+
+    const selectedClass = this.classes().find((item) => item._id === this.form.classId);
+    const classMode = selectedClass?.classMode;
+    if (classMode === 'ONLINE' || classMode === 'OFFLINE') {
+      this.form.classType = classMode;
+    }
   }
 
   openModal(): void {
@@ -828,10 +889,12 @@ export class InvoicesComponent {
       invoiceNumber: invoice.invoiceNumber,
       courseStatus: invoice.courseStatus || 'NEW',
       studentId: invoice.studentId._id,
+      classId: this.extractClassId(invoice.classId),
       classType: (invoice.classType as 'ONLINE' | 'OFFLINE') || '',
       saleId: invoice.saleId?._id || '',
       sessions: invoice.sessions || 0,
       bonusSessions: invoice.bonusSessions || 0,
+      trialSessions: (invoice as any).trialSessions || 0,
       paymentRound: invoice.paymentRound || 0,
       amount: invoice.amount,
       paymentDate: invoice.paymentDate.split('T')[0],
@@ -881,7 +944,9 @@ export class InvoicesComponent {
 
     if (this.form.sessions > 0) payload.sessions = Number(this.form.sessions);
     if (this.form.bonusSessions > 0) payload.bonusSessions = Number(this.form.bonusSessions);
+    if (this.form.trialSessions > 0) payload.trialSessions = Number(this.form.trialSessions);
     if (this.form.paymentRound > 0) payload.paymentRound = Number(this.form.paymentRound);
+    if (this.form.classId) payload.classId = this.form.classId;
     if (this.form.saleId) payload.saleId = this.form.saleId;
     if (this.form.receiptImage) payload.receiptImage = this.form.receiptImage.trim();
     if (this.form.description) payload.description = this.form.description.trim();
@@ -1002,8 +1067,14 @@ export class InvoicesComponent {
     this.form.receiptImage = result.url;
   }
 
+  private roundMoneyToThousand(amount?: number): number {
+    const normalized = Number(amount || 0);
+    if (!Number.isFinite(normalized) || normalized <= 0) return 0;
+    return Math.round(normalized / 1000) * 1000;
+  }
+
   formatCurrency(amount: number): string {
-    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(this.roundMoneyToThousand(amount));
   }
 
   formatDate(dateStr: string): string {
@@ -1014,13 +1085,44 @@ export class InvoicesComponent {
   formatRegisteredSessions(invoice: InvoiceItem): string {
     const sessions = Number(invoice.sessions || 0);
     const bonusSessions = Number(invoice.bonusSessions || 0);
-    if (sessions <= 0 && bonusSessions <= 0) {
-      return '-';
+    const trialSessions = Number(invoice.trialSessions || 0);
+    
+    const parts: string[] = [];
+    if (sessions > 0) parts.push(`${sessions} chính`);
+    if (bonusSessions > 0) parts.push(`${bonusSessions} tặng`);
+    if (trialSessions > 0) parts.push(`${trialSessions} thử`);
+
+    const total = sessions + bonusSessions + trialSessions;
+
+    if (parts.length === 0) return '-';
+    if (parts.length === 1) return String(total);
+    return `${total} (${parts.join(' + ')})`;
+  }
+
+  getInvoiceClassLabel(value: InvoiceItem['classId']): string {
+    if (!value) return '-';
+    if (typeof value === 'string') {
+      return value;
     }
-    if (bonusSessions <= 0) {
-      return String(sessions);
+    const code = value.code?.trim();
+    const name = value.name?.trim();
+    if (code && name) return `${code} - ${name}`;
+    return code || name || '-';
+  }
+
+  formatClassOption(item: ClassItem): string {
+    const code = item.code?.trim() || '';
+    const name = item.name?.trim() || '';
+    if (code && name) return `${code} - ${name}`;
+    return code || name || item._id;
+  }
+
+  formatClassCodeOption(item: ClassItem): string {
+    const code = item.code?.trim();
+    if (code) {
+      return code;
     }
-    return `${sessions} + ${bonusSessions}`;
+    return item.name?.trim() || item._id;
   }
 
   loadNextInvoiceBatch(): void {
@@ -1088,16 +1190,58 @@ export class InvoicesComponent {
       invoiceNumber: '',
       courseStatus: 'NEW',
       studentId: '',
+      classId: '',
       classType: '',
       saleId: '',
       sessions: 0,
       bonusSessions: 0,
+      trialSessions: 0,
       paymentRound: 0,
       amount: 0,
       paymentDate: new Date().toISOString().split('T')[0],
       description: '',
       receiptImage: '',
     };
+  }
+
+  private ensureSelectedClassStillValid(): void {
+    if (!this.form.studentId) {
+      this.form.classId = '';
+      return;
+    }
+    if (!this.form.classId) {
+      return;
+    }
+    const stillValid = this.availableClassOptions.some((item) => item._id === this.form.classId);
+    if (!stillValid) {
+      this.form.classId = '';
+    }
+  }
+
+  private autoPickSingleClassOption(): void {
+    if (this.form.classId) {
+      this.syncClassTypeFromSelectedClass();
+      return;
+    }
+    if (this.availableClassOptions.length === 1) {
+      this.onClassChange(this.availableClassOptions[0]._id);
+    }
+  }
+
+  private syncClassTypeFromSelectedClass(): void {
+    if (!this.form.classId) {
+      return;
+    }
+    const selectedClass = this.classes().find((item) => item._id === this.form.classId);
+    const classMode = selectedClass?.classMode;
+    if (classMode === 'ONLINE' || classMode === 'OFFLINE') {
+      this.form.classType = classMode;
+    }
+  }
+
+  private extractClassId(value?: InvoiceItem['classId']): string {
+    if (!value) return '';
+    return typeof value === 'string' ? value : value._id || '';
   }
 
   // Pending top-up management

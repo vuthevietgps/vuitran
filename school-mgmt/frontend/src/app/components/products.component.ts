@@ -11,8 +11,24 @@ const MODE_LABELS: Record<string, string> = {
   BOTH: 'Online/Offline',
 };
 
+const SUBJECT_LABELS: Record<string, string> = {
+  ENGLISH: 'Tiếng Anh',
+  MATH: 'Toán',
+  LITERATURE: 'Ngữ văn',
+  PHYSICS: 'Vật lý',
+  CHEMISTRY: 'Hóa học',
+  BIOLOGY: 'Sinh học',
+  HISTORY: 'Lịch sử',
+  GEOGRAPHY: 'Địa lý',
+  INFORMATICS: 'Tin học',
+  SCIENCE: 'Khoa học',
+  MULTI_SUBJECT: 'Liên môn',
+  OTHER: 'Khác',
+};
+
 interface ProductForm {
   name: string;
+  category: string;
   teachingMode: 'ONLINE' | 'OFFLINE';
   defaultSessions: number;
   suggestedPrice: number;
@@ -49,6 +65,7 @@ interface ProductForm {
     <thead>
       <tr>
         <th>Ten goi</th>
+        <th>Mon hoc</th>
         <th>Hinh thuc</th>
         <th>So buoi</th>
         <th>So tien</th>
@@ -62,6 +79,7 @@ interface ProductForm {
         <td>
           <strong>{{ p.name }}</strong>
         </td>
+        <td>{{ subjectLabel(p.category) }}</td>
         <td>{{ modeLabel(p.teachingMode) }}</td>
         <td class="center">{{ p.defaultSessions || 0 }}</td>
         <td class="right">{{ (p.suggestedPrice || 0) | number }}d</td>
@@ -86,6 +104,12 @@ interface ProductForm {
       <form (ngSubmit)="submit()">
         <label>Ten goi <span class="req">*</span>
           <input name="name" [(ngModel)]="form.name" required />
+        </label>
+
+        <label>Mon hoc
+          <select name="category" [(ngModel)]="form.category">
+            <option *ngFor="let subject of subjectOptions" [value]="subject.value">{{ subject.label }}</option>
+          </select>
         </label>
 
         <label>Hinh thuc
@@ -157,6 +181,7 @@ export class ProductsComponent {
   showModal = signal(false);
   error = signal('');
   editingId: string | null = null;
+  subjectOptions = Object.entries(SUBJECT_LABELS).map(([value, label]) => ({ value, label }));
 
   form: ProductForm = this.emptyForm();
 
@@ -168,9 +193,14 @@ export class ProductsComponent {
     return v ? MODE_LABELS[v] || v : '-';
   }
 
+  subjectLabel(v?: string) {
+    return v ? SUBJECT_LABELS[v] || v : '-';
+  }
+
   emptyForm(): ProductForm {
     return {
       name: '',
+      category: 'ENGLISH',
       teachingMode: 'OFFLINE',
       defaultSessions: 24,
       suggestedPrice: 0,
@@ -205,6 +235,7 @@ export class ProductsComponent {
     this.editingId = p._id;
     this.form = {
       name: p.name || '',
+      category: p.category || 'ENGLISH',
       teachingMode: (p.teachingMode === 'ONLINE' ? 'ONLINE' : 'OFFLINE'),
       defaultSessions: p.defaultSessions || 24,
       suggestedPrice: p.suggestedPrice || 0,
@@ -251,12 +282,12 @@ export class ProductsComponent {
 
     const payload: Partial<ProductItem> = {
       name: this.form.name.trim(),
+      category: this.form.category || 'ENGLISH',
       teachingMode: this.form.teachingMode,
       defaultSessions: sessions,
       suggestedPrice: totalPrice,
       defaultSessionDuration: Number(this.form.defaultSessionDuration),
       isActive: !!this.form.isActive,
-      category: 'OTHER',
       // Keep compatibility for old flows still reading price per session.
       pricePerSession: sessions > 0 ? Math.round(totalPrice / sessions) : 0,
     };

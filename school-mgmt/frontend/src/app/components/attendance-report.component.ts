@@ -19,6 +19,7 @@ interface AttendanceReportItem {
     studentCode: string;
     fullName: string;
     age: number;
+    level?: string;
     parentName: string;
     faceImage?: string;
     totalPurchasedSessions?: number;
@@ -90,6 +91,10 @@ interface AttendanceReportItem {
         </div>
       </div>
 
+      <p *ngIf="reportData().length > 0" class="report-note">
+        <strong>Nguon du lieu cot Tong buoi:</strong> lay realtime tu hoa don hoc phi chua huy/tu choi, gom buoi chinh, buoi tang va buoi thu.
+      </p>
+
       <div *ngIf="reportData().length > 0" class="report-table-container">
         <table class="report-table">
           <thead>
@@ -98,7 +103,8 @@ interface AttendanceReportItem {
               <th>Thời gian điểm danh</th>
               <th>Lớp</th>
               <th>Học sinh</th>
-              <th title="Tổng số buổi lấy từ các hóa đơn đã thanh toán/đã duyệt">Tổng buổi (Đã mua)</th>
+              <th>Level</th>
+              <th title="Tổng số buổi được cộng realtime từ các hóa đơn học phí chưa hủy hoặc từ chối">Tổng buổi (Đã mua)</th>
               <th>Ảnh học sinh</th>
               <th>Giáo viên</th>
               <th>Hình ảnh điểm danh</th>
@@ -121,6 +127,7 @@ interface AttendanceReportItem {
                   <small>Mã: {{ item.studentId.studentCode }} | Tuổi: {{ item.studentId.age }}</small>
                 </div>
               </td>
+              <td>{{ item.studentId.level || '-' }}</td>
               <td>
                 <strong>{{ item.studentId.totalPurchasedSessions || 0 }}</strong>
               </td>
@@ -232,6 +239,12 @@ interface AttendanceReportItem {
       display:flex; 
       gap:16px; 
       margin-bottom:24px; 
+    }
+
+    .report-note {
+      margin:0 0 12px;
+      color:#475569;
+      font-size:13px;
     }
 
     .summary-card { 

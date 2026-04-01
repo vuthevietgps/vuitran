@@ -30,6 +30,7 @@ export interface SessionItem {
     parentConfirmedAt?: string;
     autoConfirmedAt?: string;
     finalizedAt?: string;
+    finalizedBy?: string | { _id: string; fullName?: string } | null;
   };
   cancellation?: {
     cancelledBy?: string;
@@ -44,10 +45,82 @@ export interface SessionItem {
     homework?: string;
     additionalNotes?: string;
     submittedAt?: string;
+    deadline?: string;
     isLateSubmission?: boolean;
   };
   hasTeachingReport?: boolean;
   createdAt?: string;
+  editHistory?: SessionEditHistoryEntry[];
+}
+
+export interface SessionChangeFinancialImpact {
+  oldDurationMinutes: number;
+  newDurationMinutes: number;
+  oldAmountCharged: number;
+  newAmountCharged: number;
+  deltaAmountCharged: number;
+  oldTeacherPayout: number;
+  newTeacherPayout: number;
+  deltaTeacherPayout: number;
+  requestedTeacherDefaultRate?: number;
+  note?: string;
+}
+
+export interface SessionChangeRequestItem {
+  _id: string;
+  sessionId?: any;
+  classId?: { _id?: string; name?: string; code?: string };
+  studentId?: { _id?: string; fullName?: string; studentCode?: string };
+  parentUserId?: { _id?: string; fullName?: string; email?: string };
+  currentTeacherId?: { _id?: string; fullName?: string; email?: string };
+  requestedTeacherId?: { _id?: string; fullName?: string; email?: string };
+  currentDurationMinutes: number;
+  requestedDurationMinutes?: number;
+  reason: string;
+  status: string;
+  financialImpact: SessionChangeFinancialImpact;
+  requestedBy?: { _id?: string; fullName?: string; email?: string; role?: string };
+  requestedAt?: string;
+  reviewedBy?: { _id?: string; fullName?: string; email?: string; role?: string };
+  reviewedAt?: string;
+  rejectionReason?: string;
+  cancelledReason?: string;
+}
+
+export interface CreateSessionChangeRequestPayload {
+  requestedTeacherId?: string;
+  requestedDurationMinutes?: number;
+  reason: string;
+}
+
+export interface ReviewSessionChangeRequestPayload {
+  action: 'APPROVE' | 'REJECT';
+  rejectionReason?: string;
+}
+
+export interface SessionEditHistoryChange {
+  field: string;
+  label: string;
+  beforeValue?: string;
+  afterValue?: string;
+}
+
+export interface SessionDurationRemainingSnapshot {
+  newDurationMinutes: number;
+  paidRemainingMinutes?: number;
+  bonusRemainingMinutes?: number;
+  totalRemainingMinutes?: number;
+  paidSessionsRemaining?: number;
+  bonusSessionsRemaining?: number;
+  totalSessionsRemaining?: number;
+}
+
+export interface SessionEditHistoryEntry {
+  editedAt: string;
+  editedByName?: string;
+  editedByRole?: string;
+  changes: SessionEditHistoryChange[];
+  durationSnapshot?: SessionDurationRemainingSnapshot;
 }
 
 export interface SessionQueryParams {
@@ -117,6 +190,18 @@ export class SessionService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async getById(id: string): Promise<SessionItem | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<SessionItem>(`${environment.apiBase}/sessions/${id}`, {
+          withCredentials: true,
+        }),
+      );
+    } catch {
+      return null;
     }
   }
 
@@ -212,6 +297,45 @@ export class SessionService {
       this.http.patch(`${environment.apiBase}/sessions/${id}/teaching-report`, payload, {
         withCredentials: true,
       }),
+    );
+  }
+
+  async getChangeRequests(sessionId: string): Promise<SessionChangeRequestItem[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<SessionChangeRequestItem[]>(
+          `${environment.apiBase}/sessions/${sessionId}/change-requests`,
+          { withCredentials: true },
+        ),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async createChangeRequest(
+    sessionId: string,
+    payload: CreateSessionChangeRequestPayload,
+  ): Promise<SessionChangeRequestItem> {
+    return firstValueFrom(
+      this.http.post<SessionChangeRequestItem>(
+        `${environment.apiBase}/sessions/${sessionId}/change-requests`,
+        payload,
+        { withCredentials: true },
+      ),
+    );
+  }
+
+  async reviewChangeRequest(
+    requestId: string,
+    payload: ReviewSessionChangeRequestPayload,
+  ): Promise<SessionChangeRequestItem> {
+    return firstValueFrom(
+      this.http.post<SessionChangeRequestItem>(
+        `${environment.apiBase}/sessions/change-requests/${requestId}/review`,
+        payload,
+        { withCredentials: true },
+      ),
     );
   }
 

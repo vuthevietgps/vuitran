@@ -92,6 +92,9 @@ export class Student {
   @Prop({ type: String, trim: true })
   grade?: string; // Lớp đang học (e.g., "Lớp 10", "Lớp 12")
 
+  @Prop({ type: String, trim: true })
+  level?: string;
+
   @Prop({ type: String, enum: ['ONLINE', 'OFFLINE', 'BOTH'], default: 'BOTH' })
   preferredTeachingMode?: string;
 

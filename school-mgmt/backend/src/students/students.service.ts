@@ -1,18 +1,32 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
-import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Types, Connection } from 'mongoose';
-import { Student, StudentDocument } from './schemas/student.schema';
-import { Attendance, AttendanceDocument } from '../attendance/schemas/attendance.schema';
-import { Classroom, ClassroomDocument } from '../classes/schemas/class.schema';
-import { Session, SessionDocument } from '../sessions/schemas/session.schema';
-import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
-import { User, UserDocument } from '../users/schemas/user.schema';
-import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
-import { Role } from '../common/interfaces/role.enum';
 import {
-  getCurrentDurationForStudent,
-  getCurrentTeacherIdForStudent,
-} from '../classes/student-config.utils';
+  Injectable,
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+} from "@nestjs/common";
+import { InjectModel, InjectConnection } from "@nestjs/mongoose";
+import { Model, Types, Connection } from "mongoose";
+import { Student, StudentDocument } from "./schemas/student.schema";
+import {
+  Attendance,
+  AttendanceDocument,
+} from "../attendance/schemas/attendance.schema";
+import { Classroom, ClassroomDocument } from "../classes/schemas/class.schema";
+import { Session, SessionDocument } from "../sessions/schemas/session.schema";
+import {
+  Invoice,
+  InvoiceDocument,
+  InvoiceStatus,
+} from "../invoices/schemas/invoice.schema";
+import { User, UserDocument } from "../users/schemas/user.schema";
+import { JwtPayload } from "../common/interfaces/jwt-payload.interface";
+import { Role } from "../common/interfaces/role.enum";
+import {
+  getDurationForStudentAt,
+  getTeacherIdForStudentAt,
+  objectIdToString,
+} from "../classes/student-config.utils";
 
 type StudentLean = Student & { _id: Types.ObjectId };
 
@@ -21,11 +35,16 @@ export class StudentsService {
   private readonly logger = new Logger(StudentsService.name);
 
   constructor(
-    @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
-    @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
-    @InjectModel(Classroom.name) private readonly classroomModel: Model<ClassroomDocument>,
-    @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
-    @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    @InjectModel(Student.name)
+    private readonly studentModel: Model<StudentDocument>,
+    @InjectModel(Attendance.name)
+    private readonly attendanceModel: Model<AttendanceDocument>,
+    @InjectModel(Classroom.name)
+    private readonly classroomModel: Model<ClassroomDocument>,
+    @InjectModel(Session.name)
+    private readonly sessionModel: Model<SessionDocument>,
+    @InjectModel(Invoice.name)
+    private readonly invoiceModel: Model<InvoiceDocument>,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -46,20 +65,24 @@ export class StudentsService {
 
     // Parent chỉ thấy con mình
     const isParent = actor?.role === Role.PARENT;
-    const parentOid = isParent && actorId ? new Types.ObjectId(actorId) : undefined;
+    const parentOid =
+      isParent && actorId ? new Types.ObjectId(actorId) : undefined;
 
     const studentFilter: any = {};
     if (saleOid) studentFilter.saleId = saleOid;
     if (parentOid) studentFilter.parentUserId = parentOid;
 
-    const studentsFromDb = await this.studentModel.find(studentFilter)
-      .populate('productPackage', 'name price')
+    const studentsFromDb = await this.studentModel
+      .find(studentFilter)
+      .populate("productPackage", "name price")
       .sort({ createdAt: -1 })
       .lean<StudentLean[]>();
 
     return studentsFromDb
-      .map(student => this.mapStudentDocument(student))
-      .sort((a, b) => a.fullName.localeCompare(b.fullName, 'vi', { sensitivity: 'base' }));
+      .map((student) => this.mapStudentDocument(student))
+      .sort((a, b) =>
+        a.fullName.localeCompare(b.fullName, "vi", { sensitivity: "base" }),
+      );
   }
 
   private mapStudentDocument(student: StudentLean) {
@@ -70,22 +93,25 @@ export class StudentsService {
       fullName: student.fullName,
       age: student.age,
       grade: student.grade,
+      level: (student as any).level,
       studentBirthMonth: student.studentBirthMonth,
       parentBirthMonth: student.parentBirthMonth,
-      parentUserId: student.parentUserId?.toString?.() || '',
+      parentUserId: student.parentUserId?.toString?.() || "",
       parentName: student.parentName,
       parentPhone: student.parentPhone,
-      saleId: student.saleId?.toString?.() || '',
-      saleName: student.saleName || '',
+      saleId: student.saleId?.toString?.() || "",
+      saleName: student.saleName || "",
       faceImage: student.faceImage,
-      approvalStatus: (student as any).approvalStatus || 'PENDING',
-      productPackage: productPackage && typeof productPackage === 'object'
-        ? {
-            _id: productPackage._id?.toString?.() ?? productPackage.toString(),
-            name: productPackage.name,
-            price: productPackage.price,
-          }
-        : undefined,
+      approvalStatus: (student as any).approvalStatus || "PENDING",
+      productPackage:
+        productPackage && typeof productPackage === "object"
+          ? {
+              _id:
+                productPackage._id?.toString?.() ?? productPackage.toString(),
+              name: productPackage.name,
+              price: productPackage.price,
+            }
+          : undefined,
     };
   }
 
@@ -98,20 +124,24 @@ export class StudentsService {
   private async validateParentUser(parentUserId?: string) {
     if (!parentUserId) return;
     if (!Types.ObjectId.isValid(parentUserId)) {
-      throw new BadRequestException('Ma phu huynh khong hop le');
+      throw new BadRequestException("Ma phu huynh khong hop le");
     }
 
     const parent = await this.userModel
       .findById(parentUserId)
-      .select('_id role')
+      .select("_id role")
       .lean();
 
     if (!parent || (parent as any).role !== Role.PARENT) {
-      throw new BadRequestException('Ma phu huynh khong ton tai hoac sai role');
+      throw new BadRequestException("Ma phu huynh khong ton tai hoac sai role");
     }
   }
 
-  async getStudentReport(classId?: string, searchTerm?: string, actor?: JwtPayload) {
+  async getStudentReport(
+    classId?: string,
+    searchTerm?: string,
+    actor?: JwtPayload,
+  ) {
     // Build filter for students
     const studentFilter: any = {};
     // Sale chỉ thấy HS của mình
@@ -123,25 +153,31 @@ export class StudentsService {
     }
     if (searchTerm) {
       // Escape special regex characters to prevent MongoDB injection
-      const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       studentFilter.$or = [
-        { fullName: { $regex: escapedTerm, $options: 'i' } },
-        { parentName: { $regex: escapedTerm, $options: 'i' } },
-        { parentPhone: { $regex: escapedTerm, $options: 'i' } }
+        { fullName: { $regex: escapedTerm, $options: "i" } },
+        { parentName: { $regex: escapedTerm, $options: "i" } },
+        { parentPhone: { $regex: escapedTerm, $options: "i" } },
       ];
     }
 
-    const students = await this.studentModel.find(studentFilter)
-      .populate('productPackage', 'name price')
+    const students = await this.studentModel
+      .find(studentFilter)
+      .populate("productPackage", "name price")
       .lean();
 
     // Get all classes to map student to classes
-    const classes = await this.classroomModel.find().populate('students', '_id').lean();
+    const classes = await this.classroomModel
+      .find()
+      .populate("students", "_id")
+      .lean();
 
     // Build student to classes mapping
     const studentClassMap = new Map<string, any[]>();
     for (const cls of classes) {
-      const studentIds = (cls.students || []).map((s: any) => s._id?.toString() || s.toString());
+      const studentIds = (cls.students || []).map(
+        (s: any) => s._id?.toString() || s.toString(),
+      );
       for (const studentId of studentIds) {
         if (!studentClassMap.has(studentId)) {
           studentClassMap.set(studentId, []);
@@ -149,16 +185,16 @@ export class StudentsService {
         studentClassMap.get(studentId)!.push({
           _id: cls._id,
           name: cls.name,
-          code: cls.code
+          code: cls.code,
         });
       }
     }
 
     // Get attendance counts for all students
-    const studentIds = students.map(s => new Types.ObjectId((s as any)._id));
+    const studentIds = students.map((s) => new Types.ObjectId((s as any)._id));
     const attendanceMatch: any = {
       studentId: { $in: studentIds },
-      status: 'PRESENT',
+      status: "PRESENT",
     };
     if (classId && Types.ObjectId.isValid(classId)) {
       attendanceMatch.classId = new Types.ObjectId(classId);
@@ -169,40 +205,47 @@ export class StudentsService {
       },
       {
         $group: {
-          _id: '$studentId',
-          totalAttendance: { $sum: 1 }
-        }
-      }
+          _id: "$studentId",
+          totalAttendance: { $sum: 1 },
+        },
+      },
     ]);
 
     const attendanceMap = new Map(
-      attendanceCounts.map(item => [item._id.toString(), item.totalAttendance])
+      attendanceCounts.map((item) => [
+        item._id.toString(),
+        item.totalAttendance,
+      ]),
     );
 
     // Build report data
-    const reportData = students.map(student => {
-      const studentId = (student as any)._id.toString();
-      const studentClasses = studentClassMap.get(studentId) || [];
-      const totalAttendance = attendanceMap.get(studentId) || 0;
+    const reportData = students
+      .map((student) => {
+        const studentId = (student as any)._id.toString();
+        const studentClasses = studentClassMap.get(studentId) || [];
+        const totalAttendance = attendanceMap.get(studentId) || 0;
 
-      // Filter by classId if provided
-      if (classId) {
-        const isInClass = studentClasses.some(cls => cls._id.toString() === classId);
-        if (!isInClass) return null;
-      }
+        // Filter by classId if provided
+        if (classId) {
+          const isInClass = studentClasses.some(
+            (cls) => cls._id.toString() === classId,
+          );
+          if (!isInClass) return null;
+        }
 
-      return {
-        _id: student._id,
-        studentCode: student.studentCode,
-        fullName: student.fullName,
-        age: student.age,
-        parentName: student.parentName,
-        parentPhone: student.parentPhone,
-        faceImage: student.faceImage,
-        productPackage: student.productPackage,
-        totalAttendance
-      };
-    }).filter(item => item !== null);
+        return {
+          _id: student._id,
+          studentCode: student.studentCode,
+          fullName: student.fullName,
+          age: student.age,
+          parentName: student.parentName,
+          parentPhone: student.parentPhone,
+          faceImage: student.faceImage,
+          productPackage: student.productPackage,
+          totalAttendance,
+        };
+      })
+      .filter((item) => item !== null);
 
     return reportData;
   }
@@ -212,38 +255,102 @@ export class StudentsService {
    * Columns = student info + class info + numbered session columns (Buổi 1, 2, ...).
    * Each session cell: { date, status, attendedAt, duration, teacherDisplay }.
    */
-  async getComprehensiveReport(classId?: string, searchTerm?: string, actor?: JwtPayload) {
+  async getComprehensiveReport(
+    classId?: string,
+    searchTerm?: string,
+    actor?: JwtPayload,
+  ) {
     const toSafeNumber = (value: unknown, fallback = 0): number => {
       const num = Number(value);
       return Number.isFinite(num) ? num : fallback;
     };
+    const roundMoneyToThousand = (value: number): number => {
+      if (!Number.isFinite(value) || value <= 0) return 0;
+      return Math.round(value / 1000) * 1000;
+    };
+    const roundMoneyDownToThousand = (value: number): number => {
+      if (!Number.isFinite(value) || value <= 0) return 0;
+      return Math.floor(value / 1000) * 1000;
+    };
+    const floorSessionCount = (value: number): number => {
+      if (!Number.isFinite(value) || value <= 0) return 0;
+      return Math.floor(value);
+    };
 
     const getPairKey = (studentId: any, classId: any): string =>
-      `${studentId?.toString?.() || ''}_${classId?.toString?.() || ''}`;
+      `${studentId?.toString?.() || ""}_${classId?.toString?.() || ""}`;
+
+    const getTeacherEntityId = (value: any): string =>
+      value?._id?.toString?.() || value?.toString?.() || "";
+
+    const buildTeacherDirectory = (cls: any): Map<string, any> => {
+      const teachers = new Map<string, any>();
+      const registerTeacher = (teacher: any) => {
+        const teacherId = getTeacherEntityId(teacher);
+        if (teacherId) {
+          teachers.set(teacherId, teacher);
+        }
+      };
+
+      registerTeacher((cls as any)?.teacher);
+      for (const config of (cls as any)?.studentConfigs || []) {
+        for (const slot of config?.teacherSlots || []) {
+          registerTeacher(slot?.teacherId);
+        }
+      }
+      for (const substitute of (cls as any)?.substituteTeachers || []) {
+        registerTeacher(substitute?.teacherId);
+      }
+
+      return teachers;
+    };
+
+    const getActiveSubstituteTeacherForDate = (
+      cls: any,
+      sessionDate?: Date | null,
+    ): any | null => {
+      if (!cls || !sessionDate) return null;
+      const targetTime = new Date(sessionDate).getTime();
+      if (!Number.isFinite(targetTime)) return null;
+      return (
+        ((cls as any)?.substituteTeachers || []).find((substitute: any) => {
+          const fromTime = new Date(substitute?.fromDate).getTime();
+          const toTime = new Date(substitute?.toDate).getTime();
+          return (
+            Number.isFinite(fromTime) &&
+            Number.isFinite(toTime) &&
+            targetTime >= fromTime &&
+            targetTime <= toTime
+          );
+        })?.teacherId || null
+      );
+    };
 
     const resolvePairSaleId = (student: any, cls: any): string =>
       student?.saleId?.toString?.() ||
       ((cls as any)?.sale as any)?._id?.toString?.() ||
       ((cls as any)?.sale as any)?.toString?.() ||
-      '';
+      "";
 
     const resolvePairSaleName = (student: any, cls: any): string =>
-      student?.saleName || ((cls as any)?.sale as any)?.fullName || '';
+      student?.saleName || ((cls as any)?.sale as any)?.fullName || "";
 
     const resolveDataStatus = (cls: any, pairInvoices: any[]): string => {
       const latestInvoice = pairInvoices[0];
       if (latestInvoice?.status === InvoiceStatus.CANCELLED) {
-        return 'HOAN_HOC_PHI';
+        return "HOAN_HOC_PHI";
       }
 
-      const classStatus = cls?.status || 'ACTIVE';
+      const classStatus = cls?.status || "ACTIVE";
       const totalSessions = toSafeNumber(cls?.totalSessions, 0);
       const sessionsCompleted = toSafeNumber(cls?.sessionsCompleted, 0);
 
-      if (classStatus === 'INACTIVE') return 'BAO_LUU';
-      if (classStatus === 'COMPLETED' || classStatus === 'CANCELLED') return 'KET_THUC';
-      if (totalSessions > 0 && sessionsCompleted >= totalSessions) return 'KET_THUC';
-      return 'DANG_HOC';
+      if (classStatus === "INACTIVE") return "BAO_LUU";
+      if (classStatus === "COMPLETED" || classStatus === "CANCELLED")
+        return "KET_THUC";
+      if (totalSessions > 0 && sessionsCompleted >= totalSessions)
+        return "KET_THUC";
+      return "DANG_HOC";
     };
 
     const classFilter: any = {};
@@ -256,13 +363,17 @@ export class StudentsService {
 
     const classes = await this.classroomModel
       .find(classFilter)
-      .populate('teacher', 'userCode fullName email')
-      .populate('sale', 'fullName email')
-      .populate('invoiceId', 'invoiceNumber')
-      .populate('studentConfigs.teacherSlots.teacherId', 'userCode fullName email')
+      .populate("teacher", "userCode fullName email")
+      .populate("sale", "fullName email")
+      .populate("invoiceId", "invoiceNumber")
       .populate(
-        'students',
-        'studentCode fullName age grade dateOfBirth studentBirthMonth parentBirthMonth parentName parentPhone faceImage productPackage saleId saleName approvalStatus payments',
+        "studentConfigs.teacherSlots.teacherId",
+        "userCode fullName email",
+      )
+      .populate("substituteTeachers.teacherId", "userCode fullName email")
+      .populate(
+        "students",
+        "studentCode fullName age grade level dateOfBirth studentBirthMonth parentBirthMonth parentName parentPhone faceImage productPackage saleId saleName approvalStatus payments",
       )
       .lean();
 
@@ -272,8 +383,9 @@ export class StudentsService {
 
     type Pair = { student: any; cls: any };
     const pairs: Pair[] = [];
-    const normalizedTerm = searchTerm?.trim().toLowerCase() || '';
-    const saleActorId = actor?.role === Role.SALE ? this.getActorId(actor) : null;
+    const normalizedTerm = searchTerm?.trim().toLowerCase() || "";
+    const saleActorId =
+      actor?.role === Role.SALE ? this.getActorId(actor) : null;
     for (const cls of classes) {
       const students = (cls.students || []) as any[];
       for (const student of students) {
@@ -300,11 +412,23 @@ export class StudentsService {
     }
 
     const classIds = Array.from(
-      new Set(pairs.map(({ cls }) => (cls as any)._id?.toString()).filter(Boolean)),
+      new Set(
+        pairs.map(({ cls }) => (cls as any)._id?.toString()).filter(Boolean),
+      ),
     ).map((id) => new Types.ObjectId(id as string));
-    const classById = new Map(classes.map((c) => [(c as any)._id.toString(), c]));
+    const classById = new Map(
+      classes.map((c) => [(c as any)._id.toString(), c]),
+    );
+    const teacherDirectoryByClass = new Map(
+      classes.map((cls) => [
+        (cls as any)._id.toString(),
+        buildTeacherDirectory(cls),
+      ]),
+    );
     const uniqueStudentIds = Array.from(
-      new Set(pairs.map(({ student }) => student?._id?.toString()).filter(Boolean)),
+      new Set(
+        pairs.map(({ student }) => student?._id?.toString()).filter(Boolean),
+      ),
     ).map((id) => new Types.ObjectId(id as string));
 
     const attendances = await this.attendanceModel
@@ -312,7 +436,7 @@ export class StudentsService {
         classId: { $in: classIds },
         studentId: { $in: uniqueStudentIds },
       })
-      .populate('teacherId', 'userCode fullName email')
+      .populate("teacherId", "userCode fullName email")
       .sort({ date: 1 })
       .lean();
 
@@ -331,25 +455,56 @@ export class StudentsService {
       const overflowSessions: any[] = [];
 
       for (const att of items) {
-        const cls = classById.get(att.classId?.toString() || '');
+        const cls = classById.get(att.classId?.toString() || "");
+        const attendanceDate = att.date ? new Date(att.date) : null;
         const attendanceTeacher = att.teacherId as any;
-        const teacherCode = attendanceTeacher?.userCode || '';
-        const teacherName = attendanceTeacher?.fullName || '';
+        const studentId = objectIdToString(att.studentId) || "";
+        const substituteTeacher = getActiveSubstituteTeacherForDate(
+          cls,
+          attendanceDate,
+        );
+        const configuredTeacherId = getTeacherIdForStudentAt(
+          cls,
+          studentId,
+          attendanceDate,
+        );
+        const resolvedTeacherId =
+          getTeacherEntityId(substituteTeacher) || configuredTeacherId || "";
+        const teacherDirectory =
+          teacherDirectoryByClass.get(att.classId?.toString() || "") ||
+          new Map<string, any>();
+        const resolvedTeacher =
+          (resolvedTeacherId
+            ? teacherDirectory.get(resolvedTeacherId)
+            : null) || attendanceTeacher;
+        const teacherCode =
+          resolvedTeacher?.userCode || attendanceTeacher?.userCode || "";
+        const teacherName =
+          resolvedTeacher?.fullName || attendanceTeacher?.fullName || "";
         const teacherDisplay =
-          [teacherCode, teacherName].filter(Boolean).join(' - ') ||
+          [teacherCode, teacherName].filter(Boolean).join(" - ") ||
+          resolvedTeacher?.email ||
           attendanceTeacher?.email ||
           teacherName ||
           teacherCode ||
-          '';
+          "";
+        const durationConfig = getDurationForStudentAt(
+          cls,
+          studentId,
+          attendanceDate,
+        );
         const sessionInfo = {
-          date: att.date ? new Date(att.date).toISOString().split('T')[0] : null,
+          date: att.date
+            ? new Date(att.date).toISOString().split("T")[0]
+            : null,
           status: att.status || null,
           attendedAt: att.attendedAt || null,
           duration: toSafeNumber(
             att.sessionDuration,
-            toSafeNumber((cls as any)?.sessionDuration, toSafeNumber((cls as any)?.baseDuration, 0)),
+            durationConfig.sessionDuration,
           ),
-          teacherCode: teacherCode || attendanceTeacher?.email || teacherName || '',
+          teacherCode:
+            teacherCode || attendanceTeacher?.email || teacherName || "",
           teacherName,
           teacherDisplay,
           sessionIndex: toSafeNumber(att.sessionIndex, 0) || null,
@@ -381,7 +536,9 @@ export class StudentsService {
         classId: { $in: classIds },
         studentId: { $in: uniqueStudentIds },
       })
-      .select('invoiceNumber classId studentId status createdAt')
+      .select(
+        "invoiceNumber classId studentId status createdAt referenceDuration sessionsRemaining bonusSessionsRemaining trialSessionsRemaining",
+      )
       .sort({ createdAt: -1 })
       .lean();
 
@@ -396,9 +553,12 @@ export class StudentsService {
 
     const invoiceByClass = new Map<string, string>();
     for (const cls of classes) {
+      const snapshotInvoiceNumber = String(
+        (cls as any).pricingSnapshot?.sourceInvoiceNumber || "",
+      ).trim();
       invoiceByClass.set(
         (cls as any)._id.toString(),
-        ((cls as any).invoiceId as any)?.invoiceNumber || '',
+        ((cls as any).invoiceId as any)?.invoiceNumber || snapshotInvoiceNumber,
       );
     }
 
@@ -407,39 +567,93 @@ export class StudentsService {
       const key = getPairKey(student._id, (cls as any)._id);
       const sessions = attendanceLookup.get(key) || [];
       const pairInvoices = invoicesByPair.get(key) || [];
-      const activeInvoice = pairInvoices.find(
-        (invoice) => ![InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED].includes(invoice?.status),
+      const activePairInvoices = pairInvoices.filter(
+        (invoice) =>
+          ![InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED].includes(
+            invoice?.status,
+          ),
       );
+      const activeInvoice = activePairInvoices[0];
       const latestInvoice = pairInvoices[0];
 
-      const attendedCount = sessions.filter((s) => s.status === 'PRESENT').length;
-      const absentCount = sessions.filter((s) => s.status === 'ABSENT').length;
+      const attendedCount = sessions.filter(
+        (s) => s.status === "PRESENT",
+      ).length;
+      const absentCount = sessions.filter((s) => s.status === "ABSENT").length;
 
-      const classMode = (cls as any).classMode || 'ONLINE';
+      const classMode = (cls as any).classMode || "ONLINE";
       const snapshot = (cls as any).pricingSnapshot || {};
       const teacherPayPerSession = toSafeNumber(
         snapshot.teacherPayPerSession,
-        toSafeNumber((cls as any).teacherPayPerSession, toSafeNumber((cls as any).teacherSalaryCost, 0)),
+        toSafeNumber(
+          (cls as any).teacherPayPerSession,
+          toSafeNumber((cls as any).teacherSalaryCost, 0),
+        ),
       );
       const teacherPayPerStudent = toSafeNumber(
         snapshot.teacherPayPerStudent,
         toSafeNumber((cls as any).teacherPayPerStudent, 0),
       );
-      const teacherSalary = classMode === 'OFFLINE' ? teacherPayPerStudent : teacherPayPerSession;
-      const teacherSalaryType = classMode === 'OFFLINE' ? 'PER_STUDENT' : 'PER_SESSION';
+      const teacherSalary = roundMoneyDownToThousand(
+        classMode === "OFFLINE" ? teacherPayPerStudent : teacherPayPerSession,
+      );
+      const teacherSalaryType =
+        classMode === "OFFLINE" ? "PER_STUDENT" : "PER_SESSION";
 
       const classTeacher = (cls as any).teacher as any;
-      const currentTeacherId = getCurrentTeacherIdForStudent(cls, student._id?.toString?.() || '');
+      const currentTeacherId = getTeacherIdForStudentAt(
+        cls,
+        student._id?.toString?.() || "",
+      );
       const configuredTeacher = ((cls as any).studentConfigs || [])
         .flatMap((config: any) => config?.teacherSlots || [])
         .map((slot: any) => slot?.teacherId)
-        .find((teacher: any) => teacher?._id?.toString?.() === currentTeacherId) as any;
+        .find(
+          (teacher: any) => teacher?._id?.toString?.() === currentTeacherId,
+        ) as any;
       const displayTeacher = configuredTeacher || classTeacher;
-      const classTeacherCode = displayTeacher?.userCode || displayTeacher?.email || '';
-      const classTeacherName = displayTeacher?.fullName || '';
-      const teacherCodeAndName = [classTeacherCode, classTeacherName].filter(Boolean).join(' - ');
-      const currentDuration = getCurrentDurationForStudent(cls, student._id?.toString?.() || '');
-      const totalSessions = toSafeNumber(currentDuration.totalSessions, toSafeNumber((cls as any).totalSessions, 0));
+      const classTeacherCode =
+        displayTeacher?.userCode || displayTeacher?.email || "";
+      const classTeacherName = displayTeacher?.fullName || "";
+      const teacherCodeAndName = [classTeacherCode, classTeacherName]
+        .filter(Boolean)
+        .join(" - ");
+      const currentDuration = getDurationForStudentAt(
+        cls,
+        student._id?.toString?.() || "",
+      );
+      const fallbackReferenceDuration =
+        toSafeNumber(
+          snapshot.referenceDuration,
+          toSafeNumber((cls as any).baseDuration, 60),
+        ) || 60;
+      const remainingMinutes = activePairInvoices.reduce((sum, invoice) => {
+        const referenceDuration =
+          toSafeNumber(
+            (invoice as any)?.referenceDuration,
+            fallbackReferenceDuration,
+          ) || fallbackReferenceDuration;
+        return (
+          sum +
+          (toSafeNumber((invoice as any)?.sessionsRemaining, 0) +
+            toSafeNumber((invoice as any)?.bonusSessionsRemaining, 0) +
+            toSafeNumber((invoice as any)?.trialSessionsRemaining, 0)) *
+            referenceDuration
+        );
+      }, 0);
+      const storedTotalSessions = floorSessionCount(toSafeNumber(
+        currentDuration.totalSessions,
+        toSafeNumber((cls as any).totalSessions, 0),
+      ));
+      const projectedTotalSessions =
+        sessions.length +
+        (currentDuration.sessionDuration > 0
+          ? remainingMinutes / currentDuration.sessionDuration
+          : 0);
+      const totalSessions =
+        projectedTotalSessions > 0
+          ? floorSessionCount(projectedTotalSessions)
+          : storedTotalSessions;
       const sessionsCompleted = sessions.length;
       const saleId = resolvePairSaleId(student, cls);
       const saleName = resolvePairSaleName(student, cls);
@@ -448,18 +662,18 @@ export class StudentsService {
 
       return {
         studentId: student._id?.toString(),
-        studentCode: student.studentCode || '',
-        fullName: student.fullName || '',
+        studentCode: student.studentCode || "",
+        fullName: student.fullName || "",
         age: student.age || 0,
-        parentName: student.parentName || '',
-        parentPhone: student.parentPhone || '',
-        faceImage: student.faceImage || '',
+        parentName: student.parentName || "",
+        parentPhone: student.parentPhone || "",
+        faceImage: student.faceImage || "",
         classId: (cls as any)._id?.toString(),
-        classCode: cls.code || '',
-        className: cls.name || '',
-        subject: cls.subject || '',
-        grade: cls.grade || '',
-        level: student.grade || cls.grade || '',
+        classCode: cls.code || "",
+        className: cls.name || "",
+        subject: cls.subject || "",
+        grade: cls.grade || "",
+        level: student.level || student.grade || cls.grade || "",
         dateOfBirth: student.dateOfBirth || null,
         studentBirthMonth: student.studentBirthMonth || null,
         parentBirthMonth: student.parentBirthMonth || null,
@@ -473,8 +687,8 @@ export class StudentsService {
           activeInvoice?.invoiceNumber ||
           latestInvoice?.invoiceNumber ||
           invoiceByClass.get((cls as any)._id?.toString()) ||
-          '',
-        pricePerSession: cls.pricePerSession || 0,
+          "",
+        pricePerSession: roundMoneyToThousand(toSafeNumber(cls.pricePerSession, 0)),
         totalSessions,
         sessionsCompleted,
         saleId,
@@ -497,19 +711,19 @@ export class StudentsService {
     if (actor?.role === Role.SALE) {
       const actorId = this.getActorId(actor);
       if (!actorId) {
-        throw new ForbiddenException('Khong xac dinh duoc sale');
+        throw new ForbiddenException("Khong xac dinh duoc sale");
       }
       createStudentDto.saleId = actorId;
-      createStudentDto.saleName = actor.fullName || '';
+      createStudentDto.saleName = actor.fullName || "";
     }
     const student = new this.studentModel(createStudentDto);
     return student.save();
   }
 
   async update(id: string, updateStudentDto: any, actor?: JwtPayload) {
-    const existing = await this.studentModel.findById(id).select('saleId');
+    const existing = await this.studentModel.findById(id).select("saleId");
     if (!existing) {
-      throw new NotFoundException('Hoc sinh khong ton tai');
+      throw new NotFoundException("Hoc sinh khong ton tai");
     }
 
     if (updateStudentDto.parentUserId !== undefined) {
@@ -521,21 +735,25 @@ export class StudentsService {
     if (actor?.role === Role.SALE) {
       const actorId = this.getActorId(actor);
       if (!actorId) {
-        throw new ForbiddenException('Khong xac dinh duoc sale');
+        throw new ForbiddenException("Khong xac dinh duoc sale");
       }
       if (existing.saleId?.toString() !== actorId) {
-        throw new ForbiddenException('Ban khong phu trach hoc sinh nay');
+        throw new ForbiddenException("Ban khong phu trach hoc sinh nay");
       }
       if (updateStudentDto.saleId && updateStudentDto.saleId !== actorId) {
-        throw new ForbiddenException('SALE khong duoc chuyen ownership hoc sinh');
+        throw new ForbiddenException(
+          "SALE khong duoc chuyen ownership hoc sinh",
+        );
       }
       updateStudentDto.saleId = actorId;
       if (!updateStudentDto.saleName) {
-        updateStudentDto.saleName = actor.fullName || '';
+        updateStudentDto.saleName = actor.fullName || "";
       }
     }
 
-    return this.studentModel.findByIdAndUpdate(id, updateStudentDto, { new: true });
+    return this.studentModel.findByIdAndUpdate(id, updateStudentDto, {
+      new: true,
+    });
   }
 
   async remove(id: string) {
@@ -545,7 +763,7 @@ export class StudentsService {
     // Pre-check active sessions (fast fail before starting transaction)
     const activeSessions = await this.sessionModel.countDocuments({
       studentId: new Types.ObjectId(id),
-      status: { $in: ['SCHEDULED', 'TEACHER_COMPLETED', 'PARENT_CONFIRMED'] },
+      status: { $in: ["SCHEDULED", "TEACHER_COMPLETED", "PARENT_CONFIRMED"] },
     });
     if (activeSessions > 0) {
       throw new BadRequestException(
@@ -560,10 +778,14 @@ export class StudentsService {
         const studentObjectId = new Types.ObjectId(id);
 
         // Re-check active sessions inside transaction to prevent race condition
-        const activeSessionsInTx = await this.sessionModel.countDocuments({
-          studentId: studentObjectId,
-          status: { $in: ['SCHEDULED', 'TEACHER_COMPLETED', 'PARENT_CONFIRMED'] },
-        }).session(session);
+        const activeSessionsInTx = await this.sessionModel
+          .countDocuments({
+            studentId: studentObjectId,
+            status: {
+              $in: ["SCHEDULED", "TEACHER_COMPLETED", "PARENT_CONFIRMED"],
+            },
+          })
+          .session(session);
         if (activeSessionsInTx > 0) {
           throw new BadRequestException(
             `Không thể xóa học sinh đang có ${activeSessionsInTx} buổi học chưa hoàn tất`,
@@ -578,13 +800,18 @@ export class StudentsService {
         );
 
         // Delete attendance records
-        await this.attendanceModel.deleteMany({ studentId: studentObjectId }, { session });
+        await this.attendanceModel.deleteMany(
+          { studentId: studentObjectId },
+          { session },
+        );
 
         // Finally delete the student
         await this.studentModel.findByIdAndDelete(id, { session });
       });
 
-      this.logger.log(`Student ${id} deleted successfully (atomic transaction)`);
+      this.logger.log(
+        `Student ${id} deleted successfully (atomic transaction)`,
+      );
       return { deletedCount: 1 };
     } finally {
       await session.endSession();
@@ -592,9 +819,11 @@ export class StudentsService {
   }
 
   async findOne(id: string, actor?: JwtPayload) {
-    const student = await this.studentModel.findById(id).populate('productPackage', 'name price');
+    const student = await this.studentModel
+      .findById(id)
+      .populate("productPackage", "name price");
     if (!student) {
-      throw new NotFoundException('Hoc sinh khong ton tai');
+      throw new NotFoundException("Hoc sinh khong ton tai");
     }
 
     const actorId = this.getActorId(actor);
@@ -602,27 +831,27 @@ export class StudentsService {
     // PARENT can only view their own children
     if (actor?.role === Role.PARENT) {
       if (!actorId || student.parentUserId?.toString() !== actorId) {
-        throw new NotFoundException('Hoc sinh khong ton tai');
+        throw new NotFoundException("Hoc sinh khong ton tai");
       }
     }
 
     if (actor?.role === Role.SALE) {
       if (!actorId || student.saleId?.toString() !== actorId) {
-        throw new NotFoundException('Hoc sinh khong ton tai');
+        throw new NotFoundException("Hoc sinh khong ton tai");
       }
     }
 
     return student;
   }
 
-  async approve(id: string, action: 'APPROVE' | 'REJECT', userId: string) {
+  async approve(id: string, action: "APPROVE" | "REJECT", userId: string) {
     const student = await this.studentModel.findById(id);
-    if (!student) throw new NotFoundException('Học sinh không tồn tại');
-    if (student.approvalStatus !== 'PENDING') {
-      throw new BadRequestException('Học sinh đã được xử lý trước đó');
+    if (!student) throw new NotFoundException("Học sinh không tồn tại");
+    if (student.approvalStatus !== "PENDING") {
+      throw new BadRequestException("Học sinh đã được xử lý trước đó");
     }
     const updateData: any = {
-      approvalStatus: action === 'APPROVE' ? 'APPROVED' : 'REJECTED',
+      approvalStatus: action === "APPROVE" ? "APPROVED" : "REJECTED",
       approvedBy: userId,
       approvedAt: new Date(),
     };
@@ -630,15 +859,16 @@ export class StudentsService {
   }
 
   async findPendingApproval() {
-    return this.studentModel.find({ approvalStatus: 'PENDING' })
-      .populate('productPackage', 'name price')
+    return this.studentModel
+      .find({ approvalStatus: "PENDING" })
+      .populate("productPackage", "name price")
       .sort({ createdAt: -1 });
   }
 
   /** @deprecated Dangerous — disabled. Use individual delete instead. */
   async clearAllStudentData() {
     throw new ForbiddenException(
-      'Bulk deletion is disabled. Please delete students individually to ensure data integrity.',
+      "Bulk deletion is disabled. Please delete students individually to ensure data integrity.",
     );
   }
 }

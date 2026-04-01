@@ -9,6 +9,7 @@ export interface StudentItem {
   fullName: string;
   age: number;
   grade?: string;
+  level?: string;
   studentBirthMonth?: number;
   parentBirthMonth?: number;
   parentUserId?: string;

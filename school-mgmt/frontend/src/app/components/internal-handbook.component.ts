@@ -161,6 +161,7 @@ const HANDBOOK_CONFIG: Record<string, HandbookConfig> = {
         summary: 'Đối chiếu dòng tiền, công nợ và các yêu cầu cần giám đốc chốt.',
         steps: [
           'Mở Chờ duyệt để xử lý các yêu cầu phê duyệt phát sinh.',
+          'Với yêu cầu đổi buổi học, đọc rõ tác động học phí và lương giáo viên trước khi chốt.',
           'Mở Financial Control để kiểm tra luồng tiền và các chỉ số tài chính.',
           'Khi cần truy nguồn gốc thay đổi, mở Audit log trước khi ra quyết định cuối.',
         ],
@@ -316,6 +317,7 @@ const HANDBOOK_CONFIG: Record<string, HandbookConfig> = {
     guardrails: [
       'Vận hành được quản lý lớp, session, attendance, ticket và điều phối giáo viên, nhưng không được chuyển ví.',
       'Danh sách giáo viên và sale dùng từ directory nội bộ, không cần quyền quản lý user của giám đốc.',
+      'OPS được duyệt hoặc từ chối yêu cầu đổi buổi học, nhưng phải kiểm tra kỹ tác động tài chính trước khi xác nhận.',
       'Khi phát sinh chạm đến tiền hoặc chính sách, phải bàn giao cho kế toán hoặc giám đốc.',
     ],
     scenarios: [
@@ -334,6 +336,7 @@ const HANDBOOK_CONFIG: Record<string, HandbookConfig> = {
         summary: 'Theo dõi attendance, tài liệu và trạng thái lớp đang diễn ra.',
         steps: [
           'Kiểm tra attendance hoặc attendance report khi cần truy vết buổi học.',
+          'Nếu Sale gửi yêu cầu đổi buổi học, mở Chờ duyệt để rà giáo viên mới và tác động lương trước khi xử lý.',
           'Hỗ trợ giáo viên bằng ticket, tài liệu và điều phối thay thế khi có rủi ro.',
           'Giữ ticket là kênh chính để đóng vòng các phát sinh vận hành.',
         ],
@@ -619,6 +622,7 @@ const HANDBOOK_CONFIG: Record<string, HandbookConfig> = {
         steps: [
           'Tạo Order khi lead đã đủ điều kiện chốt.',
           'Kiểm tra lại tình trạng đơn và hóa đơn liên quan sau khi tạo.',
+          'Khi phụ huynh cần đổi giáo viên hoặc thời lượng buổi học, vào Sessions để tạo yêu cầu thay đổi thay vì nhắn miệng.',
           'Bàn giao đầy đủ thông tin cho OPS để xếp lớp hoặc triển khai tiếp.',
         ],
         route: '/app/orders',
@@ -818,6 +822,7 @@ const ROLE_PLAYBOOKS: Record<string, HandbookPlaybook> = {
         description: 'Mục tiêu của giám đốc là ra quyết định sau khi đã có đối chiếu, không duyệt cảm tính.',
         steps: [
           'Mở Chờ duyệt để xem danh sách yêu cầu đang đợi xác nhận.',
+          'Nếu là yêu cầu đổi buổi học, đối chiếu thêm học phí và lương giáo viên ngay trên thẻ chờ duyệt.',
           'Nếu nghiệp vụ chạm đến tiền, mở thêm Financial Control để kiểm tra số nền.',
           'Chỉ chốt khi lý do, chứng từ và dữ liệu liên quan đã đủ rõ.',
         ],
@@ -945,6 +950,7 @@ const ROLE_PLAYBOOKS: Record<string, HandbookPlaybook> = {
         steps: [
           'Xem dashboard vận hành để nắm tình hình tổng quan.',
           'Kiểm tra attendance hoặc sessions nếu thấy buổi học có nguy cơ chậm.',
+          'Vào Chờ duyệt khi có yêu cầu đổi buổi học để chốt nhanh trước giờ dạy.',
           'Mở ticket để kéo các bên liên quan vào xử lý sớm.',
         ],
         successSignal: 'Phát sinh được ghi nhận sớm, có ticket và có người chịu trách nhiệm xử lý.',
@@ -1133,6 +1139,7 @@ const ROLE_PLAYBOOKS: Record<string, HandbookPlaybook> = {
         steps: [
           'Chỉ tạo order khi lead đã đủ điều kiện.',
           'Kiểm tra lại thông tin bàn giao trước khi lưu order.',
+          'Nếu cần đổi giáo viên hoặc thời lượng cho một buổi chưa diễn ra, tạo Session Change Request trên màn Sessions.',
           'Sau khi tạo, theo dõi tiếp tình trạng đơn và phối hợp với OPS nếu cần.',
         ],
         successSignal: 'Order tạo xong là OPS có thể tiếp nhận mà không phải hỏi lại quá nhiều.',

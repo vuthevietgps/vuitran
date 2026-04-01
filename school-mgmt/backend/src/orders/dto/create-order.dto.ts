@@ -1,7 +1,22 @@
-import { IsString, IsNotEmpty, IsOptional, IsNumber, IsArray, IsEnum, ValidateNested, Min, IsMongoId } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsMongoId,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { OrderType, PaymentPlan, LeadSource } from '../schemas/order.schema';
 import { TrackingAttributionDto } from '../../marketing-attribution/dto/tracking-attribution.dto';
+import { InvoiceCourseStatus } from '../../invoices/schemas/invoice.schema';
 
 export class OrderItemDto {
   @IsString()
@@ -17,9 +32,19 @@ export class OrderItemDto {
   sessions!: number;
 
   @IsNumber()
+  @Min(0)
+  @IsOptional()
+  invoiceSessions?: number;
+
+  @IsNumber()
   @Min(15)
   @IsOptional()
   sessionDuration?: number;
+
+  @IsNumber()
+  @Min(15)
+  @IsOptional()
+  baseDuration?: number;
 
   @IsNumber()
   @Min(0)
@@ -29,6 +54,20 @@ export class OrderItemDto {
   @Min(0)
   amount!: number;
 
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  bonusSessions?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  trialSessions?: number;
+
+  @IsEnum(InvoiceCourseStatus)
+  @IsOptional()
+  courseStatus?: string;
+
   @IsString()
   @IsOptional()
   teachingMode?: string;
@@ -37,9 +76,49 @@ export class OrderItemDto {
   @IsOptional()
   preferredSchedule?: string;
 
-  @IsString()
+  @IsMongoId()
+  @IsOptional()
+  selectedClassId?: string;
+
+  @IsMongoId()
   @IsOptional()
   preferredTeacherId?: string;
+
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  paymentRound?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  teacherPayPerSession?: number;
+
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  teacherPayPerStudent?: number;
+
+  @IsString()
+  @IsOptional()
+  subject?: string;
+
+  @IsString()
+  @IsOptional()
+  learningGoals?: string;
+
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  maxStudents?: number;
+
+  @IsString()
+  @IsOptional()
+  invoiceDescription?: string;
+
+  @IsString()
+  @IsOptional()
+  invoiceNumber?: string;
 
   @IsString()
   @IsOptional()
@@ -67,8 +146,24 @@ export class CreateOrderDto {
   parentUserId?: string;
 
   @IsString()
+  @IsOptional()
+  parentUserCode?: string;
+
+  @IsString()
+  @IsOptional()
+  parentAddress?: string;
+
+  @IsString()
+  @IsOptional()
+  parentFacebookLink?: string;
+
+  @IsString()
   @IsNotEmpty()
   studentName!: string;
+
+  @IsString()
+  @IsOptional()
+  studentCode?: string;
 
   @IsString()
   @IsOptional()
@@ -77,6 +172,35 @@ export class CreateOrderDto {
   @IsString()
   @IsOptional()
   studentGrade?: string;
+
+  @IsString()
+  @IsOptional()
+  studentLevel?: string;
+
+  @IsInt()
+  @Min(3)
+  @Max(25)
+  @IsOptional()
+  studentAge?: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  @IsOptional()
+  studentBirthMonth?: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  @IsOptional()
+  parentBirthMonth?: number;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^(https?:\/\/|\/uploads\/|data:image\/)/, {
+    message: 'studentFaceImage phai la URL, upload path, hoac base64 image',
+  })
+  studentFaceImage?: string;
 
   @IsString()
   @IsOptional()
@@ -111,6 +235,17 @@ export class CreateOrderDto {
   @IsEnum(PaymentPlan)
   @IsOptional()
   paymentPlan?: string;
+
+  @IsDateString()
+  @IsOptional()
+  paymentDate?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^(https?:\/\/|\/uploads\/|data:image\/)/, {
+    message: 'receiptImage phai la URL, upload path, hoac base64 image',
+  })
+  receiptImage?: string;
 
   @IsNumber()
   @Min(0)

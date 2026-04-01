@@ -27,6 +27,7 @@ import { PendingApprovalsModule } from './pending-approvals/pending-approvals.mo
 import { ExportModule } from './export/export.module';
 import { LeadsModule } from './leads/leads.module';
 import { OrdersModule } from './orders/orders.module';
+import { TrialEnrollmentsModule } from './trial-enrollments/trial-enrollments.module';
 import { ExpensesModule } from './expenses/expenses.module';
 import { FinancialControlModule } from './financial-control/financial-control.module';
 import { LoansModule } from './loans/loans.module';
@@ -40,7 +41,9 @@ import { LandingPagesModule } from './landing-pages/landing-pages.module';
 import { ReportTemplatesModule } from './report-templates/report-templates.module';
 import { ReportsModule } from './reports/reports.module';
 import { TasksModule } from './tasks/tasks.module';
-import { TrialEnrollmentsModule } from './trial-enrollments/trial-enrollments.module';
+import { SupplierQuotesModule } from './supplier-quotes/supplier-quotes.module';
+import { SupplierPaymentsModule } from './supplier-payments/supplier-payments.module';
+import { AgentsModule } from './agents/agents.module';
 
 const redisEnabled = (process.env.REDIS_ENABLED ?? 'true').toLowerCase() !== 'false';
 
@@ -141,6 +144,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     ExportModule,
     LeadsModule,
     OrdersModule,
+    TrialEnrollmentsModule,
     ExpensesModule,
     FinancialControlModule,
     LoansModule,
@@ -154,7 +158,9 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     ReportTemplatesModule,
     ReportsModule,
     TasksModule,
-    TrialEnrollmentsModule,
+    SupplierQuotesModule,
+    SupplierPaymentsModule,
+    AgentsModule,
   ],
   providers: [
     AdminSeeder,

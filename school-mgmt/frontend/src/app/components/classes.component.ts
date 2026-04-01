@@ -2,8 +2,11 @@ import { CommonModule } from '@angular/common';
 import { Component, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
+  ClassDurationPreview,
+  ClassEditHistoryEntry,
   ClassItem,
   ClassMember,
+  ClassPayload,
   ClassService,
   StudentClassConfig,
   StudentDurationSlot,
@@ -60,14 +63,14 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             class="request-status pending"
             *ngIf="c.pendingSaleUpdate?.status === 'PENDING'">
             {{ c.pendingSaleUpdate?.requestType === 'DURATION_CHANGE'
-              ? 'Sale dang cho duyet thay doi giao vien/thoi luong tu cac buoi tiep theo'
+              ? 'Sale dang cho Director duyet doi thoi luong'
               : 'Sale dang cho duyet sua lop' }}
           </small>
           <small
             class="request-status rejected"
             *ngIf="c.pendingSaleUpdate?.status === 'REJECTED'">
             {{ c.pendingSaleUpdate?.requestType === 'DURATION_CHANGE'
-              ? 'Yeu cau thay doi giao vien/thoi luong da bi tu choi'
+              ? 'Yeu cau doi thoi luong da bi tu choi'
               : 'Yeu cau sua lop da bi tu choi' }}
           </small>
         </td>
@@ -98,12 +101,11 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
         <td class="actions-cell">
           <ng-container *ngIf="canManage()">
             <button class="ghost" (click)="edit(c)">Sua</button>
-            <button class="approve" (click)="approvePendingUpdate(c)" *ngIf="canReviewPendingUpdate(c)">Phe duyet</button>
-            <button class="reject" (click)="rejectPendingUpdate(c)" *ngIf="canReviewPendingUpdate(c)">Tu choi</button>
             <button class="danger" (click)="remove(c)" *ngIf="isDirector()">Xoa</button>
           </ng-container>
           <ng-container *ngIf="isSale() && canSaleAssign(c)">
-            <button class="ghost" (click)="edit(c)">Sua</button>
+            <button class="ghost" (click)="edit(c, 'config')">Sua GV/luong</button>
+            <button class="ghost" (click)="edit(c, 'duration')">Sua thoi luong</button>
             <button class="ghost" (click)="edit(c, 'assign')">Chon hoc vien</button>
           </ng-container>
         </td>
@@ -138,12 +140,36 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
           </div>
         </ng-container>
 
+        <label *ngIf="isSaleOfflineExistingMode()">Lop offline san co
+          <select
+            name="existingOfflineClassId"
+            [(ngModel)]="form.existingOfflineClassId"
+            (ngModelChange)="onSaleOfflineClassChange($event)"
+            required>
+            <option value="">-- Chon lop offline --</option>
+            <option *ngFor="let classItem of saleOfflineOptions()" [value]="classItem._id">
+              {{classItem.name}} ({{classItem.code}}) - GV: {{classItem.teacher?.fullName || 'Chua gan'}} - Si so: {{classItem.studentCount ?? classItem.students?.length ?? 0}}
+            </option>
+          </select>
+        </label>
+        <small class="field-hint" *ngIf="isSaleOfflineExistingMode()">
+          Sale chi chon lop offline da co san va them hoc sinh theo hoa don vao lop nay.
+        </small>
+        <p class="muted sale-empty" *ngIf="isSaleOfflineExistingMode() && !saleOfflineOptions().length">
+          Chua co lop offline nao san sang de them hoc sinh.
+        </p>
+        <div class="invoice-summary" *ngIf="isSaleOfflineExistingMode() && selectedSaleOfflineClass() as offlineClass">
+          <p><strong>Lop da chon:</strong> {{offlineClass.name}} ({{offlineClass.code}})</p>
+          <p><strong>Giao vien:</strong> {{offlineClass.teacher?.fullName || 'Chua gan'}}</p>
+          <p><strong>Si so hien tai:</strong> {{offlineClass.studentCount ?? offlineClass.students?.length ?? 0}}</p>
+        </div>
+
         <label>Ten lop
           <input
             name="name"
             [(ngModel)]="form.name"
             required
-            [readonly]="isSaleAssignMode()" />
+            [readonly]="isSaleAssignMode() || isSaleDurationEditMode() || isSaleConfigEditMode() || isSaleOfflineExistingMode()" />
         </label>
 
         <label *ngIf="canConfigureClassForm()">Loai lop
@@ -151,7 +177,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             name="classMode"
             [(ngModel)]="form.classMode"
             (ngModelChange)="onClassModeChange()"
-            [disabled]="isSaleAssignMode() || isSaleConfigEditMode()">
+            [disabled]="isSaleDurationEditMode() || isSaleConfigEditMode()">
             <option value="ONLINE">ONLINE</option>
             <option value="OFFLINE">OFFLINE</option>
           </select>
@@ -161,7 +187,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
           <select
             name="productPackageId"
             [(ngModel)]="form.productPackageId"
-            [disabled]="isSaleAssignMode()">
+            [disabled]="isSaleDurationEditMode() || isSaleConfigEditMode() || isSaleOfflineExistingMode()">
             <option value="">-- Chon goi san pham --</option>
             <option *ngFor="let product of availableProductPackages()" [value]="product._id">
               {{product.name}}{{product.code ? ' (' + product.code + ')' : ''}}
@@ -202,13 +228,13 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             <input
               name="code"
               [(ngModel)]="form.code"
-              [readonly]="isSaleCreateMode() || isSaleAssignMode() || isSaleConfigEditMode()"
+              [readonly]="isSaleCreateMode() || isSaleAssignMode() || isSaleDurationEditMode() || isSaleConfigEditMode()"
             />
           </ng-template>
         </label>
 
         <label>Giao vien phu trach
-          <select name="teacherId" [(ngModel)]="form.teacherId" required [disabled]="isSaleAssignMode()">
+          <select name="teacherId" [(ngModel)]="form.teacherId" required [disabled]="isSaleAssignMode() || isSaleDurationEditMode() || isSaleOfflineExistingMode()">
             <option value="" disabled [selected]="!form.teacherId">-- Chon giao vien --</option>
             <option *ngFor="let t of teachers()" [value]="t._id">{{t.fullName}} ({{t.email}})</option>
           </select>
@@ -228,8 +254,14 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 
         <div class="financial-info" *ngIf="canConfigureClassForm()">
           <h4>Thiet lap gia theo buoi</h4>
+          <p class="mode-hint" *ngIf="isSaleDurationEditMode()">
+            Sale chi duoc gui yeu cau doi thoi luong. Director duyet xong, cac buoi tao sau do se tinh theo snapshot moi cua lop nay.
+          </p>
           <p class="mode-hint" *ngIf="isSaleConfigEditMode()">
-            Sale co the cap nhat thong tin lop hoc. Neu doi giao vien, luong GV hoac thoi luong buoi hoc, he thong se tao yeu cau cho duyet va chi ap dung cho cac buoi tu sau khi duyet.
+            Sale chi gui yeu cau doi giao vien phu trach va luong co so giao vien. Ma lop va du lieu diem danh cu duoc giu nguyen.
+          </p>
+          <p class="mode-hint" *ngIf="isSaleOfflineExistingMode()">
+            OFFLINE san co: Sale khong tao lop moi va khong sua cau hinh lop, chi them hoc sinh vao lop da chon.
           </p>
           <div class="pricing-grid">
             <label>{{ form.classMode === 'OFFLINE' ? 'Don gia thu / HS / buoi (VND)' : 'Gia thu HS / buoi (VND)' }}
@@ -239,7 +271,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                 type="number"
                 min="0"
                 step="10000"
-                [readonly]="isSaleAssignMode()" />
+                [readonly]="isSaleDurationEditMode() || isSaleConfigEditMode() || isSaleOfflineExistingMode()" />
             </label>
             <label *ngIf="form.classMode === 'ONLINE'">Luong GV / buoi (VND)
               <input
@@ -248,7 +280,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                 type="number"
                 min="0"
                 step="10000"
-                [readonly]="isSaleAssignMode()" />
+                [readonly]="isSaleDurationEditMode() || isSaleOfflineExistingMode()" />
             </label>
             <label *ngIf="form.classMode === 'OFFLINE'">Luong GV / HS / buoi (VND)
               <input
@@ -257,13 +289,13 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                 type="number"
                 min="0"
                 step="10000"
-                [readonly]="isSaleAssignMode()" />
+                [readonly]="isSaleDurationEditMode() || isSaleOfflineExistingMode()" />
             </label>
             <label>Thoi luong co so (phut)
               <select
                 name="baseDuration"
                 [(ngModel)]="form.baseDuration"
-                [disabled]="isSaleAssignMode()">
+                [disabled]="isSaleConfigEditMode() || isSaleDurationEditMode() || isSaleOfflineExistingMode()">
                 <option *ngFor="let d of standardDurations" [ngValue]="d">{{d}} phut</option>
               </select>
             </label>
@@ -274,7 +306,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                 type="number"
                 min="15"
                 step="5"
-                [readonly]="isSaleAssignMode()" />
+                [readonly]="isSaleConfigEditMode() || isSaleOfflineExistingMode()" />
             </label>
           </div>
 
@@ -297,9 +329,9 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                 <tr *ngFor="let d of standardDurations" [class.active-row]="d === form.sessionDuration">
                   <td>{{d}} phut <span class="badge" *ngIf="d === form.baseDuration">co so</span></td>
                   <td>{{formatCurrency(calcProportional(form.pricePerSession, d))}}</td>
-                  <td>{{formatCurrency(calcProportional(teacherBaseForForm(), d))}}</td>
-                  <td [class]="getProfitClass(calcProportional(form.pricePerSession, d) - calcProportional(teacherBaseForForm(), d))">
-                    {{formatCurrency(calcProportional(form.pricePerSession, d) - calcProportional(teacherBaseForForm(), d))}}
+                  <td>{{formatTeacherCurrency(calcTeacherProportional(teacherBaseForForm(), d))}}</td>
+                  <td [class]="getProfitClass(calcProportional(form.pricePerSession, d) - calcTeacherProportional(teacherBaseForForm(), d))">
+                    {{formatCurrency(calcProportional(form.pricePerSession, d) - calcTeacherProportional(teacherBaseForForm(), d))}}
                   </td>
                 </tr>
               </tbody>
@@ -311,17 +343,17 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
               <p><strong>So hoc vien:</strong> {{selectedStudents().length}}</p>
               <p><strong>Gia co so ({{form.baseDuration}}p):</strong> {{formatCurrency(form.pricePerSession)}}</p>
               <p><strong>Gia thuc te ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration))}}</p>
-              <p><strong>Luong GV thuc te ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.teacherPayPerSession, form.sessionDuration))}}</p>
-              <p [class]="getProfitClass(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))">
-                <strong>Loi nhuan/buoi:</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration) - calcProportional(form.teacherPayPerSession, form.sessionDuration))}}
+              <p><strong>Luong GV thuc te ({{form.sessionDuration}}p):</strong> {{formatTeacherCurrency(calcTeacherProportional(form.teacherPayPerSession, form.sessionDuration))}}</p>
+              <p [class]="getProfitClass(calcProportional(form.pricePerSession, form.sessionDuration) - calcTeacherProportional(form.teacherPayPerSession, form.sessionDuration))">
+                <strong>Loi nhuan/buoi:</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration) - calcTeacherProportional(form.teacherPayPerSession, form.sessionDuration))}}
               </p>
             </ng-container>
             <ng-template #offlineSummary>
-              <p><strong>Si so hien tai:</strong> {{selectedStudents().length}}</p>
+              <p><strong>{{isSaleOfflineExistingMode() ? 'Si so du kien sau khi them:' : 'Si so hien tai:'}}</strong> {{getOfflineStudentCount()}}</p>
               <p><strong>Don gia thu / HS ({{form.sessionDuration}}p):</strong> {{formatCurrency(calcProportional(form.pricePerSession, form.sessionDuration))}}</p>
-              <p><strong>Don gia tra GV / HS:</strong> {{formatCurrency(teacherBaseForForm())}}</p>
+              <p><strong>Don gia tra GV / HS:</strong> {{formatTeacherCurrency(teacherBaseForForm())}}</p>
               <p><strong>Tong thu uoc tinh (neu di hoc du):</strong> {{formatCurrency(getOfflineEstimatedRevenue())}}</p>
-              <p><strong>Luong GV uoc tinh:</strong> {{formatCurrency(getOfflineTeacherPayoutEstimate())}}</p>
+              <p><strong>Luong GV uoc tinh:</strong> {{formatTeacherCurrency(getOfflineTeacherPayoutEstimate())}}</p>
               <p [class]="getProfitClass(getOfflineEstimatedRevenue() - getOfflineTeacherPayoutEstimate())">
                 <strong>Loi nhuan uoc tinh:</strong> {{formatCurrency(getOfflineEstimatedRevenue() - getOfflineTeacherPayoutEstimate())}}
               </p>
@@ -354,6 +386,58 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
               </div>
               <p *ngIf="!selectedStudents().length" class="muted">Chua chon hoc vien nao</p>
             </div>
+          </div>
+        </section>
+
+        <section class="class-history" *ngIf="editingClass() as activeClass">
+          <div class="class-history-head">
+            <h4>Lich su lop hoc</h4>
+            <span *ngIf="activeClass.editHistory?.length">{{ activeClass.editHistory?.length }} lan</span>
+          </div>
+
+          <div class="pending-preview" *ngIf="activeClass.pendingSaleUpdate?.status === 'PENDING'">
+            <strong>Dang cho duyet</strong>
+            <div class="history-change" *ngFor="let change of pendingClassChanges(activeClass)">
+              <span class="history-label">{{ change.label }}:</span>
+              <span>{{ change.beforeValue || '(trong)' }} -> {{ change.afterValue || '(trong)' }}</span>
+            </div>
+            <div class="duration-preview-card" *ngIf="activeClass.pendingSaleUpdate?.durationPreview as preview">
+              <div><strong>Thoi luong:</strong> {{ preview.oldBaseDuration }}/{{ preview.oldSessionDuration }} -> {{ preview.newBaseDuration }}/{{ preview.newSessionDuration }} phut</div>
+              <div class="duration-preview-student" *ngFor="let student of preview.students">
+                <strong>{{ student.studentName || 'Hoc sinh' }} <span *ngIf="student.studentCode">({{ student.studentCode }})</span></strong>
+                <span>Con lai: {{ formatSessionCount(student.totalSessionsRemainingBefore) }} -> {{ formatSessionCount(student.totalSessionsRemainingAfter) }} buoi</span>
+                <span>Tong quy doi du kien: {{ formatSessionCount(student.projectedTotalSessionsBefore) }} -> {{ formatSessionCount(student.projectedTotalSessionsAfter) }} buoi</span>
+              </div>
+            </div>
+          </div>
+
+          <p class="history-empty" *ngIf="!activeClass.editHistory?.length && activeClass.pendingSaleUpdate?.status !== 'PENDING'">
+            Chua co lich su chinh sua lop hoc.
+          </p>
+
+          <div class="history-list" *ngIf="activeClass.editHistory?.length">
+            <article class="history-item" *ngFor="let entry of classEditHistory(activeClass)">
+              <div class="history-item-head">
+                <strong>{{ classHistoryActionLabel(entry.action) }}</strong>
+                <span>{{ formatHistoryTimestamp(entry.editedAt) }}</span>
+              </div>
+              <div class="history-role" *ngIf="entry.editedByName || entry.editedByRole">
+                {{ entry.editedByName || 'He thong' }} <span *ngIf="entry.editedByRole">({{ entry.editedByRole }})</span>
+              </div>
+              <div class="history-change" *ngFor="let change of entry.changes">
+                <span class="history-label">{{ change.label }}:</span>
+                <span>{{ change.beforeValue || '(trong)' }} -> {{ change.afterValue || '(trong)' }}</span>
+              </div>
+              <div class="duration-preview-card" *ngIf="entry.durationPreview as preview">
+                <div><strong>Thoi luong:</strong> {{ preview.oldBaseDuration }}/{{ preview.oldSessionDuration }} -> {{ preview.newBaseDuration }}/{{ preview.newSessionDuration }} phut</div>
+                <div class="duration-preview-student" *ngFor="let student of preview.students">
+                  <strong>{{ student.studentName || 'Hoc sinh' }} <span *ngIf="student.studentCode">({{ student.studentCode }})</span></strong>
+                  <span>Con lai: {{ formatSessionCount(student.totalSessionsRemainingBefore) }} -> {{ formatSessionCount(student.totalSessionsRemainingAfter) }} buoi</span>
+                  <span>Hoc phi: {{ formatSessionCount(student.paidSessionsRemainingBefore) }} -> {{ formatSessionCount(student.paidSessionsRemainingAfter) }}, tang: {{ formatSessionCount(student.bonusSessionsRemainingBefore) }} -> {{ formatSessionCount(student.bonusSessionsRemainingAfter) }}</span>
+                </div>
+              </div>
+              <div class="history-note" *ngIf="entry.note">{{ entry.note }}</div>
+            </article>
           </div>
         </section>
 
@@ -462,15 +546,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     th, td { padding:8px; border:1px solid #e2e8f0; vertical-align:top; }
     thead { background:#f1f5f9; }
     .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
-    .ghost { border:1px solid #94a3b8; background:transparent; padding:4px 10px; border-radius:4px; cursor:pointer; }
-    .approve { border:1px solid #16a34a; background:#16a34a; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer; }
-    .reject { border:1px solid #dc2626; background:#fff; color:#dc2626; padding:4px 10px; border-radius:4px; cursor:pointer; }
+    .ghost { border:1px solid #94a3b8; background:transparent; padding:4px 10px; border-radius:4px; cursor:pointer; margin-right:6px; }
     .danger { border:1px solid #dc2626; background:#dc2626; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer; }
-    .ghost:hover, .approve:hover, .reject:hover, .danger:hover { opacity:.85; }
+    .ghost:hover, .danger:hover { opacity:.85; }
     select, input { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; }
     .actions { display:flex; gap:8px; justify-content:flex-end; }
-    .actions-cell { white-space:normal; min-width:220px; }
-    .actions-cell button { margin:0 6px 6px 0; }
+    .actions-cell { white-space:nowrap; width:140px; }
     .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; z-index:100; }
     .modal { background:#fff; padding:20px; border-radius:8px; width:640px; max-height:90vh; overflow:auto; box-shadow:0 12px 32px rgba(15,23,42,.2); }
     .modal form { display:flex; flex-direction:column; gap:12px; }
@@ -546,6 +627,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 export class ClassesComponent {
   readonly defaultBaseDuration = 70;
   classes = signal<ClassItem[]>([]);
+  saleOfflineOptions = signal<ClassItem[]>([]);
   teachers = signal<UserItem[]>([]);
   teacherProfiles = signal<TeacherProfile[]>([]);
   sales = signal<UserItem[]>([]);
@@ -557,6 +639,7 @@ export class ClassesComponent {
   showCodeDropdown = false;
   showModal = signal(false);
   showStudentConfigModal = signal(false);
+  editingClass = signal<ClassItem | null>(null);
   error = signal('');
   studentConfigError = signal('');
   editingId: string | null = null;
@@ -588,6 +671,7 @@ export class ClassesComponent {
       teacherId: '',
       saleId: '',
       invoiceId: '',
+      existingOfflineClassId: '',
       productPackageId: '',
       classMode: 'ONLINE' as 'ONLINE' | 'OFFLINE',
       studentIds: [] as string[],
@@ -633,11 +717,16 @@ export class ClassesComponent {
   }
 
   async reload() {
-    const [data, invoices] = await Promise.all([
+    const [data, invoices, saleOfflineOptions] = await Promise.all([
       this.classService.list(),
       this.isSale() ? this.invoiceService.list() : Promise.resolve([] as InvoiceItem[]),
+      this.isSale() ? this.classService.listSaleOfflineOptions() : Promise.resolve([] as ClassItem[]),
     ]);
     this.classes.set(data);
+    this.saleOfflineOptions.set(saleOfflineOptions);
+    if (this.editingId) {
+      this.editingClass.set(data.find((item) => item._id === this.editingId) || null);
+    }
     if (this.isSale()) {
       this.invoices.set(invoices);
     }
@@ -662,9 +751,65 @@ export class ClassesComponent {
     this.showCodeDropdown = false;
   }
 
+  private resetSaleOfflineSelection() {
+    this.form.existingOfflineClassId = '';
+    this.form.name = '';
+    this.form.code = '';
+    this.form.teacherId = '';
+    this.form.productPackageId = '';
+    this.form.pricePerSession = 0;
+    this.form.teacherPayPerSession = 0;
+    this.form.teacherPayPerStudent = 0;
+    this.form.baseDuration = this.defaultBaseDuration;
+    this.form.sessionDuration = this.defaultBaseDuration;
+    this.form.revenuePerStudent = 0;
+    this.form.teacherSalaryCost = 0;
+    this.codeSearch = '';
+    this.showCodeDropdown = false;
+  }
+
+  selectedSaleOfflineClass(): ClassItem | undefined {
+    if (!this.form.existingOfflineClassId) {
+      return undefined;
+    }
+    return this.saleOfflineOptions().find((item) => item._id === this.form.existingOfflineClassId);
+  }
+
+  isSaleOfflineExistingMode() {
+    return this.isSaleCreateMode() && this.form.classMode === 'OFFLINE';
+  }
+
+  onSaleOfflineClassChange(classId: string) {
+    this.form.existingOfflineClassId = classId || '';
+    this.submitLabel = this.isSaleOfflineExistingMode() ? 'Them vao lop' : 'Luu';
+    const selectedClass = this.saleOfflineOptions().find((item) => item._id === classId);
+    if (!selectedClass) {
+      this.resetSaleOfflineSelection();
+      return;
+    }
+
+    this.form.name = selectedClass.name || '';
+    this.form.code = selectedClass.code || '';
+    this.form.teacherId = selectedClass.teacher?._id || '';
+    this.form.productPackageId = selectedClass.productPackage?._id || '';
+    this.form.pricePerSession = selectedClass.pricePerSession || 0;
+    this.form.teacherPayPerSession = selectedClass.teacherPayPerSession || 0;
+    this.form.teacherPayPerStudent = selectedClass.teacherPayPerStudent || 0;
+    this.form.baseDuration = selectedClass.baseDuration || this.defaultBaseDuration;
+    this.form.sessionDuration = selectedClass.sessionDuration || selectedClass.baseDuration || this.defaultBaseDuration;
+    this.form.revenuePerStudent = selectedClass.revenuePerStudent || 0;
+    this.form.teacherSalaryCost = selectedClass.teacherSalaryCost || 0;
+    this.codeSearch = selectedClass.code || '';
+    this.showCodeDropdown = false;
+  }
+
   onClassModeChange() {
     if (this.isSaleCreateMode() && this.form.invoiceId) {
       this.onInvoiceChange(this.form.invoiceId);
+      return;
+    }
+    if (this.isSaleOfflineExistingMode()) {
+      this.resetSaleOfflineSelection();
       return;
     }
     this.syncProductPackageSelection();
@@ -680,13 +825,19 @@ export class ClassesComponent {
   async openModal() {
     if (!this.canCreateClass()) return;
     if (this.isSale()) {
-      this.invoices.set(await this.invoiceService.list());
+      const [invoices, saleOfflineOptions] = await Promise.all([
+        this.invoiceService.list(),
+        this.classService.listSaleOfflineOptions(),
+      ]);
+      this.invoices.set(invoices);
+      this.saleOfflineOptions.set(saleOfflineOptions);
     }
     this.form = this.blankForm();
     if (this.isSale()) {
       this.form.saleId = this.currentUserId();
     }
     this.editingId = null;
+    this.editingClass.set(null);
     this.editMode = 'config';
     this.error.set('');
     this.studentSearch = '';
@@ -699,6 +850,7 @@ export class ClassesComponent {
   closeModal() {
     this.showModal.set(false);
     this.editingId = null;
+    this.editingClass.set(null);
     this.editMode = 'config';
     this.codeSearch = '';
     this.showCodeDropdown = false;
@@ -783,6 +935,83 @@ export class ClassesComponent {
       return;
     }
 
+    if (this.isSaleDurationEditMode()) {
+      const result = await this.classService.update(this.editingId!, {
+        baseDuration: this.form.baseDuration || this.defaultBaseDuration,
+        sessionDuration: this.form.sessionDuration || this.defaultBaseDuration,
+        requestType: 'DURATION_CHANGE',
+      });
+
+      if (!result.ok) {
+        this.error.set(result.message || 'Khong the gui yeu cau doi thoi luong');
+        return;
+      }
+
+      if (result.message) {
+        alert(result.message);
+      }
+
+      this.closeModal();
+      this.reload();
+      return;
+    }
+
+    if (this.isSaleConfigEditMode()) {
+      if (!this.form.teacherId) {
+        this.error.set('Vui long chon giao vien');
+        return;
+      }
+
+      const result = await this.classService.update(this.editingId!, {
+        teacherId: this.form.teacherId,
+        ...(this.form.classMode === 'OFFLINE'
+          ? { teacherPayPerStudent: this.form.teacherPayPerStudent || 0 }
+          : { teacherPayPerSession: this.form.teacherPayPerSession || 0 }),
+      });
+
+      if (!result.ok) {
+        this.error.set(result.message || 'Khong the gui yeu cau doi giao vien/luong GV');
+        return;
+      }
+
+      if (result.message) {
+        alert(result.message);
+      }
+
+      this.closeModal();
+      this.reload();
+      return;
+    }
+
+    if (this.isSaleOfflineExistingMode()) {
+      if (!this.form.invoiceId) {
+        this.error.set('Vui long chon hoa don da duyet');
+        return;
+      }
+      if (!this.form.existingOfflineClassId) {
+        this.error.set('Vui long chon lop offline co san');
+        return;
+      }
+      if (!this.form.studentIds.length) {
+        this.error.set('Khong tim thay hoc sinh tren hoa don de them vao lop');
+        return;
+      }
+
+      const saleResult = await this.classService.assignStudents(
+        this.form.existingOfflineClassId,
+        [...this.form.studentIds],
+        this.form.invoiceId,
+      );
+      if (!saleResult.ok) {
+        this.error.set(saleResult.message || 'Khong the them hoc sinh vao lop offline');
+        return;
+      }
+
+      this.closeModal();
+      this.reload();
+      return;
+    }
+
     if (!this.form.name.trim()) {
       this.error.set('Vui long nhap ten lop');
       return;
@@ -803,14 +1032,15 @@ export class ClassesComponent {
       return;
     }
 
+    const pricePerSession = this.roundMoneyToThousand(this.form.pricePerSession || 0);
     const teacherPayPerSession = this.form.classMode === 'ONLINE'
-      ? (this.form.teacherPayPerSession || 0)
+      ? this.roundMoneyDownToThousand(this.form.teacherPayPerSession || 0)
       : 0;
     const teacherPayPerStudent = this.form.classMode === 'OFFLINE'
-      ? (this.form.teacherPayPerStudent || 0)
+      ? this.roundMoneyDownToThousand(this.form.teacherPayPerStudent || 0)
       : 0;
 
-    const payload = {
+    const payload: Partial<ClassPayload> = {
       name: this.form.name.trim(),
       code: this.form.code.trim(),
       teacherId: this.form.teacherId,
@@ -818,19 +1048,25 @@ export class ClassesComponent {
       invoiceId: !this.editingId ? (this.form.invoiceId || undefined) : undefined,
       productPackageId: this.form.productPackageId || undefined,
       classMode: this.form.classMode || 'ONLINE',
-      pricePerSession: this.form.pricePerSession || 0,
-      teacherPayPerSession,
-      teacherPayPerStudent,
+      pricePerSession,
       baseDuration: this.form.baseDuration || this.defaultBaseDuration,
       sessionDuration: this.form.sessionDuration || this.defaultBaseDuration,
-      revenuePerStudent: this.form.revenuePerStudent || 0,
-      teacherSalaryCost: this.form.teacherSalaryCost || 0,
+      revenuePerStudent: this.roundMoneyToThousand(this.form.revenuePerStudent || 0),
+      teacherSalaryCost: this.roundMoneyDownToThousand(this.form.teacherSalaryCost || 0),
       ...(this.canSubmitStudentSelection() ? { studentIds: [...this.form.studentIds] } : {}),
     };
 
+    const isCreatingFromInvoice = !this.editingId && !!this.form.invoiceId;
+    if (this.form.classMode === 'ONLINE' && (teacherPayPerSession > 0 || !isCreatingFromInvoice)) {
+      payload.teacherPayPerSession = teacherPayPerSession;
+    }
+    if (this.form.classMode === 'OFFLINE' && (teacherPayPerStudent > 0 || !isCreatingFromInvoice)) {
+      payload.teacherPayPerStudent = teacherPayPerStudent;
+    }
+
     const result = this.editingId
       ? await this.classService.update(this.editingId, payload)
-      : await this.classService.create(payload);
+      : await this.classService.create(payload as ClassPayload);
 
     if (!result.ok) {
       this.error.set(result.message || 'Khong the luu lop hoc');
@@ -848,15 +1084,21 @@ export class ClassesComponent {
   edit(classItem: ClassItem, mode: 'config' | 'assign' | 'duration' = 'config') {
     if (this.isSale() && !this.canSaleAssign(classItem)) return;
     this.editingId = classItem._id;
+    this.editingClass.set(classItem);
     this.editMode = this.isSale() ? mode : 'config';
     const classStudentIds = classItem.students?.map((s) => s._id) || [];
     const myStudents = new Set(this.students().map((s) => s._id));
-    const pendingChanges = this.isSale() ? (classItem.pendingSaleUpdate?.requestedChanges || {}) : {};
-    const pendingTeacherId = String(pendingChanges['teacherId'] || '');
-    const pendingTeacherPayPerSession = Number(pendingChanges['teacherPayPerSession']);
-    const pendingTeacherPayPerStudent = Number(pendingChanges['teacherPayPerStudent']);
-    const pendingBaseDuration = Number(pendingChanges['baseDuration']);
-    const pendingSessionDuration = Number(pendingChanges['sessionDuration']);
+    const pendingConfigChanges = this.isSale() && mode === 'config' && classItem.pendingSaleUpdate?.requestType !== 'DURATION_CHANGE'
+      ? classItem.pendingSaleUpdate?.requestedChanges || {}
+      : {};
+    const pendingDurationChanges = this.isSale() && mode === 'duration'
+      ? classItem.pendingSaleUpdate?.requestedChanges || {}
+      : {};
+    const pendingTeacherId = String(pendingConfigChanges['teacherId'] || '');
+    const pendingTeacherPayPerSession = Number(pendingConfigChanges['teacherPayPerSession']);
+    const pendingTeacherPayPerStudent = Number(pendingConfigChanges['teacherPayPerStudent']);
+    const pendingBaseDuration = Number(pendingDurationChanges['baseDuration']);
+    const pendingSessionDuration = Number(pendingDurationChanges['sessionDuration']);
 
     this.form = {
       name: classItem.name,
@@ -864,6 +1106,7 @@ export class ClassesComponent {
       teacherId: pendingTeacherId || classItem.teacher?._id || '',
       saleId: classItem.sale?._id || '',
       invoiceId: '',
+      existingOfflineClassId: '',
       productPackageId: classItem.productPackage?._id || '',
       classMode: classItem.classMode || 'ONLINE',
       studentIds: this.isSale() ? classStudentIds.filter((id) => myStudents.has(id)) : classStudentIds,
@@ -890,7 +1133,11 @@ export class ClassesComponent {
     this.showCodeDropdown = false;
     this.submitLabel = this.isSaleAssignMode()
       ? 'Them hoc vien'
-      : 'Cap nhat';
+      : this.isSaleDurationEditMode()
+        ? 'Gui Director duyet'
+        : this.isSaleConfigEditMode()
+          ? 'Gui duyet'
+        : 'Cap nhat';
     this.showModal.set(true);
   }
 
@@ -902,27 +1149,6 @@ export class ClassesComponent {
       return;
     }
     this.reload();
-  }
-
-  async approvePendingUpdate(classItem: ClassItem) {
-    if (!this.canReviewPendingUpdate(classItem)) return;
-    const result = await this.classService.approvePendingUpdate(classItem._id);
-    if (!result.ok) {
-      alert(result.message || 'Khong the phe duyet yeu cau sua lop');
-      return;
-    }
-    await this.reload();
-  }
-
-  async rejectPendingUpdate(classItem: ClassItem) {
-    if (!this.canReviewPendingUpdate(classItem)) return;
-    const reason = prompt('Ly do tu choi (co the bo trong):') || '';
-    const result = await this.classService.rejectPendingUpdate(classItem._id, reason);
-    if (!result.ok) {
-      alert(result.message || 'Khong the tu choi yeu cau sua lop');
-      return;
-    }
-    await this.reload();
   }
 
   availableStudents(): StudentItem[] {
@@ -973,10 +1199,6 @@ export class ClassesComponent {
     return role === 'DIRECTOR' || role === 'OPS';
   }
 
-  canReviewPendingUpdate(classItem: ClassItem) {
-    return this.canManage() && classItem.pendingSaleUpdate?.status === 'PENDING';
-  }
-
   canCreateClass() {
     return this.canManage() || this.isSale();
   }
@@ -1011,11 +1233,13 @@ export class ClassesComponent {
   }
 
   canSelectStudents() {
-    return this.canManage() || this.isSaleCreateMode() || this.isSaleAssignMode();
+    return this.canManage()
+      || this.isSaleAssignMode()
+      || (this.isSaleCreateMode() && !this.isSaleOfflineExistingMode());
   }
 
   canSubmitStudentSelection() {
-    return this.canManage() || this.isSaleCreateMode();
+    return this.canManage() || (this.isSaleCreateMode() && !this.isSaleOfflineExistingMode());
   }
 
   canEditStudentConfig(classItem: ClassItem) {
@@ -1103,7 +1327,44 @@ export class ClassesComponent {
   formatSessionCount(value?: number): string {
     if (!value && value !== 0) return '-';
     const normalized = Number(value);
-    return Number.isInteger(normalized) ? `${normalized}` : normalized.toFixed(2).replace(/\.00$/, '');
+    if (!Number.isFinite(normalized)) return '-';
+    return Math.max(Math.floor(normalized), 0).toLocaleString('vi-VN');
+  }
+
+  pendingClassChanges(classItem: ClassItem | null | undefined) {
+    return classItem?.pendingSaleUpdate?.changeSummary || [];
+  }
+
+  classEditHistory(classItem: ClassItem | null | undefined): ClassEditHistoryEntry[] {
+    return [...(classItem?.editHistory || [])].sort((left, right) => {
+      const leftTime = new Date(left.editedAt || '').getTime();
+      const rightTime = new Date(right.editedAt || '').getTime();
+      return rightTime - leftTime;
+    });
+  }
+
+  classHistoryActionLabel(action?: ClassEditHistoryEntry['action']): string {
+    switch (action) {
+      case 'SALE_DIRECT_UPDATED':
+        return 'Sale cap nhat truc tiep';
+      case 'SALE_REQUESTED':
+        return 'Sale gui yeu cau';
+      case 'APPROVED':
+        return 'Da phe duyet';
+      case 'REJECTED':
+        return 'Da tu choi';
+      case 'MANAGER_UPDATED':
+        return 'Director/Ops cap nhat';
+      default:
+        return 'Cap nhat lop hoc';
+    }
+  }
+
+  formatHistoryTimestamp(value?: string): string {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('vi-VN');
   }
 
   selectedStudentTeacherSlots(): StudentTeacherSlot[] {
@@ -1205,11 +1466,17 @@ export class ClassesComponent {
   }
 
   getModalTitle(): string {
+    if (this.isSaleDurationEditMode()) {
+      return 'Gui yeu cau doi thoi luong lop hoc';
+    }
     if (this.isSaleConfigEditMode()) {
-      return 'Chinh sua lop hoc';
+      return 'Gui yeu cau doi giao vien va luong GV';
     }
     if (this.isSaleAssignMode()) {
       return 'Chon hoc vien vao lop';
+    }
+    if (this.isSaleOfflineExistingMode()) {
+      return 'Them hoc sinh vao lop offline co san';
     }
     return this.editingId ? 'Chinh sua lop hoc' : 'Them lop hoc';
   }
@@ -1232,13 +1499,11 @@ export class ClassesComponent {
 
   onInvoiceChange(invoiceId: string) {
     this.form.invoiceId = invoiceId || '';
+    this.submitLabel = this.isSaleOfflineExistingMode() ? 'Them vao lop' : 'Luu';
     const invoice = this.invoices().find((item) => item._id === invoiceId);
     if (!invoice) {
-      this.form.name = '';
-      this.form.code = '';
       this.form.studentIds = [];
-      this.form.productPackageId = '';
-      this.codeSearch = '';
+      this.resetSaleOfflineSelection();
       return;
     }
 
@@ -1246,7 +1511,15 @@ export class ClassesComponent {
     const studentCode = invoice.studentId?.studentCode?.trim() || '';
     this.form.saleId = this.currentUserId();
     this.form.classMode = invoice.classType || 'ONLINE';
+    this.submitLabel = this.form.classMode === 'OFFLINE' ? 'Them vao lop' : 'Luu';
     this.form.studentIds = invoice.studentId?._id ? [invoice.studentId._id] : [];
+
+    if (this.form.classMode === 'OFFLINE') {
+      this.resetSaleOfflineSelection();
+      return;
+    }
+
+    this.form.existingOfflineClassId = '';
     this.form.code = (invoice.invoiceNumber || '').trim().toUpperCase();
     this.form.name = studentName ? `Lop ${studentName}` : this.form.name;
     this.codeSearch = studentCode && studentName ? `${studentCode} - ${studentName}` : this.form.code;
@@ -1258,7 +1531,13 @@ export class ClassesComponent {
       this.form.baseDuration = invoice.referenceDuration;
       this.form.sessionDuration = this.form.sessionDuration || this.defaultBaseDuration;
     }
+    if (typeof invoice.teacherPayPerSession === 'number' && invoice.teacherPayPerSession > 0) {
+      this.form.teacherPayPerSession = invoice.teacherPayPerSession;
+    }
 
+    if (invoice.productId) {
+      this.form.productPackageId = invoice.productId;
+    }
     this.syncProductPackageSelection();
   }
 
@@ -1294,6 +1573,12 @@ export class ClassesComponent {
   private syncProductPackageSelection() {
     const selectedProduct = this.products().find((product) => product._id === this.form.productPackageId);
     if (this.matchesProductMode(selectedProduct, this.form.classMode)) {
+      return;
+    }
+
+    const invoiceProduct = this.products().find((product) => product._id === this.selectedInvoice()?.productId);
+    if (this.matchesProductMode(invoiceProduct, this.form.classMode)) {
+      this.form.productPackageId = invoiceProduct._id;
       return;
     }
 
@@ -1333,14 +1618,14 @@ export class ClassesComponent {
 
   formatTeacherBase(c: ClassItem): string {
     if (this.isOfflineClass(c)) {
-      return `${this.formatCurrency(c.teacherPayPerStudent)} / HS`;
+      return `${this.formatTeacherCurrency(c.teacherPayPerStudent)} / HS`;
     }
-    return this.formatCurrency(c.teacherPayPerSession);
+    return this.formatTeacherCurrency(c.teacherPayPerSession);
   }
 
   formatTeacherActual(c: ClassItem): string {
     if (this.isOfflineClass(c)) return 'Theo diem danh (min 200k)';
-    return this.formatCurrency(c.actualTeacherPayPerSession ?? c.teacherPayPerSession);
+    return this.formatTeacherCurrency(c.actualTeacherPayPerSession ?? c.teacherPayPerSession);
   }
 
   formatCurrency(amount?: number): string {
@@ -1348,7 +1633,29 @@ export class ClassesComponent {
     return new Intl.NumberFormat('vi-VN', {
       style: 'currency',
       currency: 'VND',
-    }).format(amount);
+    }).format(this.roundMoneyToThousand(amount));
+  }
+
+  formatTeacherCurrency(amount?: number): string {
+    if (!amount && amount !== 0) return '-';
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+    }).format(this.roundMoneyDownToThousand(amount));
+  }
+
+  private roundMoneyToThousand(value?: number): number {
+    const normalized = Number(value || 0);
+    if (!Number.isFinite(normalized) || normalized === 0) return 0;
+    return Math.round(normalized / 1000) * 1000;
+  }
+
+  private roundMoneyDownToThousand(value?: number): number {
+    const normalized = Number(value || 0);
+    if (!Number.isFinite(normalized) || normalized === 0) return 0;
+    return normalized > 0
+      ? Math.floor(normalized / 1000) * 1000
+      : Math.ceil(normalized / 1000) * 1000;
   }
 
   getProfitClass(profit?: number): string {
@@ -1361,7 +1668,29 @@ export class ClassesComponent {
   calcProportional(basePrice: number | undefined, targetDuration: number): number {
     if (!basePrice) return 0;
     const base = this.form.baseDuration || this.defaultBaseDuration;
-    return Math.round(basePrice * (targetDuration / base));
+    return this.roundMoneyToThousand(basePrice * (targetDuration / base));
+  }
+
+  calcTeacherProportional(basePay: number | undefined, targetDuration: number): number {
+    if (!basePay) return 0;
+    const base = this.form.baseDuration || this.defaultBaseDuration;
+    return Math.floor((basePay * (targetDuration / base)) / 1000) * 1000;
+  }
+
+  getOfflineStudentCount(): number {
+    if (!this.isSaleOfflineExistingMode()) {
+      return this.selectedStudents().length;
+    }
+
+    const selectedClass = this.selectedSaleOfflineClass();
+    if (!selectedClass) {
+      return this.selectedStudents().length;
+    }
+
+    const existingStudentIds = new Set((selectedClass.students || []).map((student) => student._id));
+    const existingCount = selectedClass.studentCount ?? existingStudentIds.size;
+    const additionalCount = this.form.studentIds.filter((studentId) => !existingStudentIds.has(studentId)).length;
+    return existingCount + additionalCount;
   }
 
   getOfflineEstimatedRevenue(): number {
@@ -1369,13 +1698,16 @@ export class ClassesComponent {
       this.form.pricePerSession,
       this.form.sessionDuration || this.defaultBaseDuration,
     );
-    return perStudentCharge * this.selectedStudents().length;
+    return perStudentCharge * this.getOfflineStudentCount();
   }
 
   getOfflineTeacherPayoutEstimate(): number {
-    const attendedCount = this.selectedStudents().length;
+    const attendedCount = this.getOfflineStudentCount();
     if (attendedCount <= 0) return 0;
-    return Math.max(200_000, Math.round(attendedCount * (this.form.teacherPayPerStudent || 0)));
+    return Math.max(
+      200_000,
+      this.roundMoneyDownToThousand(attendedCount * (this.form.teacherPayPerStudent || 0)),
+    );
   }
 
   getProfit(c: ClassItem): number {

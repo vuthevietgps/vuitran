@@ -11,6 +11,24 @@ import {
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger('ExceptionFilter');
 
+  private normalizeHttpExceptionMessage(response: string | object): string | string[] | object {
+    if (typeof response === 'string') {
+      return response;
+    }
+
+    const message = (response as any)?.message;
+    if (typeof message === 'string' || Array.isArray(message)) {
+      return message;
+    }
+
+    const error = (response as any)?.error;
+    if (typeof error === 'string') {
+      return error;
+    }
+
+    return response;
+  }
+
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse();
@@ -21,7 +39,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
-      message = exception.getResponse();
+      message = this.normalizeHttpExceptionMessage(exception.getResponse());
     } else if (
       (exception as any)?.name === 'MongoServerError' &&
       (exception as any)?.code === 11000

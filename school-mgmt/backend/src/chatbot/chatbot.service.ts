@@ -191,6 +191,20 @@ export class ChatbotService {
     return '****' + token.slice(-6);
   }
 
+  private isDuplicateKeyError(err: any, fields?: string[]): boolean {
+    const isDuplicate = !!(err && (err.code === 11000 || String(err?.message || '').includes('E11000')));
+    if (!isDuplicate) return false;
+    if (!fields?.length) return true;
+
+    const keyPattern = err?.keyPattern || {};
+    const keyValue = err?.keyValue || {};
+    return fields.some((field) =>
+      Object.prototype.hasOwnProperty.call(keyPattern, field)
+      || Object.prototype.hasOwnProperty.call(keyValue, field)
+      || String(err?.message || '').includes(`${field}_`),
+    );
+  }
+
   private mapFanpageForResponse(fp: any) {
     const openAIToken = fp?.openaiTokenId && typeof fp.openaiTokenId === 'object'
       ? fp.openaiTokenId
@@ -592,8 +606,9 @@ export class ChatbotService {
     customerName?: string,
     adRefParam?: string,
   ): Promise<ConversationDocument> {
+    const fanpageObjectId = new Types.ObjectId(fanpageId);
     let conv = await this.conversationModel.findOne({
-      fanpageId: new Types.ObjectId(fanpageId),
+      fanpageId: fanpageObjectId,
       platformUserId,
     });
 
@@ -640,8 +655,6 @@ export class ChatbotService {
     const fanpage = await this.fanpageModel.findById(fanpageId).lean();
     if (!fanpage) throw new NotFoundException('Fanpage không tồn tại');
 
-    const conversationCode = await this.generateConversationCode();
-
     // Resolve ad group attribution
     let adGroupId: Types.ObjectId | undefined;
     let adGroupName: string | undefined;
@@ -653,9 +666,8 @@ export class ChatbotService {
       }
     }
 
-    conv = new this.conversationModel({
-      conversationCode,
-      fanpageId: new Types.ObjectId(fanpageId),
+    const baseConversationData = {
+      fanpageId: fanpageObjectId,
       fanpageName: fanpage.name,
       platform: fanpage.platform,
       platformUserId,
@@ -666,9 +678,54 @@ export class ChatbotService {
       adRefParam,
       adGroupId,
       adGroupName,
+    };
+
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const conversationCode = await this.generateConversationCode();
+
+      try {
+        conv = new this.conversationModel({
+          conversationCode,
+          ...baseConversationData,
+        });
+        return await conv.save();
+      } catch (err: any) {
+        if (this.isDuplicateKeyError(err, ['fanpageId', 'platformUserId'])) {
+          const existing = await this.conversationModel.findOne({
+            fanpageId: fanpageObjectId,
+            platformUserId,
+          });
+          if (existing) return existing;
+        }
+
+        if (this.isDuplicateKeyError(err, ['conversationCode'])) {
+          this.logger.warn(
+            `Duplicate conversationCode during webhook create for fanpage ${fanpageId}, retry ${attempt + 1}/6`,
+          );
+          continue;
+        }
+
+        throw err;
+      }
+    }
+
+    conv = new this.conversationModel({
+      conversationCode: `CONV-${new Date().getFullYear()}-${Date.now()}`,
+      ...baseConversationData,
     });
 
-    return conv.save();
+    try {
+      return await conv.save();
+    } catch (err: any) {
+      if (this.isDuplicateKeyError(err, ['fanpageId', 'platformUserId'])) {
+        const existing = await this.conversationModel.findOne({
+          fanpageId: fanpageObjectId,
+          platformUserId,
+        });
+        if (existing) return existing;
+      }
+      throw err;
+    }
   }
 
   async findAllConversations(query: QueryConversationDto) {
@@ -1287,7 +1344,7 @@ export class ChatbotService {
           status: 'DRAFT',
           saleId: saleOwner.saleId,
           saleName: saleOwner.saleName,
-          notes: dto.notes,
+          consultationNotes: dto.notes,
         });
 
         saved = await order.save({ session: mongoSession });

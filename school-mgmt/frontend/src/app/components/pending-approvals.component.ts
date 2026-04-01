@@ -3,9 +3,10 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { PendingApprovalsService } from '../services/pending-approvals.service';
-import { ClassItem, ClassService } from '../services/class.service';
+import { ClassEditHistoryChange, ClassItem, ClassService } from '../services/class.service';
 import { AuthService } from '../services/auth.service';
 import { FlowGuideComponent } from './shared/flow-guide.component';
+import { SessionChangeRequestItem, SessionService } from '../services/session.service';
 
 @Component({
   selector: 'app-pending-approvals',
@@ -15,7 +16,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
   <app-flow-guide featureKey="pending-approvals"></app-flow-guide>
   <div class="container">
     <h2>Cho duyet</h2>
-    <p class="subtitle">Tat ca hang muc dang cho duyet. Giam doc va van hanh deu co the xu ly yeu cau sua lop hoc cua Sale tai day.</p>
+    <p class="subtitle">Tat ca hang muc dang cho duyet. Giam doc va van hanh deu co the xu ly yeu cau sua lop hoc va doi buoi hoc cua Sale tai day.</p>
 
     <div class="summary-cards" *ngIf="data?.summary">
       <div class="card total">
@@ -42,6 +43,10 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
         <div class="card-number">{{ data.summary.pendingClassUpdates }}</div>
         <div class="card-label">Sua lop hoc</div>
       </div>
+      <div class="card session-change" (click)="activeTab = 'session-changes'">
+        <div class="card-number">{{ data.summary.pendingSessionChangeRequests }}</div>
+        <div class="card-label">Doi buoi hoc</div>
+      </div>
       <div class="card ticket" (click)="activeTab = 'tickets'">
         <div class="card-number">{{ data.summary.openTickets }}</div>
         <div class="card-label">Ticket mo</div>
@@ -63,6 +68,9 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
       </button>
       <button [class.active]="activeTab === 'classes'" (click)="activeTab = 'classes'">
         Sua lop <span class="badge" *ngIf="data?.summary?.pendingClassUpdates">{{ data.summary.pendingClassUpdates }}</span>
+      </button>
+      <button [class.active]="activeTab === 'session-changes'" (click)="activeTab = 'session-changes'">
+        Doi buoi hoc <span class="badge" *ngIf="data?.summary?.pendingSessionChangeRequests">{{ data.summary.pendingSessionChangeRequests }}</span>
       </button>
     </div>
 
@@ -193,9 +201,57 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             <td>{{ classItem.pendingSaleUpdate?.requestedBy?.fullName || classItem.sale?.fullName || 'N/A' }}</td>
             <td>{{ formatDate(classItem.pendingSaleUpdate?.requestedAt) }}</td>
             <td>
-              <span class="change-chip" *ngFor="let change of getRequestedChanges(classItem)">
-                {{ change }}
-              </span>
+              <div class="change-list" *ngIf="pendingChangeSummary(classItem).length; else requestedChangeChips">
+                <div class="change-row" *ngFor="let change of pendingChangeSummary(classItem)">
+                  <strong>{{ change.label }}:</strong>
+                  <span>{{ change.beforeValue || '(trong)' }} -> {{ change.afterValue || '(trong)' }}</span>
+                </div>
+              </div>
+              <ng-template #requestedChangeChips>
+                <span class="change-chip" *ngFor="let change of getRequestedChanges(classItem)">
+                  {{ change }}
+                </span>
+              </ng-template>
+
+              <div class="duration-preview" *ngIf="classItem.pendingSaleUpdate?.durationPreview as preview">
+                <div class="duration-preview-head">
+                  <strong>Thoi luong:</strong>
+                  {{ preview.oldBaseDuration }} / {{ preview.oldSessionDuration }} phut
+                  ->
+                  {{ preview.newBaseDuration }} / {{ preview.newSessionDuration }} phut
+                </div>
+                <div class="duration-preview-student" *ngFor="let student of preview.students">
+                  <strong>
+                    {{ student.studentName || 'Hoc sinh' }}
+                    <span *ngIf="student.studentCode">({{ student.studentCode }})</span>
+                  </strong>
+                  <div>
+                    Con lai:
+                    {{ formatSessionCount(student.totalSessionsRemainingBefore) }}
+                    ->
+                    {{ formatSessionCount(student.totalSessionsRemainingAfter) }} buoi
+                  </div>
+                  <div>
+                    Hoc phi:
+                    {{ formatSessionCount(student.paidSessionsRemainingBefore) }}
+                    ->
+                    {{ formatSessionCount(student.paidSessionsRemainingAfter) }},
+                    tang:
+                    {{ formatSessionCount(student.bonusSessionsRemainingBefore) }}
+                    ->
+                    {{ formatSessionCount(student.bonusSessionsRemainingAfter) }}
+                  </div>
+                  <div>
+                    Tong quy doi du kien:
+                    {{ formatSessionCount(student.projectedTotalSessionsBefore) }}
+                    ->
+                    {{ formatSessionCount(student.projectedTotalSessionsAfter) }} buoi
+                  </div>
+                </div>
+                <div class="duration-preview-empty" *ngIf="!preview.students?.length">
+                  Lop hien chua co hoc sinh de quy doi so buoi.
+                </div>
+              </div>
             </td>
             <td class="action-buttons">
               <ng-container *ngIf="canReviewClassUpdate(classItem); else directorOnlyReview">
@@ -205,6 +261,52 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
               <ng-template #directorOnlyReview>
                 <span class="review-note">{{ getReviewNotice(classItem) }}</span>
               </ng-template>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div *ngIf="activeTab === 'session-changes'" class="tab-content">
+      <div *ngIf="!data?.sessionChanges?.length" class="empty">Khong co yeu cau doi buoi hoc cho duyet</div>
+      <table *ngIf="data?.sessionChanges?.length" class="data-table">
+        <thead>
+          <tr>
+            <th>Buoi hoc</th>
+            <th>Hoc sinh</th>
+            <th>Nguoi gui</th>
+            <th>De nghi</th>
+            <th>Tac dong tai chinh</th>
+            <th>Thao tac</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let request of data.sessionChanges">
+            <td>
+              <strong>{{ request.classId?.code || 'N/A' }}</strong>
+              <div>{{ formatDate(request.sessionId?.scheduledDate) }} {{ request.sessionId?.scheduledStartTime || '' }}</div>
+            </td>
+            <td>
+              <strong>{{ request.studentId?.fullName || 'N/A' }}</strong>
+              <div *ngIf="request.studentId?.studentCode">{{ request.studentId?.studentCode }}</div>
+            </td>
+            <td>
+              <strong>{{ request.requestedBy?.fullName || 'N/A' }}</strong>
+              <div>{{ formatDate(request.requestedAt) }}</div>
+            </td>
+            <td>
+              <div *ngIf="request.requestedTeacherId">GV moi: {{ request.requestedTeacherId.fullName }}</div>
+              <div *ngIf="request.requestedDurationMinutes">Thoi luong: {{ request.currentDurationMinutes }} -> {{ request.requestedDurationMinutes }} phut</div>
+              <div>{{ request.reason }}</div>
+            </td>
+            <td>
+              <div>Hoc phi: {{ formatMoney(request.financialImpact.newAmountCharged) }}</div>
+              <div>Lương GV: {{ formatMoney(request.financialImpact.newTeacherPayout) }}</div>
+              <div *ngIf="request.financialImpact.note" class="review-note">{{ request.financialImpact.note }}</div>
+            </td>
+            <td class="action-buttons">
+              <button type="button" class="btn-approve" (click)="approveSessionChange(request)">Phe duyet</button>
+              <button type="button" class="btn-reject" (click)="rejectSessionChange(request)">Tu choi</button>
             </td>
           </tr>
         </tbody>
@@ -232,6 +334,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .card.topup { border-left-color:#eab308; }
     .card.teacher { border-left-color:#7c3aed; }
     .card.class-update { border-left-color:#0f766e; }
+    .card.session-change { border-left-color:#b45309; }
     .card.ticket { border-left-color:#f97316; }
     .card-number { font-size:28px; font-weight:700; color:#1e293b; }
     .card-label { font-size:12px; color:#64748b; margin-top:4px; }
@@ -266,6 +369,22 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
       display:inline-block; margin:0 6px 6px 0; padding:4px 8px; border-radius:999px;
       background:#e2e8f0; color:#334155; font-size:12px;
     }
+    .change-list { display:flex; flex-direction:column; gap:6px; }
+    .change-row { font-size:12px; color:#334155; line-height:1.4; }
+    .change-row strong { color:#0f172a; }
+    .duration-preview {
+      margin-top:10px; padding:10px 12px; border-radius:8px;
+      background:#f8fafc; border:1px solid #dbeafe;
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .duration-preview-head { font-size:12px; color:#1e293b; }
+    .duration-preview-student {
+      padding:8px 10px; border-radius:6px; background:#fff;
+      border:1px solid #e2e8f0; font-size:12px; color:#475569;
+      display:flex; flex-direction:column; gap:4px;
+    }
+    .duration-preview-student strong { color:#0f172a; }
+    .duration-preview-empty { font-size:12px; color:#64748b; }
     .review-note { color:#64748b; font-size:12px; }
     .empty { text-align:center; padding:32px; color:#94a3b8; font-size:14px; }
     .loading { text-align:center; padding:24px; color:#64748b; }
@@ -275,6 +394,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 export class PendingApprovalsComponent implements OnInit {
   private svc = inject(PendingApprovalsService);
   private classService = inject(ClassService);
+  private sessionService = inject(SessionService);
   private auth = inject(AuthService);
   private route = inject(ActivatedRoute);
 
@@ -313,6 +433,13 @@ export class PendingApprovalsComponent implements OnInit {
     return n.toLocaleString('vi-VN') + 'd';
   }
 
+  formatSessionCount(value?: number): string {
+    if (value == null) return '0';
+    const normalized = Number(value);
+    if (!Number.isFinite(normalized)) return '0';
+    return Math.max(Math.floor(normalized), 0).toLocaleString('vi-VN');
+  }
+
   getRequestedChanges(classItem: ClassItem): string[] {
     const requestedChanges = classItem.pendingSaleUpdate?.requestedChanges || {};
     const labels: Record<string, string> = {
@@ -338,6 +465,10 @@ export class PendingApprovalsComponent implements OnInit {
     return resolved.length ? resolved : ['Cap nhat lop hoc'];
   }
 
+  pendingChangeSummary(classItem: ClassItem): ClassEditHistoryChange[] {
+    return classItem.pendingSaleUpdate?.changeSummary || [];
+  }
+
   isDirector(): boolean {
     return this.auth.userSignal()?.role === 'DIRECTOR';
   }
@@ -358,7 +489,31 @@ export class PendingApprovalsComponent implements OnInit {
   }
 
   private isKnownTab(tab: string): boolean {
-    return ['payroll', 'invoices', 'topups', 'teachers', 'classes'].includes(tab);
+    return ['payroll', 'invoices', 'topups', 'teachers', 'classes', 'session-changes'].includes(tab);
+  }
+
+  async approveSessionChange(request: SessionChangeRequestItem) {
+    this.error = '';
+    try {
+      await this.sessionService.reviewChangeRequest(request._id, { action: 'APPROVE' });
+      await this.loadData();
+    } catch (err: any) {
+      this.error = err?.error?.message || 'Khong the phe duyet yeu cau doi buoi hoc';
+    }
+  }
+
+  async rejectSessionChange(request: SessionChangeRequestItem) {
+    this.error = '';
+    const reason = prompt('Ly do tu choi (co the bo trong):') || '';
+    try {
+      await this.sessionService.reviewChangeRequest(request._id, {
+        action: 'REJECT',
+        rejectionReason: reason,
+      });
+      await this.loadData();
+    } catch (err: any) {
+      this.error = err?.error?.message || 'Khong the tu choi yeu cau doi buoi hoc';
+    }
   }
 
   async approveClassUpdate(classItem: ClassItem) {

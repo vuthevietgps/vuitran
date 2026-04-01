@@ -12,10 +12,12 @@ interface StudentInvoice {
   classId: { _id: string; name: string };
   sessions: number;
   bonusSessions?: number;
+  trialSessions?: number;
   pricePerSession: number;
   amount: number;
   sessionsRemaining: number;
   bonusSessionsRemaining?: number;
+  trialSessionsRemaining?: number;
   status: string;
   createdAt: string;
 }
@@ -91,10 +93,10 @@ const STATUS_COLORS: Record<string, string> = {
       <thead><tr>
         <th>Mã hóa đơn</th>
         <th>Lớp</th>
-        <th>Số buổi</th>
+        <th title="Lấy từ hóa đơn: buổi chính + buổi tặng + buổi thử">Số buổi (HĐ)</th>
         <th>Giá/buổi</th>
         <th>Thành tiền</th>
-        <th>Buổi còn lại</th>
+        <th title="Lấy từ số dư hóa đơn đã duyệt: chính + tặng + thử còn lại">Buổi còn lại (HĐ)</th>
         <th>Trạng thái</th>
         <th>Ngày tạo</th>
       </tr></thead>
@@ -179,11 +181,23 @@ export class ParentInvoicesComponent implements OnInit {
   formatRegisteredSessions(inv: StudentInvoice): string {
     const sessions = Number(inv.sessions || 0);
     const bonusSessions = Number(inv.bonusSessions || 0);
-    return bonusSessions > 0 ? `${sessions} + ${bonusSessions}` : String(sessions);
+    const trialSessions = Number(inv.trialSessions || 0);
+
+    const parts: string[] = [];
+    if (sessions > 0) parts.push(`${sessions} chính`);
+    if (bonusSessions > 0) parts.push(`${bonusSessions} tặng`);
+    if (trialSessions > 0) parts.push(`${trialSessions} thử`);
+
+    const total = sessions + bonusSessions + trialSessions;
+    if (parts.length === 0) return '0';
+    if (parts.length === 1) return String(total);
+    return `${total} (${parts.join(' + ')})`;
   }
 
   formatRemainingSessions(inv: StudentInvoice): number {
-    return Number(inv.sessionsRemaining || 0) + Number(inv.bonusSessionsRemaining || 0);
+    return Number(inv.sessionsRemaining || 0)
+      + Number(inv.bonusSessionsRemaining || 0)
+      + Number(inv.trialSessionsRemaining || 0);
   }
 
   async loadData() {
