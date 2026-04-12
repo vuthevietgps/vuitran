@@ -2,7 +2,7 @@ import { Component, computed, signal, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { LeadService, LeadItem, LeadPipeline } from '../services/lead.service';
+import { LeadService, LeadAttributionTouchpoint, LeadItem, LeadPipeline } from '../services/lead.service';
 import { AuthService } from '../services/auth.service';
 import { UserService } from '../services/user.service';
 import { AdsService, AdGroupItem } from '../services/ads.service';
@@ -29,6 +29,21 @@ const LOST_LABELS: Record<string, string> = {
   PRICE_TOO_HIGH: 'Giá cao', CHOSE_COMPETITOR: 'Chọn nơi khác',
   NO_LONGER_NEEDED: 'Không cần nữa', UNREACHABLE: 'Không liên lạc được',
   SCHEDULE_CONFLICT: 'Lịch không phù hợp', OTHER: 'Khác',
+};
+const ATTRIBUTION_SOURCE_LABELS: Record<string, string> = {
+  CONVERSATION: 'Chatbot',
+  LANDING_PAGE: 'Landing Page',
+  LEAD: 'Lead',
+  ORDER: 'Order',
+  REFERRAL: 'Referral',
+  STUDENT: 'Student',
+  MANUAL: 'Manual',
+  SYSTEM: 'System',
+};
+const ATTRIBUTION_MODEL_LABELS: Record<string, string> = {
+  FIRST_TOUCH_LOCKED: 'First touch locked',
+  LAST_TOUCH: 'Last touch',
+  MANUAL_OVERRIDE: 'Manual override',
 };
 
 @Component({
@@ -233,6 +248,35 @@ const LOST_LABELS: Record<string, string> = {
       </div>
       <div *ngIf="detailLead()!.notes"><strong>Ghi chú:</strong> {{detailLead()!.notes}}</div>
 
+      <div *ngIf="isStaff()">
+        <h4>Attribution Merge ({{detailLead()!.attributionTouchpoints?.length || 0}})</h4>
+        <div class="attribution-summary" *ngIf="detailLead()!.attributionSummary">
+          <span class="attr-chip" *ngIf="detailLead()!.attributionSummary?.platform">
+            {{sourceLabel(detailLead()!.attributionSummary?.platform || '')}}
+          </span>
+          <span class="attr-chip" *ngIf="detailLead()!.attributionSummary?.sourceType">
+            {{attributionSourceLabel(detailLead()!.attributionSummary?.sourceType)}}
+          </span>
+          <span class="attr-chip" *ngIf="detailLead()!.attributionSummary?.attributionModel">
+            {{attributionModelLabel(detailLead()!.attributionSummary?.attributionModel)}}
+          </span>
+        </div>
+        <p class="muted" *ngIf="detailLoading()">Dang tai attribution merge moi nhat...</p>
+        <ng-container *ngIf="!detailLoading()">
+          <div class="timeline attribution-timeline" *ngIf="detailLead()!.attributionTouchpoints?.length; else noAttributionMerge">
+            <div class="tl-item attr-item" *ngFor="let touchpoint of detailLead()!.attributionTouchpoints">
+              <div class="tl-date">{{(touchpoint.firstTouchedAt || touchpoint.capturedAt) | date:'dd/MM/yyyy HH:mm'}}</div>
+              <div class="tl-method">{{attributionTouchpointLabel(touchpoint)}}</div>
+              <div class="tl-notes" *ngIf="attributionTouchpointContext(touchpoint)">{{attributionTouchpointContext(touchpoint)}}</div>
+              <div class="tl-by" *ngIf="touchpoint.lastConfirmedAt && touchpoint.lastConfirmedAt !== touchpoint.firstTouchedAt">
+                Xac nhan cuoi: {{touchpoint.lastConfirmedAt | date:'dd/MM/yyyy HH:mm'}}
+              </div>
+            </div>
+          </div>
+        </ng-container>
+        <ng-template #noAttributionMerge><p class="muted">Chua co attribution merge timeline.</p></ng-template>
+      </div>
+
       <!-- Assignment History -->
       <div *ngIf="isStaff() && detailLead()!.assignmentHistory?.length">
         <h4>Lịch sử phân bổ ({{detailLead()!.assignmentHistory!.length}})</h4>
@@ -264,12 +308,12 @@ const LOST_LABELS: Record<string, string> = {
 
       <div class="form-actions">
         <button class="primary" (click)="openEdit(detailLead()!)">Sửa</button>
-        <button class="btn-sm assign-btn" (click)="openAssign(detailLead()!); detailLead.set(null)" *ngIf="isStaff() && isActiveLead(detailLead()!)">
+        <button class="btn-sm assign-btn" (click)="openAssign(detailLead()!); closeDetail()" *ngIf="isStaff() && isActiveLead(detailLead()!)">
           {{detailLead()!.saleId ? '🔄 Đổi Sale' : '👤+ Phân bổ'}}
         </button>
         <button class="btn-sm return-btn" (click)="returnToPool(detailLead()!)" *ngIf="isStaff() && detailLead()!.saleId && isActiveLead(detailLead()!)">📦 Thu hồi</button>
         <button class="btn-sm success" (click)="convertLead(detailLead()!)" *ngIf="detailLead()!.status === 'INTERESTED'">Chuyển đổi → Đơn ĐK</button>
-        <button type="button" (click)="detailLead.set(null)">Đóng</button>
+        <button type="button" (click)="closeDetail()">Đóng</button>
       </div>
     </div>
   </div>
@@ -392,7 +436,10 @@ const LOST_LABELS: Record<string, string> = {
     .empty-text { padding:16px; color:#64748b; }
     .detail-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
     .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:13px; margin-bottom:12px; }
+    .attribution-summary { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0; }
+    .attr-chip { display:inline-flex; align-items:center; padding:3px 10px; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:11px; font-weight:600; }
     .timeline { margin:8px 0; }
+    .attribution-timeline .attr-item { border-left-color:#0f766e; background:#f8fafc; }
     .tl-item { padding:8px 12px; border-left:2px solid #2563eb; margin-bottom:8px; font-size:13px; }
     .tl-date { font-size:11px; color:#64748b; }
     .tl-method { font-weight:600; }
@@ -427,6 +474,8 @@ export class LeadsComponent implements OnInit {
   showAssignModal = signal(false);
   assigningLead = signal<LeadItem | null>(null);
   detailLead = signal<LeadItem | null>(null);
+  detailLoading = signal(false);
+  detailLeadId = signal('');
   error = signal('');
   editingId: string | null = null;
   activeLeadId: string | null = null;
@@ -470,6 +519,29 @@ export class LeadsComponent implements OnInit {
   statusColor(s: string) { return STATUS_COLORS[s] || '#64748b'; }
   sourceLabel(s: string) { return SOURCE_LABELS[s] || s; }
   contactLabel(s: string) { return CONTACT_LABELS[s] || s; }
+  attributionSourceLabel(s?: string | null) { return s ? ATTRIBUTION_SOURCE_LABELS[s] || s : 'System'; }
+  attributionModelLabel(s?: string | null) { return s ? ATTRIBUTION_MODEL_LABELS[s] || s : 'Unknown'; }
+  attributionTouchpointLabel(touchpoint: LeadAttributionTouchpoint | undefined) {
+    const platform = touchpoint?.platform ? this.sourceLabel(touchpoint.platform) : 'Khac';
+    return `${platform} / ${this.attributionSourceLabel(touchpoint?.sourceType)}`;
+  }
+  attributionTouchpointContext(touchpoint: LeadAttributionTouchpoint | undefined) {
+    const parts: string[] = [];
+    if (touchpoint?.adGroupName) {
+      parts.push(`Campaign: ${touchpoint.adGroupName}`);
+    }
+    const landingName = touchpoint?.tracking?.landingPageName || touchpoint?.tracking?.landingPageSlug;
+    if (landingName) {
+      parts.push(`Landing: ${landingName}`);
+    }
+    if (touchpoint?.tracking?.utmCampaign) {
+      parts.push(`UTM: ${touchpoint.tracking.utmCampaign}`);
+    }
+    if (touchpoint?.notes) {
+      parts.push(touchpoint.notes);
+    }
+    return parts.join(' | ');
+  }
   isActiveLead(l: LeadItem) { return !['CONVERTED', 'NOT_INTERESTED'].includes(l.status); }
   isOverdue(d: string) { return new Date(d) < new Date(); }
 
@@ -508,7 +580,7 @@ export class LeadsComponent implements OnInit {
     }
   }
 
-  filtered = computed(() => {
+  filtered(): LeadItem[] {
     let list: LeadItem[] = [];
     switch (this.activeTab) {
       case 'pool': list = this.poolItems(); break;
@@ -523,7 +595,7 @@ export class LeadsComponent implements OnInit {
     if (this.filterStatus && this.activeTab === 'all') list = list.filter(l => l.status === this.filterStatus);
     if (this.filterSource) list = list.filter(l => l.source === this.filterSource);
     return list;
-  });
+  }
 
   followUps = computed(() => this.followUpList());
 
@@ -586,13 +658,32 @@ export class LeadsComponent implements OnInit {
     this.form = { ...l };
     this.subjectsText = (l.interestedSubjects || []).join(', ');
     this.error.set('');
-    this.detailLead.set(null);
+    this.closeDetail();
     this.showModal.set(true);
   }
 
   closeModal() { this.showModal.set(false); this.editingId = null; }
 
-  openDetail(l: LeadItem) { this.detailLead.set(l); }
+  closeDetail() {
+    this.detailLead.set(null);
+    this.detailLeadId.set('');
+    this.detailLoading.set(false);
+  }
+
+  async openDetail(l: LeadItem) {
+    this.detailLead.set(l);
+    this.detailLeadId.set(l._id);
+    this.detailLoading.set(true);
+
+    const detail = await this.leadService.getOne(l._id);
+    if (this.detailLeadId() !== l._id) {
+      return;
+    }
+    if (detail) {
+      this.detailLead.set({ ...l, ...detail });
+    }
+    this.detailLoading.set(false);
+  }
 
   openContact(l: LeadItem) {
     this.activeLeadId = l._id;
@@ -613,10 +704,27 @@ export class LeadsComponent implements OnInit {
     this.showAssignModal.set(true);
   }
 
+  private resolveSelectedSaleName(saleId: string): string {
+    const sale = this.salesList().find((item) => item._id === saleId);
+    return sale?.fullName || this.assignSaleName || saleId;
+  }
+
   async submitAssign() {
     const lead = this.assigningLead();
     if (!lead || !this.assignSaleId) return;
-    const res = await this.leadService.assign(lead._id, this.assignSaleId, this.assignSaleName);
+    const selectedSaleName = this.resolveSelectedSaleName(this.assignSaleId);
+    if (lead.saleId && lead.saleId === this.assignSaleId) {
+      this.showAssignModal.set(false);
+      this.assigningLead.set(null);
+      return;
+    }
+    if (
+      lead.saleId &&
+      !confirm(`Chuyển lead "${lead.parentName}" từ ${lead.saleName || 'Sale hiện tại'} sang ${selectedSaleName}?`)
+    ) {
+      return;
+    }
+    const res = await this.leadService.assign(lead._id, this.assignSaleId, selectedSaleName);
     if (!res.ok) { alert(res.message); return; }
     this.showAssignModal.set(false);
     this.assigningLead.set(null);
@@ -628,7 +736,7 @@ export class LeadsComponent implements OnInit {
     if (reason === null) return; // cancelled
     const res = await this.leadService.returnToPool(l._id, reason || 'Thu hồi thủ công');
     if (!res.ok) { alert(res.message); return; }
-    this.detailLead.set(null);
+    this.closeDetail();
     this.reload();
   }
 
@@ -668,7 +776,7 @@ export class LeadsComponent implements OnInit {
     const res = await this.leadService.convert(l._id);
     if (!res.ok) { alert(res.message); return; }
     alert(res.message || 'Đã chuyển đổi! Hãy tạo đơn đăng ký.');
-    this.detailLead.set(null);
+    this.closeDetail();
     this.router.navigate(['/app/orders'], { queryParams: { fromLead: l._id } });
   }
 }

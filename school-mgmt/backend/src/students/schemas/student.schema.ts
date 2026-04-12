@@ -70,6 +70,9 @@ export class Student {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: false })
   parentUserId?: Types.ObjectId; // Link to parent's login account (PARENT role)
 
+  @Prop({ type: [{ type: SchemaTypes.ObjectId, ref: 'User' }], default: [] })
+  parentUserIds?: Types.ObjectId[]; // All linked parent accounts, primary parent kept in parentUserId
+
   @Prop({ required: true, trim: true })
   parentName!: string;
 
@@ -146,5 +149,6 @@ export const StudentSchema = SchemaFactory.createForClass(Student);
 StudentSchema.index({ approvalStatus: 1 });
 StudentSchema.index({ saleId: 1 });
 StudentSchema.index({ parentUserId: 1 });
+StudentSchema.index({ parentUserIds: 1 });
 StudentSchema.index({ adGroupId: 1 });
 

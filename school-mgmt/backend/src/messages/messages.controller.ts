@@ -69,6 +69,14 @@ export class MessagesController {
     );
   }
 
+  @Post('conversations/:id/ai-suggest')
+  previewAiSuggestion(
+    @Param('id') conversationId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.previewAiSuggestion(req.user.sub, conversationId);
+  }
+
   @Post('conversations/:id/read')
   markRead(
     @Param('id') conversationId: string,

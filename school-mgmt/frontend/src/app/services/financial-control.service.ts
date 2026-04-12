@@ -219,6 +219,85 @@ export interface FinancialOverview {
   profitAndLoss: ProfitAndLoss;
 }
 
+export interface InvestorMetrics {
+  snapshot: {
+    cashOnHand: number;
+    totalFundBalance: number;
+    burnRate: number;
+    runway: number;
+  };
+  revenue: {
+    recognizedRevenue: {
+      thisMonth: number;
+      lastMonth: number;
+      ytd: number;
+      growthPercent?: number;
+    };
+    unearnedRevenue: {
+      walletBalance: number;
+      unconsumedInvoiceValue: number;
+      total: number;
+    };
+  };
+  profitability: {
+    grossProfit: number;
+    grossMargin: number;
+    netProfit: number;
+    netMargin: number;
+    ebitda: number;
+    ebitdaMargin: number;
+  };
+  unitEconomics: {
+    cac: number | null;
+    costPerLead: number | null;
+    costPerOrder: number | null;
+    ltv: number;
+    ltvCacRatio: number | null;
+    arpu: number | null;
+    arpuActive: number | null;
+    activeStudents: number;
+    enrolledStudents: number;
+  };
+  customerBase: {
+    activeStudents: number;
+    enrolledStudents: number;
+  };
+  methodology: {
+    cac: {
+      formula: string;
+      note: string;
+    };
+    ltv: {
+      formula: string;
+      note: string;
+    };
+    arpu: {
+      formula: string;
+      activeFormula?: string;
+      note: string;
+    };
+  };
+  retention: {
+    retentionRate: number;
+    churnRate: number;
+    atRiskCount: number;
+  };
+  liabilities: {
+    accountsReceivable: number;
+    payrollPayable: number;
+    expensePayable: number;
+    loanSummary?: any;
+    arAgingBuckets?: Record<string, number>;
+  };
+  trend: {
+    monthCount: number;
+    months: string[];
+    revenue: number[];
+    netProfit: number[];
+    studentCount: number[];
+  };
+}
+
 @Injectable({ providedIn: 'root' })
 export class FinancialControlService {
   private apiUrl = `${environment.apiBase}/financial-control`;
@@ -227,7 +306,18 @@ export class FinancialControlService {
 
   // ─── Dashboard ─────────────────────────────────────────────────
   async getDashboard(): Promise<FinancialDashboard> {
-    return this.http.get<FinancialDashboard>(`${this.apiUrl}/dashboard`).toPromise() as Promise<FinancialDashboard>;
+    const response = await this.http.get<unknown>(`${this.apiUrl}/dashboard`).toPromise();
+    return this.validateDashboardResponse(response);
+  }
+
+  async getInvestorMetrics(monthCount?: number): Promise<InvestorMetrics> {
+    let params = new HttpParams();
+    if (typeof monthCount === 'number' && Number.isFinite(monthCount)) {
+      params = params.set('monthCount', String(monthCount));
+    }
+
+    const response = await this.http.get<unknown>(`${this.apiUrl}/investor-metrics`, { params }).toPromise();
+    return this.validateInvestorMetricsResponse(response);
   }
 
   async getProvisionalGrossProfit(month?: string): Promise<ProvisionalGrossProfit> {
@@ -238,7 +328,8 @@ export class FinancialControlService {
 
   // ─── Alerts ────────────────────────────────────────────────────
   async getAlerts(): Promise<FinancialAlertsResponse> {
-    return this.http.get<FinancialAlertsResponse>(`${this.apiUrl}/alerts`).toPromise() as Promise<FinancialAlertsResponse>;
+    const response = await this.http.get<unknown>(`${this.apiUrl}/alerts`).toPromise();
+    return this.validateAlertsResponse(response);
   }
 
   // ─── Overview ───────────────────────────────────────────────────
@@ -340,5 +431,49 @@ export class FinancialControlService {
     if (startDate) params = params.set('startDate', startDate);
     if (endDate) params = params.set('endDate', endDate);
     return this.http.get<any>(`${this.apiUrl}/reconciliation`, { params }).toPromise();
+  }
+
+  private validateDashboardResponse(value: unknown): FinancialDashboard {
+    const response = this.expectRecord(value, 'financial dashboard');
+    this.expectRecord(response['cashPosition'], 'financial dashboard.cashPosition');
+    this.expectRecord(response['obligations'], 'financial dashboard.obligations');
+    this.expectRecord(response['metrics'], 'financial dashboard.metrics');
+    return response as unknown as FinancialDashboard;
+  }
+
+  private validateInvestorMetricsResponse(value: unknown): InvestorMetrics {
+    const response = this.expectRecord(value, 'investor metrics');
+    this.expectRecord(response['snapshot'], 'investor metrics.snapshot');
+    this.expectRecord(response['revenue'], 'investor metrics.revenue');
+    this.expectRecord(response['profitability'], 'investor metrics.profitability');
+    this.expectRecord(response['unitEconomics'], 'investor metrics.unitEconomics');
+    this.expectRecord(response['customerBase'], 'investor metrics.customerBase');
+    this.expectRecord(response['methodology'], 'investor metrics.methodology');
+    const trend = this.expectRecord(response['trend'], 'investor metrics.trend');
+    this.expectArray(trend['months'], 'investor metrics.trend.months');
+    this.expectArray(trend['revenue'], 'investor metrics.trend.revenue');
+    this.expectArray(trend['netProfit'], 'investor metrics.trend.netProfit');
+    this.expectArray(trend['studentCount'], 'investor metrics.trend.studentCount');
+    return response as unknown as InvestorMetrics;
+  }
+
+  private validateAlertsResponse(value: unknown): FinancialAlertsResponse {
+    const response = this.expectRecord(value, 'financial alerts');
+    this.expectArray(response['alerts'], 'financial alerts.alerts');
+    return response as unknown as FinancialAlertsResponse;
+  }
+
+  private expectRecord(value: unknown, label: string): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Invalid ${label} response.`);
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private expectArray(value: unknown, label: string): unknown[] {
+    if (!Array.isArray(value)) {
+      throw new Error(`Invalid ${label} response.`);
+    }
+    return value;
   }
 }

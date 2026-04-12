@@ -12,6 +12,12 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { RequestMetricsInterceptor } from './common/interceptors/request-metrics.interceptor';
 
 const STATIC_ASSET_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const PROTECTED_UPLOAD_PREFIXES = [
+  '/uploads/attendance',
+  '/uploads/recordings',
+  '/uploads/session-recordings',
+  '/uploads/teaching-recordings',
+];
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
@@ -54,6 +60,23 @@ async function bootstrap() {
   const uploadsPath = join(process.cwd(), 'uploads');
   if (!existsSync(uploadsPath)) mkdirSync(uploadsPath, { recursive: true });
 
+  app.use((req, res, next) => {
+    const requestPath = String(req.path || req.url || '');
+    if (
+      PROTECTED_UPLOAD_PREFIXES.some(
+        (prefix) => requestPath === prefix || requestPath.startsWith(`${prefix}/`),
+      )
+    ) {
+      res.status(403).json({
+        statusCode: 403,
+        message: 'Direct access to protected uploads is forbidden',
+      });
+      return;
+    }
+
+    next();
+  });
+
   // Serve static files from uploads directory
   app.useStaticAssets(uploadsPath, {
     prefix: '/uploads/',
@@ -61,6 +84,10 @@ async function bootstrap() {
     immutable: true,
     etag: true,
     setHeaders: (res, filePath) => {
+      // Frontend dev server runs on a different origin and needs to render
+      // uploaded public assets such as wallet receipts and invoice proofs.
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
       if (/\.(html?)$/i.test(filePath)) {
         res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
         return;

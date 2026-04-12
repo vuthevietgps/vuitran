@@ -5,6 +5,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ChatbotController } from './chatbot.controller';
 import { WebhookController } from './webhook.controller';
 import { ChatbotService } from './chatbot.service';
+import { ChatbotConfigService } from './chatbot-config.service';
+import { ChatbotMessagingService } from './chatbot-messaging.service';
 import { WebhookService } from './webhook.service';
 import { ChatbotGateway } from './chatbot.gateway';
 import { ChatbotWebhookProcessor } from './chatbot-webhook.processor';
@@ -68,6 +70,8 @@ const redisEnabled = (process.env.REDIS_ENABLED ?? 'true').toLowerCase() !== 'fa
   controllers: [ChatbotController, WebhookController],
   providers: [
     ChatbotService,
+    ChatbotConfigService,
+    ChatbotMessagingService,
     WebhookService,
     ChatbotGateway,
     ...(redisEnabled

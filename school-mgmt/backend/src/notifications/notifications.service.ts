@@ -1,11 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
   Notification, NotificationDocument, NotificationType, NotificationPriority,
 } from './schemas/notification.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { UserStatus } from '../common/interfaces/user-status.enum';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { BulkNotificationDto, NotificationRecipientGroup } from './dto/bulk-notification.dto';
 
 export interface CreateNotificationParams {
   recipientId: string;
@@ -18,6 +20,45 @@ export interface CreateNotificationParams {
   targetId?: string;
   targetModule?: string;
 }
+
+type BulkNotificationRecipient = {
+  _id: Types.ObjectId;
+  fullName: string;
+  role: Role;
+  email?: string;
+};
+
+export interface BulkNotificationPreview {
+  recipientGroup: NotificationRecipientGroup;
+  recipientLabel: string;
+  title: string;
+  message: string;
+  priority: NotificationPriority;
+  link?: string;
+  channels: string[];
+  totalRecipients: number;
+  sampleRecipients: Array<{
+    recipientId: string;
+    fullName: string;
+    role: Role;
+    email?: string;
+  }>;
+}
+
+export interface BulkNotificationSendError {
+  recipientId: string;
+  recipientName: string;
+  recipientRole: Role;
+  error: string;
+}
+
+export interface BulkNotificationSendResult extends BulkNotificationPreview {
+  successCount: number;
+  failedCount: number;
+  errors: BulkNotificationSendError[];
+}
+
+const BULK_NOTIFICATION_ALLOWED_ROLES = [Role.DIRECTOR, Role.OPS];
 
 @Injectable()
 export class NotificationsService {
@@ -65,6 +106,73 @@ export class NotificationsService {
     } catch (err) {
       console.error('Notify by role error:', err);
     }
+  }
+
+  async previewBulkNotification(
+    actorRole: string,
+    dto: BulkNotificationDto,
+  ): Promise<BulkNotificationPreview> {
+    this.assertBulkNotificationPermission(actorRole);
+    const payload = this.normalizeBulkNotificationPayload(dto);
+    const recipients = await this.resolveBulkRecipients(payload.recipientGroup);
+
+    return {
+      ...payload,
+      recipientLabel: this.getBulkRecipientLabel(payload.recipientGroup),
+      channels: ['IN_APP'],
+      totalRecipients: recipients.length,
+      sampleRecipients: recipients.slice(0, 5).map((recipient) => ({
+        recipientId: recipient._id.toString(),
+        fullName: recipient.fullName,
+        role: recipient.role,
+        email: recipient.email,
+      })),
+    };
+  }
+
+  async sendBulkNotification(
+    actorRole: string,
+    dto: BulkNotificationDto,
+  ): Promise<BulkNotificationSendResult> {
+    const preview = await this.previewBulkNotification(actorRole, dto);
+    const recipients = await this.resolveBulkRecipients(preview.recipientGroup);
+
+    if (recipients.length === 0) {
+      throw new BadRequestException('Khong co nguoi nhan cho nhom duoc chon');
+    }
+
+    let successCount = 0;
+    const errors: BulkNotificationSendError[] = [];
+
+    for (const recipient of recipients) {
+      try {
+        await this.notificationModel.create({
+          recipientId: recipient._id,
+          recipientRole: recipient.role,
+          type: NotificationType.SYSTEM,
+          priority: preview.priority,
+          title: preview.title,
+          message: preview.message,
+          link: preview.link,
+          targetModule: 'notifications',
+        });
+        successCount += 1;
+      } catch (error) {
+        errors.push({
+          recipientId: recipient._id.toString(),
+          recipientName: recipient.fullName,
+          recipientRole: recipient.role,
+          error: this.getNotificationErrorMessage(error),
+        });
+      }
+    }
+
+    return {
+      ...preview,
+      successCount,
+      failedCount: errors.length,
+      errors,
+    };
   }
 
   /** Get notifications for a user */
@@ -127,5 +235,98 @@ export class NotificationsService {
       createdAt: { $lt: cutoff },
     });
     return result.deletedCount;
+  }
+
+  private assertBulkNotificationPermission(role: string): void {
+    if (!BULK_NOTIFICATION_ALLOWED_ROLES.includes(role as Role)) {
+      throw new ForbiddenException('Ban khong co quyen gui thong bao hang loat');
+    }
+  }
+
+  private normalizeBulkNotificationPayload(dto: BulkNotificationDto): Omit<BulkNotificationPreview, 'recipientLabel' | 'channels' | 'totalRecipients' | 'sampleRecipients'> {
+    const recipientGroup = dto?.recipientGroup;
+    const title = dto?.title?.trim?.() || '';
+    const message = dto?.message?.trim?.() || '';
+    const priority = dto?.priority || NotificationPriority.MEDIUM;
+    const link = dto?.link?.trim?.() || undefined;
+
+    if (!Object.values(NotificationRecipientGroup).includes(recipientGroup)) {
+      throw new BadRequestException('Nhom nhan khong hop le');
+    }
+    if (!title) {
+      throw new BadRequestException('Tieu de thong bao la bat buoc');
+    }
+    if (!message) {
+      throw new BadRequestException('Noi dung thong bao la bat buoc');
+    }
+    if (!Object.values(NotificationPriority).includes(priority)) {
+      throw new BadRequestException('Muc uu tien khong hop le');
+    }
+
+    return {
+      recipientGroup,
+      title,
+      message,
+      priority,
+      link,
+    };
+  }
+
+  private async resolveBulkRecipients(
+    recipientGroup: NotificationRecipientGroup,
+  ): Promise<BulkNotificationRecipient[]> {
+    const query = this.userModel
+      .find(this.buildBulkRecipientFilter(recipientGroup))
+      .select('_id fullName role email')
+      .sort({ fullName: 1 });
+    return query.lean<BulkNotificationRecipient[]>();
+  }
+
+  private buildBulkRecipientFilter(recipientGroup: NotificationRecipientGroup) {
+    switch (recipientGroup) {
+      case NotificationRecipientGroup.PARENTS:
+        return { role: Role.PARENT, status: UserStatus.ACTIVE };
+      case NotificationRecipientGroup.TEACHERS:
+        return { role: Role.TEACHER, status: UserStatus.ACTIVE };
+      case NotificationRecipientGroup.SALES:
+        return { role: Role.SALE, status: UserStatus.ACTIVE };
+      case NotificationRecipientGroup.OPS:
+        return { role: Role.OPS, status: UserStatus.ACTIVE };
+      case NotificationRecipientGroup.ACCOUNTING:
+        return { role: Role.ACCOUNTING, status: UserStatus.ACTIVE };
+      case NotificationRecipientGroup.ALL_STAFF:
+        return {
+          role: { $in: [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.ADSMANAGER] },
+          status: UserStatus.ACTIVE,
+        };
+      default:
+        throw new BadRequestException('Nhom nhan khong duoc ho tro');
+    }
+  }
+
+  private getBulkRecipientLabel(recipientGroup: NotificationRecipientGroup): string {
+    switch (recipientGroup) {
+      case NotificationRecipientGroup.PARENTS:
+        return 'Phu huynh';
+      case NotificationRecipientGroup.TEACHERS:
+        return 'Giao vien';
+      case NotificationRecipientGroup.SALES:
+        return 'Sale';
+      case NotificationRecipientGroup.OPS:
+        return 'Van hanh';
+      case NotificationRecipientGroup.ACCOUNTING:
+        return 'Ke toan';
+      case NotificationRecipientGroup.ALL_STAFF:
+        return 'Toan bo nhan su noi bo';
+      default:
+        return 'Khac';
+    }
+  }
+
+  private getNotificationErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message.trim().length > 0) {
+      return error.message;
+    }
+    return 'Khong the tao thong bao';
   }
 }

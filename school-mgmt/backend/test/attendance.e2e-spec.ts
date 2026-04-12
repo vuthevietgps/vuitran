@@ -7,6 +7,7 @@ import * as request from 'supertest';
 import * as cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { closeE2eResources } from './e2e-cleanup';
 
 type SessionCookies = {
   accessToken: string;
@@ -282,8 +283,7 @@ describe('Attendance module (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    await replSet.stop();
+    await closeE2eResources({ app, moduleRef, mongoReplSet: replSet });
   });
 
   it('denies parent from marking attendance', async () => {
@@ -486,7 +486,7 @@ describe('Attendance module (e2e)', () => {
       });
 
     expect(submitRes.body.status).toBe('PRESENT');
-    expect(String(submitRes.body.imageUrl || '')).toContain('/uploads/attendance/');
+    expect(String(submitRes.body.imageUrl || '')).toContain('/secure-assets');
     expect(submitRes.body.attendedAt).toBeTruthy();
 
     await request(app.getHttpServer())

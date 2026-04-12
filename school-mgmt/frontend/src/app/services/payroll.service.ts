@@ -13,6 +13,7 @@ export interface PayrollPreviewSummary {
   pendingParentConfirm: number;
   pendingFinalize: number;
   finalizedNoReport: number;
+  heldCount?: number;
   alreadyPaid: number;
   cancelled: number;
   noShow: number;
@@ -24,16 +25,33 @@ export interface PayrollPreviewAmounts {
   totalBlockedByReport: number;
   totalPendingConfirm: number;
   totalPendingFinalize: number;
+  totalHeldPayout?: number;
   totalAttendedPayout: number;
+  totalOfflineMinGuaranteeAmount?: number;
 }
 
 export interface PayrollPreviewSession {
   _id: string;
-  classId?: { _id: string; name: string; code: string };
+  classId?: {
+    _id: string;
+    name: string;
+    code: string;
+    classMode?: string;
+    teacherPayPerStudent?: number;
+  };
+  classMode?: string;
   studentId?: { _id: string; fullName: string; studentCode?: string };
   scheduledDate: string;
   durationMinutes: number;
   teacherPayout: number;
+  offlineBasePayout?: number;
+  offlineMinGuaranteeAmount?: number;
+  offlineMinGuaranteeFloor?: number;
+  offlineMinGuaranteeApplied?: boolean;
+  penaltyAmount?: number;
+  finalPayout?: number;
+  isLateReport?: boolean;
+  lateHours?: number;
   status: string;
   hasTeachingReport: boolean;
   isTeacherPaid: boolean;
@@ -49,7 +67,18 @@ export interface PayrollPreviewSession {
     submittedAt?: string;
     isLateSubmission?: boolean;
   } | null;
-  payrollStatus: 'PAID' | 'ELIGIBLE' | 'BLOCKED_NO_REPORT' | 'WAITING_PARENT' | 'WAITING_FINALIZE' | 'CANCELLED' | 'NO_SHOW' | 'OTHER';
+  holdReason?: string;
+  holdDescription?: string;
+  payrollStatus:
+    | 'PAID'
+    | 'ELIGIBLE'
+    | 'BLOCKED_NO_REPORT'
+    | 'WAITING_PARENT'
+    | 'WAITING_FINALIZE'
+    | 'HELD'
+    | 'CANCELLED'
+    | 'NO_SHOW'
+    | 'OTHER';
 }
 
 export interface PayrollPreview {

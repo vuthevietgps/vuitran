@@ -12,6 +12,10 @@ import {
 import {
   PayrollTransactionService,
 } from '../payroll/payroll-transaction.service';
+import {
+  calculateTeachingReportDeadline,
+  calculateVietnamLateHours,
+} from '../sessions/helpers/vietnam-timezone.utils';
 
 /** Số ngày quét ngược về quá khứ cho mỗi lần reconcile */
 const RECONCILE_WINDOW_DAYS = 30;
@@ -66,6 +70,17 @@ export class ReconciliationService {
     private readonly payrollTxModel: Model<PayrollTransactionDocument>,
     private readonly payrollTxService: PayrollTransactionService,
   ) {}
+
+  private hasQualifiedTeachingReport(session: {
+    hasTeachingReport?: boolean;
+    teachingReport?: { lessonContent?: string | null } | null;
+  }): boolean {
+    return (
+      session.hasTeachingReport === true &&
+      typeof session.teachingReport?.lessonContent === 'string' &&
+      session.teachingReport.lessonContent.trim().length >= 20
+    );
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   //  CRONJOB NIGHTLY
@@ -166,12 +181,25 @@ export class ReconciliationService {
       const existingTx = txBySessionId.get(sessionIdStr);
 
       const sessionHasReport: boolean = session.hasTeachingReport ?? false;
-      const sessionIsLate: boolean = session.teachingReport?.isLateSubmission ?? false;
-      const sessionLateHours: number = session.teachingReport?.lateSubmissionHours ?? 0;
+      const sessionReportDeadline =
+        session.teachingReport?.deadline ??
+        calculateTeachingReportDeadline(session.scheduledDate, 24);
+      const sessionSubmittedAt =
+        session.teachingReport?.submittedAt ??
+        sessionReportDeadline;
+      const derivedLateHours = calculateVietnamLateHours(
+        sessionSubmittedAt,
+        sessionReportDeadline,
+      );
+      const sessionIsLate: boolean =
+        session.teachingReport?.isLateSubmission ?? derivedLateHours > 0;
+      const sessionLateHours: number =
+        session.teachingReport?.lateSubmissionHours ?? derivedLateHours;
+      const sessionHasQualifiedReport = this.hasQualifiedTeachingReport(session as any);
 
       // ── CASE 1: Thiếu PayrollTransaction ──────────────────────────────────
       if (!existingTx) {
-        if (sessionHasReport) {
+        if (sessionHasQualifiedReport) {
           // GV đã nộp báo cáo nhưng PayrollTransaction chưa được tạo → tạo bù
           try {
             await this.payrollTxService.createFromSession({
@@ -183,8 +211,8 @@ export class ReconciliationService {
               baseSalary: session.teacherPayout ?? 0,
               isLateReport: sessionIsLate,
               lateHours: sessionLateHours,
-              reportDeadline: session.teachingReport?.deadline,
-              reportSubmittedAt: session.teachingReport?.submittedAt,
+              reportDeadline: sessionReportDeadline,
+              reportSubmittedAt: sessionSubmittedAt,
             });
             missingTxCreated++;
             this.logger.log(
@@ -196,6 +224,11 @@ export class ReconciliationService {
               `[RECONCILIATION][CASE 1] Failed to create PayrollTransaction for session ${sessionIdStr}: ${msg}`,
             );
           }
+        } else if (sessionHasReport) {
+          orphanWarnings.push(sessionIdStr);
+          this.logger.warn(
+            `[RECONCILIATION][CASE 1] Skip PayrollTransaction creation for session ${sessionIdStr}: teaching report is unqualified`,
+          );
         }
         // Session không có báo cáo + không có Tx → bình thường
         continue;

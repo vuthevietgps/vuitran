@@ -70,6 +70,9 @@ export class TrialEnrollment {
 
   @Prop({ type: Date, index: true })
   decisionAt?: Date;
+
+  @Prop({ type: Boolean, default: false })
+  teacherPaidOnlyDecision!: boolean;
 }
 
 export const TrialEnrollmentSchema = SchemaFactory.createForClass(TrialEnrollment);
@@ -77,8 +80,4 @@ export const TrialEnrollmentSchema = SchemaFactory.createForClass(TrialEnrollmen
 TrialEnrollmentSchema.index({ classId: 1, status: 1 });
 TrialEnrollmentSchema.index({ productId: 1, status: 1 });
 TrialEnrollmentSchema.index({ saleId: 1, status: 1 });
-TrialEnrollmentSchema.index({ parentPhone: 1 });
-TrialEnrollmentSchema.index({ studentId: 1 });
-TrialEnrollmentSchema.index({ orderId: 1 });
-TrialEnrollmentSchema.index({ invoiceId: 1 });
 TrialEnrollmentSchema.index({ createdAt: -1 });

@@ -18,6 +18,8 @@ async function updateDemoPasswords() {
       'director.demo@school.local',
       'accounting.demo@school.local',
       'ops.demo@school.local',
+      'adsmanager.demo@school.local',
+      'shareholder.demo@school.local',
       'teacher.demo@school.local',
       'parent.demo@school.local',
       'care.demo@school.local',

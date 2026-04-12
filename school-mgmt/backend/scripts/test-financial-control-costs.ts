@@ -2,6 +2,10 @@ import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
 import { FinancialControlService } from '../src/financial-control/financial-control.service';
 import { FinancialControlBankFundService } from '../src/financial-control/financial-control-bank-fund.service';
+import { FinancialControlCashflowService } from '../src/financial-control/financial-control-cashflow.service';
+import { FinancialControlPnlService } from '../src/financial-control/financial-control-pnl.service';
+import { FinancialControlDashboardService } from '../src/financial-control/financial-control-dashboard.service';
+import { FinancialControlAgingService } from '../src/financial-control/financial-control-aging.service';
 import { PayrollFinancialAggregateService } from '../src/financial-control/aggregates/payroll-financial.aggregate';
 import { ExpenseFinancialAggregateService } from '../src/financial-control/aggregates/expense-financial.aggregate';
 import { LoanFinancialAggregateService } from '../src/financial-control/aggregates/loan-financial.aggregate';
@@ -375,28 +379,59 @@ async function main() {
     empty as any,
     {} as any,
   );
-
-  const service = new FinancialControlService(
-    createModel(() => state.bankAccounts) as any,
-    empty as any,
-    createModel(() => state.funds) as any,
-    empty as any,
+  const cashflowService = new FinancialControlCashflowService(
     createModel(() => state.sessions) as any,
-    createModel(() => state.expenses) as any,
     createModel(() => state.invoices) as any,
     createModel(() => state.ledgers) as any,
     createModel(() => state.wallets) as any,
     createModel(() => state.adCosts) as any,
     empty as any,
+    payrollAggregate as any,
+    expenseAggregate as any,
+    loanAggregate as any,
+  );
+  const pnlService = new FinancialControlPnlService(
+    createModel(() => state.bankAccounts) as any,
+    createModel(() => state.funds) as any,
+    createModel(() => state.sessions) as any,
+    createModel(() => state.invoices) as any,
+    createModel(() => state.wallets) as any,
+    createModel(() => state.adCosts) as any,
+    payrollAggregate as any,
+    expenseAggregate as any,
+    loanAggregate as any,
+  );
+  const agingService = new FinancialControlAgingService(
+    createModel(() => state.invoices) as any,
+    createModel(() => state.wallets) as any,
+  );
+  const dashboardService = new FinancialControlDashboardService(
+    empty as any,
+    createModel(() => state.funds) as any,
+    createModel(() => state.sessions) as any,
+    createModel(() => state.invoices) as any,
+    createModel(() => state.wallets) as any,
     createModel(() => state.orders) as any,
     empty as any,
-    empty as any,
-    empty as any,
-    {} as any,
     payrollAggregate as any,
     expenseAggregate as any,
     loanAggregate as any,
     bankFundService as any,
+    cashflowService as any,
+    pnlService as any,
+    agingService as any,
+    undefined,
+    undefined,
+  );
+
+  const service = new FinancialControlService(
+    bankFundService as any,
+    cashflowService as any,
+    pnlService as any,
+    dashboardService as any,
+    {} as any,
+    agingService as any,
+    {} as any,
   );
 
   const dashboardBefore = await service.getFinancialDashboard();

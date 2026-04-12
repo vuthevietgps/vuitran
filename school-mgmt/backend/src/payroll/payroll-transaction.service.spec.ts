@@ -70,6 +70,27 @@ function buildService(txModelOverride?: Partial<any>) {
   };
   Object.assign(MockModel, txModelOverride ?? {});
   MockModel.findOne = txModelOverride?.findOne ?? jest.fn().mockResolvedValue(null);
+  MockModel.findOneAndUpdate =
+    txModelOverride?.findOneAndUpdate ?? jest.fn().mockImplementation(async (_filter: any, update: any) => {
+      return makeTxDoc({
+        teacherId: update?.$setOnInsert?.teacherId,
+        sessionId: update?.$setOnInsert?.sessionId,
+        classId: update?.$setOnInsert?.classId,
+        studentId: update?.$setOnInsert?.studentId,
+        sessionDate: update?.$setOnInsert?.sessionDate,
+        baseSalary: update?.$setOnInsert?.baseSalary,
+        penaltyAmount: update?.$setOnInsert?.penaltyAmount ?? 0,
+        bonusAmount: update?.$setOnInsert?.bonusAmount ?? 0,
+        adjustmentAmount: update?.$setOnInsert?.adjustmentAmount ?? 0,
+        finalSalary: update?.$setOnInsert?.finalSalary ?? update?.$setOnInsert?.baseSalary ?? BASE_SALARY,
+        status: update?.$setOnInsert?.status ?? PayrollTransactionStatus.PENDING,
+        isLateReport: update?.$setOnInsert?.isLateReport ?? false,
+        lateHours: update?.$setOnInsert?.lateHours ?? 0,
+        reportDeadline: update?.$setOnInsert?.reportDeadline,
+        reportSubmittedAt: update?.$setOnInsert?.reportSubmittedAt,
+        createdBy: update?.$setOnInsert?.createdBy,
+      });
+    });
 
   return new PayrollTransactionService(MockModel as any, {} as any);
 }
@@ -137,13 +158,13 @@ describe('PayrollTransactionService.createFromSession()', () => {
   it('is idempotent: returns existing record without creating another', async () => {
     const existing = makeTxDoc();
     const txModel = {
-      findOne: jest.fn().mockResolvedValue(existing),
+      findOneAndUpdate: jest.fn().mockResolvedValue(existing),
     };
     const service = buildService(txModel);
 
     const result = await service.createFromSession(baseDto, PENALTY_CONFIG);
 
-    expect(txModel.findOne).toHaveBeenCalledTimes(1);
+    expect(txModel.findOneAndUpdate).toHaveBeenCalledTimes(1);
     expect(result).toBe(existing);
   });
 

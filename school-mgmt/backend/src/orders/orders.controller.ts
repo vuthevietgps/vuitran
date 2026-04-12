@@ -3,17 +3,22 @@ import { OrdersService } from './orders.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderDto } from './dto/update-order.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
+import { ApproveOrderDto, RejectOrderDto, RequestInfoDto } from './dto/order-action.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { OrderWorkflowService } from './order-workflow.service';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly orderWorkflowService: OrderWorkflowService,
+  ) {}
 
   @Post()
   @Roles(Role.SALE, Role.OPS, Role.DIRECTOR)
@@ -72,17 +77,17 @@ export class OrdersController {
   @Roles(Role.OPS, Role.DIRECTOR)
   approve(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body() body: { approvalImage?: string },
+    @Body() body: ApproveOrderDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.ordersService.approve(id, req.user, body.approvalImage);
+    return this.orderWorkflowService.approve(id, req.user, body.approvalImage);
   }
 
   @Post(':id/reject')
   @Roles(Role.OPS, Role.DIRECTOR)
   reject(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body() body: { reason: string },
+    @Body() body: RejectOrderDto,
     @Req() req: AuthenticatedRequest,
   ) {
     return this.ordersService.reject(id, body.reason, req.user);
@@ -92,7 +97,7 @@ export class OrdersController {
   @Roles(Role.OPS, Role.DIRECTOR)
   requestInfo(
     @Param('id', ParseMongoIdPipe) id: string,
-    @Body() body: { reason: string },
+    @Body() body: RequestInfoDto,
     @Req() req: AuthenticatedRequest,
   ) {
     return this.ordersService.requestInfo(id, body.reason, req.user);
@@ -101,7 +106,19 @@ export class OrdersController {
   @Post(':id/cancel')
   @Roles(Role.SALE, Role.OPS, Role.DIRECTOR)
   cancel(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
-    return this.ordersService.cancel(id, req.user);
+    return this.orderWorkflowService.cancel(id, req.user);
+  }
+
+  @Post(':id/resubmit')
+  @Roles(Role.SALE, Role.OPS, Role.DIRECTOR)
+  resubmit(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.ordersService.resubmit(id, req.user);
+  }
+
+  @Post(':id/complete')
+  @Roles(Role.OPS, Role.DIRECTOR)
+  complete(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {
+    return this.ordersService.complete(id, req.user);
   }
 
   @Delete(':id')

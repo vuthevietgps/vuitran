@@ -220,7 +220,7 @@ export class AdsController {
   // ─── Analytics ──────────────────────────────────────────
 
   @Get('analytics')
-  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER, Role.SHAREHOLDER)
   async getAnalytics(@Query() query: QueryAdsAnalyticsDto) {
     return this.adsAnalyticsService.getAnalytics(
       query.startDate,
@@ -231,7 +231,7 @@ export class AdsController {
   }
 
   @Get('analytics/profit')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.SHAREHOLDER)
   async getNetProfitByAdGroup(@Query() query: QueryAdsProfitDto) {
     return this.adsAnalyticsService.getNetProfitByAdGroup(
       query.startDate,

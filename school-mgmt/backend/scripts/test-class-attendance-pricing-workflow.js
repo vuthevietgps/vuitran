@@ -165,6 +165,38 @@ async function loginDirector() {
   });
 }
 
+async function loginUser(email, password) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  const parsed = await parseResponse(res);
+  if (res.status !== 201 && res.status !== 200) {
+    throw new Error(`Login failed for ${email}: ${parsed.text}`);
+  }
+
+  const cookieJar = extractCookiesFromResponse(res);
+  ensure(cookieJar.access_token, `No access_token cookie returned for ${email}`);
+
+  if (!cookieJar['XSRF-TOKEN']) {
+    const meRes = await fetch(`${API_BASE}/users/me`, {
+      headers: { Cookie: `access_token=${cookieJar.access_token}` },
+    });
+    Object.assign(cookieJar, extractCookiesFromResponse(meRes));
+  }
+
+  ensure(cookieJar['XSRF-TOKEN'], `No XSRF-TOKEN cookie returned for ${email}`);
+  return {
+    cookie: buildCookieHeader({
+      access_token: cookieJar.access_token,
+      'XSRF-TOKEN': cookieJar['XSRF-TOKEN'],
+    }),
+    user: parsed.json && parsed.json.user ? parsed.json.user : null,
+  };
+}
+
 function formatDateYYYYMMDD(d) {
   return d.toISOString().slice(0, 10);
 }
@@ -280,6 +312,7 @@ async function main() {
   const runner = new TestRunner();
   const createdClassIds = [];
   let token = null;
+  let teacherToken = null;
 
   const selected = {
     teacherId: null,
@@ -303,6 +336,23 @@ async function main() {
     offlineSessionBothPresentB: null,
   };
 
+  const submitTeachingReport = async (sessionId, label) => {
+    const report = await request({
+      method: 'PATCH',
+      reqPath: `/sessions/${sessionId}/teaching-report`,
+      token: teacherToken,
+      expectedStatus: [200],
+      body: {
+        lessonContent: `Class attendance pricing workflow report for ${label}, đủ dài để hợp lệ.`,
+        teacherComment: `teacher report ${label}`,
+      },
+    });
+    ensure(
+      report.data && report.data.hasTeachingReport === true,
+      `Session ${sessionId} should have teaching report after submit`,
+    );
+  };
+
   const now = new Date();
   const dateOnline1 = formatDateYYYYMMDD(addDays(now, 520));
   const dateOnline2 = formatDateYYYYMMDD(addDays(now, 521));
@@ -314,7 +364,24 @@ async function main() {
     ensure(token && token.includes('access_token='), 'Director token missing');
   });
 
+  await runner.test('Login TEACHER demo account', async () => {
+    const teacherLogin = await loginUser('teacher.demo@school.local', DEMO_PASSWORD);
+    teacherToken = teacherLogin.cookie;
+    ensure(teacherToken && teacherToken.includes('access_token='), 'Teacher token missing');
+  });
+
   await runner.test('Pick teacher and students for workflow', async () => {
+    const meRes = await request({
+      method: 'GET',
+      reqPath: '/users/me',
+      token: teacherToken,
+      expectedStatus: [200],
+    });
+    selected.teacherId = normalizeId(
+      meRes.data && (meRes.data._id || meRes.data.id || meRes.data.user),
+    );
+    ensure(selected.teacherId, 'Teacher demo id missing');
+
     const usersRes = await request({
       method: 'GET',
       reqPath: '/users',
@@ -324,7 +391,10 @@ async function main() {
     const users = Array.isArray(usersRes.data) ? usersRes.data : [];
     const teachers = users.filter((u) => u.role === 'TEACHER');
     ensure(teachers.length > 0, 'No teacher found');
-    selected.teacherId = normalizeId(teachers[0]._id);
+    ensure(
+      teachers.some((u) => normalizeId(u._id) === selected.teacherId),
+      'Teacher demo must exist in users list',
+    );
 
     const studentsRes = await request({
       method: 'GET',
@@ -437,6 +507,8 @@ async function main() {
     ensure(Number(s.data.amountCharged) === 150_000, `Expected amountCharged=150000, got ${s.data.amountCharged}`);
     ensure(Number(s.data.teacherPayout) === 100_000, `Expected teacherPayout=100000, got ${s.data.teacherPayout}`);
 
+    await submitTeachingReport(ids.onlineSession1, 'online-session-1');
+
     await request({
       method: 'POST',
       reqPath: `/sessions/${ids.onlineSession1}/finalize`,
@@ -505,6 +577,8 @@ async function main() {
     });
     ensure(Number(newSession.data.amountCharged) === 220_000, `Expected amountCharged=220000, got ${newSession.data.amountCharged}`);
     ensure(Number(newSession.data.teacherPayout) === 140_000, `Expected teacherPayout=140000, got ${newSession.data.teacherPayout}`);
+
+    await submitTeachingReport(ids.onlineSession2, 'online-session-2');
 
     await request({
       method: 'POST',
@@ -596,6 +670,8 @@ async function main() {
     ensure(ids.offlineSessionOnePresent, 'Expected session for offline PRESENT student');
     ensure(!normalizeId(absentAtt && absentAtt.sessionId), 'ABSENT student must not have sessionId');
 
+    await submitTeachingReport(ids.offlineSessionOnePresent, 'offline-one-present');
+
     await request({
       method: 'POST',
       reqPath: `/sessions/${ids.offlineSessionOnePresent}/finalize`,
@@ -685,6 +761,9 @@ async function main() {
 
     const teacherTotal = Number(sA.data.teacherPayout || 0) + Number(sB.data.teacherPayout || 0);
     ensure(teacherTotal === 240_000, `Expected teacherPayout total=240000, got ${teacherTotal}`);
+
+    await submitTeachingReport(ids.offlineSessionBothPresentA, 'offline-both-present-a');
+    await submitTeachingReport(ids.offlineSessionBothPresentB, 'offline-both-present-b');
 
     await request({
       method: 'POST',

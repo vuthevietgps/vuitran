@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Param, Query, Body, UseGuards, Req } from '@nestjs/common';
+import { Controller, Get, Patch, Post, Param, Query, Body, UseGuards, Req } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { NotificationsService } from './notifications.service';
@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { BulkNotificationDto } from './dto/bulk-notification.dto';
 
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
@@ -32,6 +33,22 @@ export class NotificationsController {
   @Get('unread-count')
   getUnreadCount(@Req() req: AuthenticatedRequest) {
     return this.notificationsService.getUnreadCount(req.user.sub).then((count) => ({ count }));
+  }
+
+  @Post('bulk-preview')
+  previewBulkNotification(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: BulkNotificationDto,
+  ) {
+    return this.notificationsService.previewBulkNotification(req.user.role, body);
+  }
+
+  @Post('bulk-send')
+  sendBulkNotification(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: BulkNotificationDto,
+  ) {
+    return this.notificationsService.sendBulkNotification(req.user.role, body);
   }
 
   @Patch(':id/read')

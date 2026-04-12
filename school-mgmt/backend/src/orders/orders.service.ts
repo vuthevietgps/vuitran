@@ -2,15 +2,22 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, FilterQuery, Types } from "mongoose";
-import { Order, OrderDocument, OrderStatus } from "./schemas/order.schema";
+import { InvoicesService } from "../invoices/invoices.service";
+import {
+  Order,
+  OrderDocument,
+  OrderStatus,
+  PaymentPlan,
+} from "./schemas/order.schema";
 import { Lead, LeadDocument, LeadStatus } from "../leads/schemas/lead.schema";
 import { Student, StudentDocument } from "../students/schemas/student.schema";
 import { User, UserDocument } from "../users/schemas/user.schema";
-import { Invoice, InvoiceDocument } from "../invoices/schemas/invoice.schema";
+import { Invoice, InvoiceDocument, InvoiceStatus } from "../invoices/schemas/invoice.schema";
 import { CreateOrderDto } from "./dto/create-order.dto";
 import { UpdateOrderDto } from "./dto/update-order.dto";
 import { QueryOrderDto } from "./dto/query-order.dto";
@@ -20,7 +27,7 @@ import { EnrollmentService, EnrollmentResult } from "./enrollment.service";
 import { JwtPayload } from "../common/interfaces/jwt-payload.interface";
 import { Role } from "../common/interfaces/role.enum";
 import { MarketingAttributionService } from "../marketing-attribution/marketing-attribution.service";
-import { InvoicesService } from "../invoices/invoices.service";
+import { OrderWorkflowService } from "./order-workflow.service";
 import {
   ParentAttributionModel,
   ParentAttributionSourceType,
@@ -29,6 +36,8 @@ import { mergeTrackingAttribution } from "../marketing-attribution/parent-attrib
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
@@ -37,8 +46,9 @@ export class OrdersService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private auditLogService: AuditLogService,
     private enrollmentService: EnrollmentService,
-    private marketingAttributionService: MarketingAttributionService,
     private invoicesService: InvoicesService,
+    private marketingAttributionService: MarketingAttributionService,
+    private orderWorkflowService: OrderWorkflowService,
   ) {}
 
   private getActorId(user: JwtPayload): string {
@@ -56,43 +66,103 @@ export class OrdersService {
     return Math.round(normalized / 1000) * 1000;
   }
 
-  private roundMoneyDownToThousand(value?: number): number {
-    const normalized = Number(value || 0);
-    if (!Number.isFinite(normalized) || normalized <= 0) return 0;
-    return Math.floor(normalized / 1000) * 1000;
+  private getInstallmentFrameCount(paymentPlan?: string | null): number {
+    switch (paymentPlan) {
+      case PaymentPlan.INSTALLMENT_2:
+        return 2;
+      case PaymentPlan.INSTALLMENT_3:
+        return 3;
+      default:
+        return 0;
+    }
   }
 
-  private floorSessionCount(value?: number): number {
-    const normalized = Number(value || 0);
-    if (!Number.isFinite(normalized) || normalized <= 0) return 0;
-    return Math.floor(normalized);
+  private splitAmountIntoFrames(totalAmount: number, frameCount: number): number[] {
+    const normalizedTotal = this.roundMoneyToThousand(totalAmount);
+    if (frameCount <= 0 || normalizedTotal <= 0) {
+      return [];
+    }
+
+    const baseAmount = Math.floor(normalizedTotal / frameCount / 1000) * 1000;
+    const remainder = normalizedTotal - baseAmount * frameCount;
+
+    return Array.from({ length: frameCount }, (_, index) =>
+      index === frameCount - 1 ? baseAmount + remainder : baseAmount,
+    );
   }
 
-  private isOfflineTrialZeroAmountItem(item: any): boolean {
-    const teachingMode = String(item?.teachingMode || "").trim().toUpperCase();
-    const trialSessions = this.floorSessionCount(item?.trialSessions);
-    const amount = this.roundMoneyToThousand(item?.amount);
-    return teachingMode === "OFFLINE" && trialSessions > 0 && amount <= 0;
+  private normalizePaymentDate(value?: string | Date | null): Date {
+    const fallback = new Date();
+    if (!value) {
+      return new Date(
+        Date.UTC(
+          fallback.getUTCFullYear(),
+          fallback.getUTCMonth(),
+          fallback.getUTCDate(),
+        ),
+      );
+    }
+
+    if (typeof value === "string") {
+      const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+      if (dateOnlyMatch) {
+        const [, year, month, day] = dateOnlyMatch;
+        return new Date(
+          Date.UTC(Number(year), Number(month) - 1, Number(day)),
+        );
+      }
+    }
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return new Date(
+        Date.UTC(
+          fallback.getUTCFullYear(),
+          fallback.getUTCMonth(),
+          fallback.getUTCDate(),
+        ),
+      );
+    }
+    return new Date(
+      Date.UTC(
+        parsed.getUTCFullYear(),
+        parsed.getUTCMonth(),
+        parsed.getUTCDate(),
+      ),
+    );
   }
 
-  private isOfflineTrialApprovalExempt(order: any): boolean {
-    const items = Array.isArray(order?.items) ? order.items : [];
-    return items.length > 0 && items.every((item) => this.isOfflineTrialZeroAmountItem(item));
+  private buildPaymentFrames(
+    paymentPlan?: string | null,
+    finalAmount?: number,
+    paymentDate?: string | Date | null,
+  ): Array<{ dueDate: Date; amount: number; status: "PENDING" | "PAID" }> {
+    const frameCount = this.getInstallmentFrameCount(paymentPlan);
+    const amounts = this.splitAmountIntoFrames(Number(finalAmount || 0), frameCount);
+    if (!amounts.length) {
+      return [];
+    }
+
+    const baseDate = this.normalizePaymentDate(paymentDate);
+    return amounts.map((amount, index) => {
+      const dueDate = new Date(baseDate);
+      dueDate.setMonth(dueDate.getMonth() + index);
+      return {
+        dueDate,
+        amount,
+        status: "PENDING",
+      };
+    });
   }
 
-  private normalizeOrderPayload<
-    T extends {
-      items?: any[];
-      totalAmount?: number;
-      discountAmount?: number;
-      finalAmount?: number;
-    },
-  >(dto: T): T {
+  private normalizeOrderPayload<T extends { items?: any[] }>(dto: T): T {
     if (!Array.isArray(dto?.items)) {
       return dto;
     }
 
-    const normalizedItems = dto.items.map((item) => {
+    return {
+      ...dto,
+      items: dto.items.map((item) => {
         const normalizedItem = { ...(item || {}) };
         const invoiceNumber = this.normalizeOptionalText(
           normalizedItem.invoiceNumber,
@@ -102,126 +172,8 @@ export class OrdersService {
         } else {
           delete normalizedItem.invoiceNumber;
         }
-        const requestedClassCode = this.normalizeOptionalText(
-          normalizedItem.requestedClassCode,
-        );
-        if (requestedClassCode) {
-          normalizedItem.requestedClassCode = requestedClassCode.toUpperCase();
-        } else {
-          delete normalizedItem.requestedClassCode;
-        }
-        if (
-          normalizedItem.invoiceAmount === "" ||
-          normalizedItem.invoiceAmount === null ||
-          normalizedItem.invoiceAmount === undefined
-        ) {
-          delete normalizedItem.invoiceAmount;
-        } else {
-          normalizedItem.invoiceAmount = this.roundMoneyToThousand(
-            normalizedItem.invoiceAmount,
-          );
-        }
-        if (normalizedItem.sessions !== undefined) {
-          normalizedItem.sessions = this.floorSessionCount(normalizedItem.sessions);
-        }
-        if (normalizedItem.invoiceSessions !== undefined) {
-          normalizedItem.invoiceSessions = this.floorSessionCount(
-            normalizedItem.invoiceSessions,
-          );
-        }
-        if (normalizedItem.bonusSessions !== undefined) {
-          normalizedItem.bonusSessions = this.floorSessionCount(
-            normalizedItem.bonusSessions,
-          );
-        }
-        if (normalizedItem.trialSessions !== undefined) {
-          normalizedItem.trialSessions = this.floorSessionCount(
-            normalizedItem.trialSessions,
-          );
-        }
-        if (normalizedItem.pricePerSession !== undefined) {
-          normalizedItem.pricePerSession = this.roundMoneyToThousand(
-            normalizedItem.pricePerSession,
-          );
-        }
-        if (normalizedItem.amount !== undefined) {
-          normalizedItem.amount = this.roundMoneyToThousand(
-            normalizedItem.amount,
-          );
-        }
-        if (normalizedItem.teacherPayPerSession !== undefined) {
-          normalizedItem.teacherPayPerSession =
-            this.roundMoneyDownToThousand(
-              normalizedItem.teacherPayPerSession,
-            );
-        }
-        if (normalizedItem.teacherPayPerStudent !== undefined) {
-          normalizedItem.teacherPayPerStudent =
-            this.roundMoneyDownToThousand(
-              normalizedItem.teacherPayPerStudent,
-            );
-        }
         return normalizedItem;
-      });
-
-    const totalAmount = this.roundMoneyToThousand(
-      dto.totalAmount !== undefined && dto.totalAmount !== null
-        ? Math.max(0, Number(dto.totalAmount) || 0)
-        : normalizedItems.reduce(
-            (sum, item) => sum + Math.max(0, Number(item.amount || 0)),
-            0,
-          ),
-    );
-
-    const hasExplicitInvoiceAmounts =
-      normalizedItems.length > 0 &&
-      normalizedItems.every(
-        (item) =>
-          item.invoiceAmount !== undefined &&
-          item.invoiceAmount !== null &&
-          item.invoiceAmount !== "",
-      );
-
-    if (!hasExplicitInvoiceAmounts) {
-      const finalAmount =
-        dto.finalAmount !== undefined && dto.finalAmount !== null
-          ? this.roundMoneyToThousand(
-              Math.max(0, Number(dto.finalAmount) || 0),
-            )
-          : this.roundMoneyToThousand(
-              Math.max(
-                0,
-                totalAmount -
-                  this.roundMoneyToThousand(
-                    Math.max(0, Number(dto.discountAmount) || 0),
-                  ),
-              ),
-            );
-      return {
-        ...dto,
-        items: normalizedItems,
-        totalAmount,
-        finalAmount,
-        discountAmount: this.roundMoneyToThousand(
-          Math.max(0, totalAmount - finalAmount),
-        ),
-      };
-    }
-    const finalAmount = this.roundMoneyToThousand(
-      normalizedItems.reduce(
-        (sum, item) => sum + Math.max(0, Number(item.invoiceAmount || 0)),
-        0,
-      ),
-    );
-
-    return {
-      ...dto,
-      items: normalizedItems,
-      totalAmount,
-      finalAmount,
-      discountAmount: this.roundMoneyToThousand(
-        Math.max(0, totalAmount - finalAmount),
-      ),
+      }),
     };
   }
 
@@ -418,20 +370,38 @@ export class OrdersService {
   private async generateOrderCode(): Promise<string> {
     const year = new Date().getFullYear();
     const prefix = `ORD-${year}-`;
-    const last = await this.orderModel
-      .findOne({ orderCode: { $regex: `^${prefix}` } })
-      .sort({ orderCode: -1 })
-      .lean();
-    let nextNum = 1;
-    if (last) {
-      const parts = last.orderCode.split("-");
-      nextNum = parseInt(parts[2], 10) + 1;
+
+    // Retry loop to handle concurrent order creation
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const last = await this.orderModel
+        .findOne({ orderCode: { $regex: `^${prefix}` } })
+        .sort({ orderCode: -1 })
+        .lean();
+      let nextNum = 1;
+      if (last) {
+        const parts = last.orderCode.split("-");
+        nextNum = parseInt(parts[2], 10) + 1;
+      }
+      const code = `${prefix}${String(nextNum).padStart(4, "0")}`;
+
+      const exists = await this.orderModel.exists({ orderCode: code });
+      if (!exists) return code;
+
+      this.logger.warn(`OrderCode ${code} conflict, retrying (attempt ${attempt + 1})`);
     }
-    return `${prefix}${String(nextNum).padStart(4, "0")}`;
+
+    // Fallback: append timestamp suffix to guarantee uniqueness
+    const ts = Date.now().toString(36);
+    return `${prefix}${ts}`;
   }
 
   async create(dto: CreateOrderDto, user: JwtPayload): Promise<Order> {
     const normalizedDto = this.normalizeOrderPayload(dto);
+    (normalizedDto as any).paymentFrames = this.buildPaymentFrames(
+      (normalizedDto as any).paymentPlan,
+      (normalizedDto as any).finalAmount,
+      (normalizedDto as any).paymentDate,
+    );
     await this.assertOrderInvoiceNumbersAvailable(normalizedDto.items);
 
     const orderCode = await this.generateOrderCode();
@@ -477,6 +447,11 @@ export class OrdersService {
       user,
       leadForConversion,
     );
+
+    // SALE không được tự set hoa hồng
+    if (user.role === Role.SALE) {
+      delete (normalizedDto as any).saleCommission;
+    }
 
     const order = new this.orderModel({
       ...normalizedDto,
@@ -526,7 +501,7 @@ export class OrdersService {
       module: "ORDERS" as any,
       targetId: saved._id?.toString(),
       targetName: saved.orderCode,
-      description: `Táº¡o Ä‘Æ¡n Ä‘Äƒng kÃ½: ${saved.orderCode} - ${saved.studentName}`,
+      description: `Tao don dang ky: ${saved.orderCode} - ${saved.studentName}`,
     });
 
     return saved;
@@ -541,12 +516,13 @@ export class OrdersService {
     if (query.saleId) filter.saleId = query.saleId;
 
     if (query.search) {
+      const escaped = query.search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       filter.$or = [
-        { parentName: { $regex: query.search, $options: "i" } },
-        { parentPhone: { $regex: query.search, $options: "i" } },
-        { studentName: { $regex: query.search, $options: "i" } },
-        { studentCode: { $regex: query.search, $options: "i" } },
-        { orderCode: { $regex: query.search, $options: "i" } },
+        { parentName: { $regex: escaped, $options: "i" } },
+        { parentPhone: { $regex: escaped, $options: "i" } },
+        { studentName: { $regex: escaped, $options: "i" } },
+        { studentCode: { $regex: escaped, $options: "i" } },
+        { orderCode: { $regex: escaped, $options: "i" } },
       ];
     }
 
@@ -562,12 +538,27 @@ export class OrdersService {
       filter.saleId = actorId;
     }
 
-    return this.orderModel.find(filter).sort({ createdAt: -1 }).lean();
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 50;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.orderModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      this.orderModel.countDocuments(filter),
+    ]);
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async findOne(id: string, user?: JwtPayload): Promise<Order> {
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException("ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i");
+    if (!order) throw new NotFoundException("Don hang khong ton tai");
     if (user) this.assertSaleOrderAccess(order, user);
     return order as Order;
   }
@@ -579,12 +570,12 @@ export class OrdersService {
   ): Promise<Order> {
     const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException("ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i");
+    if (!order) throw new NotFoundException("Don hang khong ton tai");
     this.assertSaleOrderAccess(order, user);
     const o = order as any;
     if (![OrderStatus.DRAFT, OrderStatus.NEEDS_INFO].includes(o.status)) {
       throw new BadRequestException(
-        "Chá»‰ cÃ³ thá»ƒ sá»­a Ä‘Æ¡n á»Ÿ tráº¡ng thÃ¡i NhÃ¡p hoáº·c Cáº§n bá»• sung",
+        "Chi co the sua don o trang thai Nhap hoac Can bo sung",
       );
     }
 
@@ -594,6 +585,7 @@ export class OrdersService {
     }
     if (user.role === Role.SALE) {
       delete updateData.saleId;
+      delete updateData.saleCommission;
     }
 
     const shouldResolveOwner =
@@ -615,6 +607,16 @@ export class OrdersService {
       updateData.saleId = saleOwner.saleId;
       updateData.saleName = saleOwner.saleName;
     }
+
+    const mergedOrderState = {
+      ...o,
+      ...updateData,
+    };
+    updateData.paymentFrames = this.buildPaymentFrames(
+      mergedOrderState.paymentPlan,
+      mergedOrderState.finalAmount,
+      mergedOrderState.paymentDate,
+    );
 
     const updated = await this.orderModel
       .findByIdAndUpdate(id, updateData, { new: true })
@@ -651,7 +653,7 @@ export class OrdersService {
       module: "ORDERS" as any,
       targetId: id,
       targetName: o.orderCode,
-      description: `Cáº­p nháº­t Ä‘Æ¡n ${o.orderCode}`,
+      description: `Cap nhat don ${o.orderCode}`,
       newValue: updateData as any,
     });
 
@@ -661,19 +663,19 @@ export class OrdersService {
   async submit(id: string, user: JwtPayload): Promise<Order> {
     const actorId = this.getActorId(user);
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException("ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i");
+    if (!order) throw new NotFoundException("Don hang khong ton tai");
     this.assertSaleOrderAccess(order, user);
 
     const o = order as any;
     if (![OrderStatus.DRAFT, OrderStatus.NEEDS_INFO].includes(o.status)) {
       throw new BadRequestException(
-        "Chá»‰ cÃ³ thá»ƒ gá»­i duyá»‡t Ä‘Æ¡n á»Ÿ tráº¡ng thÃ¡i NhÃ¡p hoáº·c Cáº§n bá»• sung",
+        "Chi co the gui duyet don o trang thai Nhap hoac Can bo sung",
       );
     }
 
     if (!o.items || o.items.length === 0) {
       throw new BadRequestException(
-        "ÄÆ¡n hÃ ng pháº£i cÃ³ Ã­t nháº¥t 1 sáº£n pháº©m",
+        "Don hang phai co it nhat 1 san pham",
       );
     }
 
@@ -692,7 +694,7 @@ export class OrdersService {
       module: "ORDERS" as any,
       targetId: id,
       targetName: o.orderCode,
-      description: `Gá»­i duyá»‡t Ä‘Æ¡n ${o.orderCode}`,
+      description: `Gui duyet don ${o.orderCode}`,
     });
 
     return updated as Order;
@@ -712,37 +714,24 @@ export class OrdersService {
       throw new BadRequestException("Chi co the duyet don dang cho duyet");
     }
 
-    const approvalProofRequired = !this.isOfflineTrialApprovalExempt(o);
-
-    if (approvalProofRequired && !this.normalizeOptionalText(o.receiptImage)) {
-      throw new BadRequestException(
-        "Phai co hoa don sale upload truoc khi duyet don",
-      );
-    }
-
-    const normalizedApprovalImage = this.normalizeOptionalText(approvalImage);
-    if (approvalProofRequired && !normalizedApprovalImage) {
-      throw new BadRequestException(
-        "Phai tai hoa don doi ung truoc khi duyet don",
-      );
-    }
-
+    // ÄÃ¡nh dáº¥u APPROVED trÆ°á»›c
     await this.assertOrderInvoiceNumbersAvailable(o.items);
 
-    const approveUpdate: Record<string, unknown> = {
-      status: OrderStatus.APPROVED,
-      approvedBy: actorId,
-      approvedAt: new Date(),
-    };
-    if (normalizedApprovalImage) {
-      approveUpdate.approvalImage = normalizedApprovalImage;
-    }
-
-    await this.orderModel.findByIdAndUpdate(
-      id,
-      approveUpdate,
+    // Atomic update: chỉ approve nếu status vẫn là SUBMITTED (tránh race condition)
+    const updated = await this.orderModel.findOneAndUpdate(
+      { _id: id, status: OrderStatus.SUBMITTED },
+      {
+        status: OrderStatus.APPROVED,
+        approvedBy: actorId,
+        approvedAt: new Date(),
+        ...(approvalImage ? { approvalImage } : {}),
+      },
       { new: true },
     );
+
+    if (!updated) {
+      throw new BadRequestException("Chi co the duyet don dang cho duyet");
+    }
 
     // Audit log duyá»‡t Ä‘Æ¡n
     await this.auditLogService.log({
@@ -762,38 +751,24 @@ export class OrdersService {
       id,
       user,
     );
-    const autoApprovalErrors: string[] = [];
-    if (enrollment.success && Array.isArray(enrollment.invoiceIds)) {
-      for (const invoiceId of enrollment.invoiceIds) {
-        try {
-          const approveInvoiceDto = normalizedApprovalImage
-            ? { action: "APPROVE", approvalImage: normalizedApprovalImage }
-            : { action: "APPROVE" };
-          await this.invoicesService.approveInvoice(
-            invoiceId,
-            approveInvoiceDto as any,
-            user,
-          );
-        } catch (error: any) {
-          const message =
-            error instanceof Error ? error.message : "Khong the duyet hoa don";
-          autoApprovalErrors.push(
-            `Khong the duyet hoa don ${invoiceId}: ${message}`,
-          );
-        }
-      }
+
+    // Rollback status neu enrollment that bai
+    if (!enrollment.success) {
+      await this.orderModel.findByIdAndUpdate(id, {
+        status: OrderStatus.SUBMITTED,
+        $unset: { approvedBy: 1, approvedAt: 1 },
+      });
+      this.logger.error(
+        `Enrollment failed for order ${o.orderCode}, reverted to SUBMITTED: ${enrollment.errors?.join(', ')}`,
+      );
     }
 
     // Láº¥y láº¡i order sau khi enrollment cáº­p nháº­t
     const updatedOrder = await this.orderModel.findById(id).lean();
-    const mergedErrors = [...(enrollment.errors || []), ...autoApprovalErrors];
-    const mergedEnrollment = autoApprovalErrors.length
-      ? { ...enrollment, success: false, errors: mergedErrors }
-      : enrollment;
 
     return {
       order: updatedOrder as Order,
-      enrollment: mergedEnrollment,
+      enrollment,
     };
   }
 
@@ -838,12 +813,12 @@ export class OrdersService {
     user: JwtPayload,
   ): Promise<Order> {
     const order = await this.orderModel.findById(id).lean();
-    if (!order) throw new NotFoundException("ÄÆ¡n hÃ ng khÃ´ng tá»“n táº¡i");
+    if (!order) throw new NotFoundException("Don hang khong ton tai");
 
     const o = order as any;
     if (o.status !== OrderStatus.SUBMITTED) {
       throw new BadRequestException(
-        "Chá»‰ yÃªu cáº§u bá»• sung cho Ä‘Æ¡n Ä‘ang chá» duyá»‡t",
+        "Chi yeu cau bo sung cho don dang cho duyet",
       );
     }
 
@@ -854,6 +829,18 @@ export class OrdersService {
         { new: true },
       )
       .lean();
+
+    await this.auditLogService.log({
+      userId: this.getActorId(user),
+      userEmail: user.email,
+      userFullName: user.fullName,
+      userRole: user.role,
+      action: AuditAction.STATUS_CHANGE,
+      module: "ORDERS" as any,
+      targetId: id,
+      targetName: o.orderCode,
+      description: `Yeu cau bo sung don ${o.orderCode}: ${reason}`,
+    });
 
     return updated as Order;
   }
@@ -890,9 +877,75 @@ export class OrdersService {
     return updated as Order;
   }
 
+  async resubmit(id: string, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException("Don hang khong ton tai");
+    this.assertSaleOrderAccess(order, user);
+
+    const o = order as any;
+    if (o.status !== OrderStatus.REJECTED) {
+      throw new BadRequestException(
+        "Chi co the gui lai don bi tu choi",
+      );
+    }
+
+    const updated = await this.orderModel
+      .findByIdAndUpdate(id, { status: OrderStatus.SUBMITTED, rejectionReason: null }, { new: true })
+      .lean();
+
+    await this.auditLogService.log({
+      userId: actorId,
+      userEmail: user.email,
+      userFullName: user.fullName,
+      userRole: user.role,
+      action: AuditAction.STATUS_CHANGE,
+      module: "ORDERS" as any,
+      targetId: id,
+      targetName: o.orderCode,
+      description: `Gui lai don ${o.orderCode} sau khi bi tu choi`,
+    });
+
+    return updated as Order;
+  }
+
+  async complete(id: string, user: JwtPayload): Promise<Order> {
+    const actorId = this.getActorId(user);
+    const order = await this.orderModel.findById(id).lean();
+    if (!order) throw new NotFoundException("Don hang khong ton tai");
+
+    const o = order as any;
+    if (o.status !== OrderStatus.APPROVED) {
+      throw new BadRequestException(
+        "Chi co the hoan tat don da duyet",
+      );
+    }
+
+    const updated = await this.orderModel
+      .findByIdAndUpdate(id, { status: OrderStatus.COMPLETED }, { new: true })
+      .lean();
+
+    await this.auditLogService.log({
+      userId: actorId,
+      userEmail: user.email,
+      userFullName: user.fullName,
+      userRole: user.role,
+      action: AuditAction.STATUS_CHANGE,
+      module: "ORDERS" as any,
+      targetId: id,
+      targetName: o.orderCode,
+      description: `Hoan tat don ${o.orderCode}`,
+    });
+
+    return updated as Order;
+  }
+
   async getPipeline(user: JwtPayload) {
     const match: any = {};
-    if (user.role === Role.SALE) match.saleId = this.getActorId(user);
+    if (user.role === Role.SALE) {
+      const actorId = this.getActorId(user);
+      match.saleId = new Types.ObjectId(actorId);
+    }
 
     const pipeline = await this.orderModel.aggregate([
       { $match: match },
@@ -926,7 +979,10 @@ export class OrdersService {
       1,
     );
     const match: any = {};
-    if (user.role === Role.SALE) match.saleId = this.getActorId(user);
+    if (user.role === Role.SALE) {
+      const actorId = this.getActorId(user);
+      match.saleId = new Types.ObjectId(actorId);
+    }
 
     const stats = await this.orderModel.aggregate([
       { $match: match },
@@ -1033,6 +1089,7 @@ export class OrdersService {
     const data = stats[0];
     const overview = data.overview[0] || {
       total: 0,
+      submitted: 0,
       approved: 0,
       totalRevenue: 0,
       totalCommission: 0,
@@ -1102,71 +1159,96 @@ export class OrdersService {
     fromDate?: string,
     toDate?: string,
   ) {
-    const filter: any = {};
-    if (saleId) filter.saleId = saleId;
+    const match: FilterQuery<OrderDocument> = {};
+    if (saleId) match.saleId = new Types.ObjectId(saleId);
     if (fromDate || toDate) {
-      filter.createdAt = {};
-      if (fromDate) filter.createdAt.$gte = new Date(fromDate);
-      if (toDate) filter.createdAt.$lte = new Date(toDate);
+      match.createdAt = {};
+      if (fromDate) match.createdAt.$gte = new Date(fromDate);
+      if (toDate) match.createdAt.$lte = new Date(toDate + "T23:59:59.999Z");
     }
 
-    const orders = await this.orderModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .lean();
+    const result = await this.orderModel.aggregate([
+      { $match: match },
+      {
+        $facet: {
+          details: [
+            { $sort: { createdAt: -1 as const } },
+            {
+              $project: {
+                orderCode: 1,
+                parentName: 1,
+                studentName: 1,
+                finalAmount: { $ifNull: ["$finalAmount", 0] },
+                saleCommission: { $ifNull: ["$saleCommission", 0] },
+                status: 1,
+                saleName: 1,
+                saleId: 1,
+                createdAt: 1,
+              },
+            },
+          ],
+          byMonth: [
+            {
+              $match: { status: { $in: ["COMPLETED", "APPROVED"] } },
+            },
+            {
+              $group: {
+                _id: { $dateToString: { format: "%Y-%m", date: "$createdAt" } },
+                revenue: { $sum: { $ifNull: ["$finalAmount", 0] } },
+                commission: { $sum: { $ifNull: ["$saleCommission", 0] } },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { _id: -1 as const } },
+            {
+              $project: {
+                _id: 0,
+                month: "$_id",
+                revenue: 1,
+                commission: 1,
+                count: 1,
+              },
+            },
+          ],
+          summary: [
+            {
+              $group: {
+                _id: null,
+                totalOrders: { $sum: 1 },
+                totalRevenue: {
+                  $sum: {
+                    $cond: [
+                      { $in: ["$status", ["APPROVED", "COMPLETED"]] },
+                      { $ifNull: ["$finalAmount", 0] },
+                      0,
+                    ],
+                  },
+                },
+                totalCommission: {
+                  $sum: {
+                    $cond: [
+                      { $in: ["$status", ["APPROVED", "COMPLETED"]] },
+                      { $ifNull: ["$saleCommission", 0] },
+                      0,
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ]);
 
-    // Detail list
-    const details = orders.map((o: any) => ({
-      _id: o._id,
-      orderCode: o.orderCode,
-      parentName: o.parentName,
-      studentName: o.studentName,
-      finalAmount: o.finalAmount || 0,
-      saleCommission: o.saleCommission || 0,
-      status: o.status,
-      saleName: o.saleName,
-      saleId: o.saleId,
-      createdAt: o.createdAt,
-    }));
-
-    // Group by month
-    const byMonth: Record<
-      string,
-      { revenue: number; commission: number; count: number }
-    > = {};
-    for (const o of orders) {
-      if (!["COMPLETED", "APPROVED"].includes((o as any).status)) continue;
-      const month = new Date((o as any).createdAt).toISOString().slice(0, 7);
-      if (!byMonth[month])
-        byMonth[month] = { revenue: 0, commission: 0, count: 0 };
-      byMonth[month].revenue += (o as any).finalAmount || 0;
-      byMonth[month].commission += (o as any).saleCommission || 0;
-      byMonth[month].count++;
-    }
-
-    // Summary
-    const completedOrders = orders.filter((o: any) => o.status === "COMPLETED");
-    const approvedOrders = orders.filter((o: any) => o.status === "APPROVED");
-
+    const data = result[0];
     return {
-      details,
-      byMonth: Object.entries(byMonth)
-        .map(([month, data]) => ({ month, ...data }))
-        .sort((a, b) => b.month.localeCompare(a.month)),
-      summary: {
-        totalRevenue: completedOrders.reduce(
-          (s, o: any) => s + (o.finalAmount || 0),
-          0,
-        ),
-        totalCommission: completedOrders.reduce(
-          (s, o: any) => s + (o.saleCommission || 0),
-          0,
-        ),
-        pendingCommission: approvedOrders.reduce(
-          (s, o: any) => s + (o.saleCommission || 0),
-          0,
-        ),
-        totalOrders: orders.length,
+      details: data.details,
+      byMonth: data.byMonth,
+      summary: data.summary[0] || {
+        totalOrders: 0,
+        totalRevenue: 0,
+        totalCommission: 0,
+        pendingCommission: 0,
       },
     };
   }

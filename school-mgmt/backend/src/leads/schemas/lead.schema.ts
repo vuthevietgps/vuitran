@@ -171,6 +171,8 @@ LeadSchema.index({ status: 1 });
 LeadSchema.index({ saleId: 1 });
 LeadSchema.index({ source: 1 });
 LeadSchema.index({ nextFollowUp: 1 });
+LeadSchema.index({ saleId: 1, status: 1, nextFollowUp: 1 });
+LeadSchema.index({ saleId: 1, status: 1, returnedToPoolAt: -1, createdAt: -1 });
 LeadSchema.index({ parentPhone: 1 });
 LeadSchema.index({ createdAt: -1 });
 LeadSchema.index({ assignedAt: 1 });

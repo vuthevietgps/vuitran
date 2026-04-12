@@ -6,6 +6,7 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
+import { IsDateString } from 'class-validator';
 import { ReconciliationService, ReconciliationResult } from './reconciliation.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -14,8 +15,10 @@ import { Role } from '../common/interfaces/role.enum';
 
 export class ManualReconcileDto {
   /** Ngày bắt đầu (ISO string), ví dụ: "2025-01-01" */
+  @IsDateString()
   fromDate!: string;
   /** Ngày kết thúc (ISO string), ví dụ: "2025-01-31" */
+  @IsDateString()
   toDate!: string;
 }
 

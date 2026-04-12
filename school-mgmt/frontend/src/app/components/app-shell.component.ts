@@ -18,18 +18,19 @@ import { NotificationsService } from '../services/notifications.service';
 import { PendingApprovalsService } from '../services/pending-approvals.service';
 import { RoutePrefetchService } from '../services/route-prefetch.service';
 import { Role, ROLE_LABELS } from '../models/role.enum';
+import { ChangePasswordModalComponent } from './change-password-modal.component';
 
 const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
-const REPORT_GROUP_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.SALE];
-const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE];
+const REPORT_GROUP_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.SALE, Role.SHAREHOLDER];
+const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.SHAREHOLDER];
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet],
+  imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, ChangePasswordModalComponent],
   template: `
-  <div class="layout" [class.collapsed]="sidebarCollapsed">
-    <aside class="sidebar" [class.collapsed]="sidebarCollapsed">
+  <div class="layout" [class.collapsed]="sidebarCollapsed" data-testid="app-shell-layout">
+    <aside class="sidebar" [class.collapsed]="sidebarCollapsed" data-testid="app-sidebar">
       <button type="button" class="toggle" (click)="toggleSidebar()">{{ sidebarCollapsed ? '&#9776;' : '&laquo;' }}</button>
       <h3 *ngIf="!sidebarCollapsed">Chức năng</h3>
       <nav>
@@ -40,19 +41,32 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <span class="group-arrow">{{ menuGroups['overview'] ? '&#9650;' : '&#9660;' }}</span>
           </button>
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
-            <a routerLink="/app/dashboard" routerLinkActive="active" title="Dashboard">
+            <a routerLink="/app/dashboard" routerLinkActive="active" title="Dashboard" data-testid="nav-dashboard">
               <span class="icon">&#9632;</span><span class="label">Dashboard</span>
             </a>
-            <a [routerLink]="getHandbookRoute()" routerLinkActive="active" [attr.title]="getHandbookLabel()">
+            <a
+              *ngIf="hasRole([Role.DIRECTOR, Role.SHAREHOLDER])"
+              routerLink="/app/investor-dashboard"
+              routerLinkActive="active"
+              title="Investor dashboard"
+              data-testid="nav-investor-dashboard">
+              <span class="icon">&#128200;</span><span class="label">Investor dashboard</span>
+            </a>
+            <a
+              *ngIf="!hasRole([Role.SHAREHOLDER])"
+              [routerLink]="getHandbookRoute()"
+              routerLinkActive="active"
+              [attr.title]="getHandbookLabel()"
+              data-testid="nav-handbook">
               <span class="icon">&#128214;</span><span class="label">{{ getHandbookLabel() }}</span>
             </a>
-            <a routerLink="/app/pending-approvals" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Chờ duyệt">
+            <a routerLink="/app/pending-approvals" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Chờ duyệt" data-testid="nav-pending-approvals">
               <span class="icon">&#128203;</span><span class="label">Chờ duyệt</span>
-              <span class="nav-badge" *ngIf="pendingCount > 0">{{ pendingCount }}</span>
+              <span class="nav-badge" *ngIf="pendingCount > 0" data-testid="nav-badge-pending">{{ pendingCount }}</span>
             </a>
-            <a routerLink="/app/notifications" routerLinkActive="active" title="Thông báo">
+            <a *ngIf="!hasRole([Role.SHAREHOLDER])" routerLink="/app/notifications" routerLinkActive="active" title="Thông báo" data-testid="nav-notifications">
               <span class="icon">&#128276;</span><span class="label">Thông báo</span>
-              <span class="nav-badge" *ngIf="unreadNotifCount > 0">{{ unreadNotifCount }}</span>
+              <span class="nav-badge" *ngIf="unreadNotifCount > 0" data-testid="nav-badge-notifications">{{ unreadNotifCount }}</span>
             </a>
           </div>
         </div>
@@ -69,7 +83,8 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
               routerLinkActive="active"
               [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'exact', matrixParams: 'ignored', fragment: 'ignored' }"
               *ngIf="hasRole([Role.DIRECTOR, Role.SALE])"
-              title="Quản lý user">
+              title="Quản lý user"
+              data-testid="nav-users">
               <span class="icon">&#128100;</span><span class="label">Quản lý User</span>
             </a>
             <a
@@ -78,16 +93,17 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
               routerLinkActive="active"
               [routerLinkActiveOptions]="{ paths: 'exact', queryParams: 'exact', matrixParams: 'ignored', fragment: 'ignored' }"
               *ngIf="hasRole([Role.DIRECTOR])"
-              title="Tài khoản phụ huynh">
+              title="Tài khoản phụ huynh"
+              data-testid="nav-parent-users">
               <span class="icon">&#128101;</span><span class="label">TK phụ huynh</span>
             </a>
-            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý gói sản phẩm">
+            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý gói sản phẩm" data-testid="nav-products">
               <span class="icon">&#128218;</span><span class="label">Quản lý gói sản phẩm</span>
             </a>
-            <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý học sinh">
+            <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý học sinh" data-testid="nav-students">
               <span class="icon">&#127891;</span><span class="label">Quản lý học sinh</span>
             </a>
-            <a routerLink="/app/classes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE])" title="Quản lý lớp học">
+            <a routerLink="/app/classes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING])" title="Quản lý lớp học" data-testid="nav-classes">
               <span class="icon">&#127979;</span><span class="label">Quản lý lớp học</span>
             </a>
           </div>
@@ -112,7 +128,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['ads']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])">
+        <div class="menu-group" [class.open]="menuGroups['ads']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER, Role.SHAREHOLDER])">
           <button class="menu-group-header" (click)="toggleGroup('ads')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128226;</span>
             <span class="group-label">Quảng cáo</span>
@@ -122,7 +138,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/ads-management" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])" title="Quản lý quảng cáo">
               <span class="icon">&#128227;</span><span class="label">Quản lý QC</span>
             </a>
-            <a routerLink="/app/ads-analytics" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])" title="Phân tích quảng cáo">
+            <a routerLink="/app/ads-analytics" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER, Role.SHAREHOLDER])" title="Phân tích quảng cáo">
               <span class="icon">&#128200;</span><span class="label">Phân tích QC</span>
             </a>
           </div>
@@ -151,10 +167,10 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <span class="group-arrow">{{ menuGroups['learning'] ? '&#9650;' : '&#9660;' }}</span>
           </button>
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
-            <a routerLink="/app/teaching-materials" routerLinkActive="active" title="Chương trình học">
+            <a routerLink="/app/teaching-materials" routerLinkActive="active" title="Chương trình học" data-testid="nav-parent-materials">
               <span class="icon">&#128194;</span><span class="label">Chương trình học</span>
             </a>
-            <a routerLink="/app/student-progress" routerLinkActive="active" title="Báo cáo giảng dạy chi tiết">
+            <a routerLink="/app/student-progress" routerLinkActive="active" title="Báo cáo giảng dạy chi tiết" data-testid="nav-student-progress">
               <span class="icon">&#128200;</span><span class="label">Báo cáo giảng dạy</span>
             </a>
             <a routerLink="/app/parent-attendance" routerLinkActive="active" title="Lịch sử điểm danh">
@@ -163,7 +179,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/sessions" routerLinkActive="active" title="Lớp học">
               <span class="icon">&#128197;</span><span class="label">Lớp học</span>
             </a>
-            <a routerLink="/app/parent-calendar" routerLinkActive="active" title="Lịch học">
+            <a routerLink="/app/parent-calendar" routerLinkActive="active" title="Lịch học" data-testid="nav-parent-calendar">
               <span class="icon">&#128198;</span><span class="label">Lịch học</span>
             </a>
           </div>
@@ -185,7 +201,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/teaching-materials" routerLinkActive="active" *ngIf="hasRole(teachingMaterialsAccessRoles)" title="Tài liệu giảng dạy">
               <span class="icon">&#128194;</span><span class="label">Tài liệu GD</span>
             </a>
-            <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.TEACHER, Role.ACCOUNTING])" title="Báo cáo giảng dạy">
+            <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING, Role.SHAREHOLDER])" title="Báo cáo giảng dạy">
               <span class="icon">&#128221;</span><span class="label">BC giảng dạy</span>
             </a>
             <a routerLink="/app/teacher-kpi" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="KPI giáo viên">
@@ -194,8 +210,11 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/calendar-overview" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Lịch tổng quan">
               <span class="icon">&#128197;</span><span class="label">Lịch tổng quan</span>
             </a>
-            <a routerLink="/app/teacher-profiles" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.SALE])" title="Quản lý giáo viên">
+            <a routerLink="/app/teacher-profiles" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý giáo viên">
               <span class="icon">&#128101;</span><span class="label">Quản lý giáo viên</span>
+            </a>
+            <a routerLink="/app/teacher-registrations" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Giao vien dang ky">
+              <span class="icon">&#9998;</span><span class="label">GV dang ky</span>
             </a>
             <a routerLink="/app/teacher-profile" routerLinkActive="active" *ngIf="hasRole([Role.TEACHER])" title="Hồ sơ giảng dạy">
               <span class="icon">&#128100;</span><span class="label">Hồ sơ cá nhân</span>
@@ -212,7 +231,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['finance']" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE, Role.PARENT, Role.TEACHER])">
+        <div class="menu-group" [class.open]="menuGroups['finance']" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE, Role.PARENT, Role.TEACHER, Role.SHAREHOLDER])">
           <button class="menu-group-header" (click)="toggleGroup('finance')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128181;</span>
             <span class="group-label">Tài chính</span>
@@ -243,13 +262,13 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/expenses" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Chi phí khác">
               <span class="icon">&#128184;</span><span class="label">Chi phí khác</span>
             </a>
-            <a routerLink="/app/loans" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Quản lý vốn vay">
+            <a routerLink="/app/loans" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER])" title="Quản lý vốn vay">
               <span class="icon">&#128178;</span><span class="label">Vốn vay</span>
             </a>
-            <a routerLink="/app/financial-control" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Kiểm soát tài chính">
+            <a routerLink="/app/financial-control" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER])" title="Kiểm soát tài chính">
               <span class="icon">&#127974;</span><span class="label">KS tài chính</span>
             </a>
-            <a routerLink="/app/aging-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Công nợ phải thu">
+            <a routerLink="/app/aging-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER])" title="Công nợ phải thu">
               <span class="icon">&#128203;</span><span class="label">Công nợ phải thu</span>
             </a>
             <a routerLink="/app/bank-reconciliation" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Đối soát ngân hàng">
@@ -261,7 +280,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/payments/supplier" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Thanh toán NCC">
               <span class="icon">&#128179;</span><span class="label">Thanh toán NCC</span>
             </a>
-            <a routerLink="/app/agents" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE])" title="Danh sách đại lý">
+            <a routerLink="/app/agents" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Danh sách đại lý" data-testid="nav-agents">
               <span class="icon">&#129309;</span><span class="label">Đại lý</span>
             </a>
           </div>
@@ -289,21 +308,22 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['system']">
+        <div class="menu-group" [class.open]="menuGroups['system']" *ngIf="!hasRole([Role.SHAREHOLDER])">
           <button class="menu-group-header" (click)="toggleGroup('system')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#9881;</span>
             <span class="group-label">{{ hasRole([Role.PARENT]) ? 'Hỗ trợ' : 'Hệ thống' }}</span>
             <span class="group-arrow">{{ menuGroups['system'] ? '&#9650;' : '&#9660;' }}</span>
           </button>
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
-            <a routerLink="/app/tickets" routerLinkActive="active" title="Hỗ trợ và ticket">
+            <a routerLink="/app/tickets" routerLinkActive="active" title="Hỗ trợ và ticket" data-testid="nav-tickets">
               <span class="icon">&#127915;</span><span class="label">Ticket & Hỗ trợ</span>
             </a>
             <a
               routerLink="/app/parent-chat"
               routerLinkActive="active"
               *ngIf="hasRole([Role.PARENT])"
-              title="Chatbot phụ huynh">
+              title="Chatbot phụ huynh"
+              data-testid="nav-parent-chat">
               <span class="icon">&#128172;</span><span class="label">Chatbot</span>
             </a>
             <a
@@ -320,10 +340,20 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
         </div>
       </nav>
 
-      <div class="user-info" *ngIf="!sidebarCollapsed">
-        <div class="user-name">{{ auth.userSignal()?.fullName }}</div>
-        <small class="user-role">{{ getRoleLabel(auth.userSignal()?.role) }}</small>
+      <div class="user-info" *ngIf="!sidebarCollapsed" data-testid="sidebar-user-info">
+        <div class="user-name" data-testid="sidebar-user-name">{{ auth.userSignal()?.fullName }}</div>
+        <small class="user-role" data-testid="sidebar-user-role">{{ getRoleLabel(auth.userSignal()?.role) }}</small>
       </div>
+
+      <button
+        type="button"
+        class="account-action"
+        [class.compact]="sidebarCollapsed"
+        [attr.title]="sidebarCollapsed ? 'Doi mat khau' : null"
+        data-testid="change-password-open"
+        (click)="openChangePassword()">
+        {{ sidebarCollapsed ? '&#128274;' : 'Doi mat khau' }}
+      </button>
 
       <button class="logout" (click)="auth.logout()" [class.compact]="sidebarCollapsed">
         {{ sidebarCollapsed ? '&#10140;' : 'Đăng xuất' }}
@@ -331,10 +361,14 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
     </aside>
 
     <main class="content">
-      <div class="route-loading" *ngIf="routeLoading"></div>
+      <div class="route-loading" *ngIf="routeLoading" data-testid="app-route-loading"></div>
       <router-outlet></router-outlet>
     </main>
   </div>
+
+  <app-change-password-modal
+    *ngIf="changePasswordOpen"
+    (closed)="closeChangePassword()"></app-change-password-modal>
   `,
   styles: [`
     :host { display:block; height:100vh; overflow:hidden; }
@@ -409,18 +443,24 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
     .user-info { margin-top:auto; padding:12px 0; border-top:1px solid #1e293b; }
     .user-name { font-weight:600; font-size:14px; }
     .user-role { color:#94a3b8; font-size:12px; }
+    .account-action,
     .logout {
       margin-top:8px; padding:8px 12px; border:none; border-radius:6px;
-      background:#dc2626; color:#fff; cursor:pointer; font-size:13px; font-weight:600;
+      color:#fff; cursor:pointer; font-size:13px; font-weight:600;
       transition:background 0.15s;
     }
+    .account-action { background:#2563eb; }
+    .account-action:hover { background:#1d4ed8; }
+    .logout { background:#dc2626; }
     .logout:hover { background:#b91c1c; }
+    .account-action.compact,
     .logout.compact { padding:8px; font-size:16px; }
     .content {
       flex:1;
       min-width:0;
       min-height:0;
       overflow-y:auto;
+      scrollbar-gutter: stable;
       position:relative;
     }
     .route-loading {
@@ -445,17 +485,53 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
       0% { transform:translateX(-100%); }
       100% { transform:translateX(280%); }
     }
+    @media (max-width: 640px) {
+      .sidebar {
+        width: 60px;
+        align-items: center;
+        padding: 16px 8px;
+      }
+      .sidebar .toggle {
+        position: static;
+        margin-bottom: 12px;
+      }
+      .sidebar h3,
+      .sidebar .label,
+      .sidebar .user-info,
+      .sidebar .nav-badge,
+      .sidebar .menu-group-header {
+        display: none;
+      }
+      .sidebar nav a {
+        justify-content: center;
+        padding: 10px;
+      }
+      .sidebar .menu-group {
+        margin-bottom: 0;
+      }
+      .sidebar .menu-group-items {
+        max-height: none !important;
+        overflow: visible;
+      }
+      .sidebar .menu-group-items a {
+        padding-left: 0;
+      }
+      .content {
+        min-width: 0;
+      }
+    }
   `]
 })
 export class AppShellComponent implements OnInit, OnDestroy {
   Role = Role;
   readonly reportGroupRoles = REPORT_GROUP_ROLES;
   readonly reportAccessRoles = REPORT_ACCESS_ROLES;
-  readonly teachingMaterialsAccessRoles = Object.values(Role) as Role[];
+  readonly teachingMaterialsAccessRoles = Object.values(Role).filter((role) => role !== Role.SHAREHOLDER) as Role[];
   sidebarCollapsed = false;
   unreadNotifCount = 0;
   pendingCount = 0;
   routeLoading = false;
+  changePasswordOpen = false;
 
   menuGroups: Record<string, boolean> = {
     overview: true,
@@ -476,6 +552,8 @@ export class AppShellComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private refreshInterval: any;
   private routerEventsSub?: Subscription;
+  private routeLoadingHideTimer: ReturnType<typeof setTimeout> | null = null;
+  private routeLoadingStartedAt = 0;
   private readonly visibilityChangeHandler = () => {
     if (!this.isDocumentHidden()) {
       void this.loadCounts();
@@ -486,6 +564,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.restoreSidebarState();
+    this.redirectShareholderLanding();
     void this.loadCountsIfVisible();
     this.routePrefetch.warmForRole(this.auth.userSignal()?.role);
     this.refreshInterval = setInterval(() => this.loadCountsIfVisible(), 60000);
@@ -494,7 +573,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     }
     this.routerEventsSub = this.router.events.subscribe((event) => {
       if (event instanceof NavigationStart || event instanceof RouteConfigLoadStart) {
-        this.routeLoading = true;
+        this.showRouteLoading();
         return;
       }
 
@@ -504,13 +583,17 @@ export class AppShellComponent implements OnInit, OnDestroy {
         || event instanceof NavigationError
         || event instanceof RouteConfigLoadEnd
       ) {
-        this.routeLoading = false;
+        this.completeRouteLoading();
       }
     });
   }
 
   ngOnDestroy() {
     if (this.refreshInterval) clearInterval(this.refreshInterval);
+    if (this.routeLoadingHideTimer) {
+      clearTimeout(this.routeLoadingHideTimer);
+      this.routeLoadingHideTimer = null;
+    }
     this.routerEventsSub?.unsubscribe();
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.visibilityChangeHandler);
@@ -540,8 +623,52 @@ export class AppShellComponent implements OnInit, OnDestroy {
     await this.loadCounts();
   }
 
+  private redirectShareholderLanding(): void {
+    if (this.auth.userSignal()?.role !== Role.SHAREHOLDER) {
+      return;
+    }
+
+    const currentUrl = this.router.url.split('?')[0];
+    if (currentUrl === '/app' || currentUrl === '/app/' || currentUrl === '/app/dashboard') {
+      void this.router.navigateByUrl(this.auth.getDefaultAppRoute(), { replaceUrl: true });
+    }
+  }
+
   private isDocumentHidden(): boolean {
     return typeof document !== 'undefined' && document.hidden;
+  }
+
+  private showRouteLoading(): void {
+    if (this.routeLoadingHideTimer) {
+      clearTimeout(this.routeLoadingHideTimer);
+      this.routeLoadingHideTimer = null;
+    }
+    this.routeLoadingStartedAt = Date.now();
+    this.routeLoading = true;
+  }
+
+  private completeRouteLoading(): void {
+    const minimumDuration = this.getRouteLoadingMinimumDuration();
+    const elapsed = Date.now() - this.routeLoadingStartedAt;
+    const remaining = Math.max(minimumDuration - elapsed, 0);
+
+    if (remaining === 0) {
+      this.routeLoading = false;
+      return;
+    }
+
+    this.routeLoadingHideTimer = setTimeout(() => {
+      this.routeLoading = false;
+      this.routeLoadingHideTimer = null;
+    }, remaining);
+  }
+
+  private getRouteLoadingMinimumDuration(): number {
+    const testWindow = globalThis as typeof globalThis & {
+      __appShellRouteLoadingMinDurationMs?: number;
+    };
+    const configuredDuration = Number(testWindow.__appShellRouteLoadingMinDurationMs ?? 0);
+    return Number.isFinite(configuredDuration) && configuredDuration > 0 ? configuredDuration : 0;
   }
 
   private restoreSidebarState(): void {
@@ -614,5 +741,14 @@ export class AppShellComponent implements OnInit, OnDestroy {
   toggleGroup(group: string): void {
     this.menuGroups[group] = !this.menuGroups[group];
   }
+
+  openChangePassword(): void {
+    this.changePasswordOpen = true;
+  }
+
+  closeChangePassword(): void {
+    this.changePasswordOpen = false;
+  }
 }
+
 

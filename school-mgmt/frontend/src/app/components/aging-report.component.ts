@@ -3,6 +3,8 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { environment } from '../../environments/environment';
+import { AuthService } from '../services/auth.service';
+import { Role } from '../models/role.enum';
 
 import { FlowGuideComponent } from './shared/flow-guide.component';
 
@@ -90,6 +92,10 @@ interface AgingReport {
     </select>
   </section>
 
+  <p class="privacy-note" *ngIf="isShareholder()">
+    Chi tiet ca nhan da duoc an danh cho vai tro co dong.
+  </p>
+
   <!-- Table -->
   <table class="data" *ngIf="filteredDetails().length">
     <thead>
@@ -103,10 +109,10 @@ interface AgingReport {
       </tr>
     </thead>
     <tbody>
-      <tr *ngFor="let d of filteredDetails()">
-        <td><strong>{{d.parentName}}</strong></td>
-        <td>{{d.parentPhone}}</td>
-        <td>{{d.students.join(', ')}}</td>
+      <tr *ngFor="let d of filteredDetails(); let i = index">
+        <td><strong>{{displayParentName(d, i)}}</strong></td>
+        <td>{{displayParentPhone(d)}}</td>
+        <td>{{displayStudents(d)}}</td>
         <td class="right amount-red"><strong>{{d.totalDebt | number}}d</strong></td>
         <td>{{d.oldestDate | date:'dd/MM/yyyy'}}</td>
         <td>
@@ -145,6 +151,15 @@ interface AgingReport {
 
     .filters { display:flex; gap:8px; padding:0 32px 16px; flex-wrap:wrap; }
     .filters select { padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; }
+    .privacy-note {
+      margin: 0 32px 16px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      font-size: 13px;
+    }
 
     .data { width:calc(100% - 64px); margin:0 32px; border-collapse:collapse; background:#fff; border-radius:12px; overflow:hidden; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
     .data th { background:#f8fafc; text-align:left; padding:10px 12px; font-size:12px; color:#64748b; text-transform:uppercase; letter-spacing:0.5px; }
@@ -172,7 +187,7 @@ export class AgingReportComponent implements OnInit {
   filteredDetails = signal<AgingDetail[]>([]);
   filterBucket = '';
 
-  constructor(private http: HttpClient) {}
+  constructor(private http: HttpClient, private auth: AuthService) {}
 
   ngOnInit() {
     this.loadReport();
@@ -207,5 +222,25 @@ export class AgingReportComponent implements OnInit {
       '90+': '90+ ngay',
     };
     return labels[bucket] || bucket;
+  }
+
+  isShareholder(): boolean {
+    return this.auth.hasRole([Role.SHAREHOLDER]);
+  }
+
+  displayParentName(detail: AgingDetail, index: number): string {
+    return this.isShareholder() ? `PH #${index + 1}` : (detail.parentName || '-');
+  }
+
+  displayParentPhone(detail: AgingDetail): string {
+    return this.isShareholder() ? 'An danh' : (detail.parentPhone || '-');
+  }
+
+  displayStudents(detail: AgingDetail): string {
+    if (this.isShareholder()) {
+      const count = Array.isArray(detail.students) ? detail.students.length : 0;
+      return `${count} hoc sinh`;
+    }
+    return detail.students?.length ? detail.students.join(', ') : '-';
   }
 }

@@ -1,855 +1,66 @@
-import { CommonModule } from '@angular/common';
+﻿import { CommonModule } from '@angular/common';
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
+  SessionGeneralFeedbackPayload,
+  SessionChangeRequestItem,
   SessionEditHistoryEntry,
   SessionItem,
   SessionParentConfirmPayload,
   SessionQueryParams,
+  SessionReference,
   SessionService,
 } from '../services/session.service';
 import { ClassItem, ClassService } from '../services/class.service';
 import { AuthService } from '../services/auth.service';
+import { TeacherProfile, TeacherService } from '../services/teacher.service';
 import { FlowGuideComponent } from './shared/flow-guide.component';
+
+type CompleteField = 'topicsCovered' | 'homework' | 'teacherNotes';
+
+interface GeneralFeedbackTarget {
+  studentId: string;
+  studentName: string;
+  sessionId: string;
+  classLabel: string;
+  scheduledDate: string;
+}
+
+interface GeneralFeedbackFormState extends SessionGeneralFeedbackPayload {
+  studentId: string;
+  sessionId: string;
+}
+
+interface SessionChangeRequestFormState {
+  requestedScheduledDate: string;
+  requestedStartTime: string;
+  requestedTeacherId: string;
+  reason: string;
+}
+
+interface SessionRescheduleFormState {
+  newScheduledDate: string;
+  newStartTime: string;
+  newEndTime: string;
+  reason: string;
+}
+
+interface TeacherOption {
+  userId: string;
+  fullName: string;
+}
 
 @Component({
   selector: 'app-sessions',
   standalone: true,
   imports: [CommonModule, FormsModule, FlowGuideComponent],
-  template: `
-    <header class="page-header">
-      <div>
-        <h2>Quản lý buổi học</h2>
-        <p>Xem và quản lý các buổi học, theo dõi tiến trình dạy và thanh toán.</p>
-      </div>
-      <button class="primary" (click)="openCreate()" *ngIf="canCreate()">+ Tạo buổi học</button>
-    </header>
-
-    <app-flow-guide featureKey="sessions"></app-flow-guide>
-
-    <div class="stats-bar" *ngIf="stats()">
-      <div class="stat-card">
-        <span class="stat-value">{{ stats()!.totalSessions }}</span>
-        <span class="stat-label">Tổng buổi</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ formatCurrency(stats()!.totalRevenue) }}</span>
-        <span class="stat-label">Doanh thu</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ formatTeacherCurrency(stats()!.totalTeacherCost) }}</span>
-        <span class="stat-label">Chi phí GV</span>
-      </div>
-      <div class="stat-card">
-        <span class="stat-value">{{ formatCurrency(stats()!.totalRevenue - stats()!.totalTeacherCost) }}</span>
-        <span class="stat-label">Lợi nhuận</span>
-      </div>
-    </div>
-
-    <div class="filters">
-      <select [(ngModel)]="filter.classId" (change)="load()">
-        <option value="">Tất cả lớp</option>
-        <option *ngFor="let c of classes()" [value]="c._id">{{ c.code }} - {{ c.name }}</option>
-      </select>
-
-      <select [(ngModel)]="filter.status" (change)="load()">
-        <option value="">Mọi trạng thái</option>
-        <option value="SCHEDULED">Đã lên lịch</option>
-        <option value="TEACHER_COMPLETED">GV hoàn thành</option>
-        <option value="PARENT_CONFIRMED">PH xác nhận</option>
-        <option value="FINALIZED">Đã chốt</option>
-        <option value="CANCELLED">Đã hủy</option>
-        <option value="NO_SHOW">Vắng</option>
-      </select>
-
-      <input type="date" [(ngModel)]="filter.fromDate" (change)="load()" placeholder="Từ ngày" />
-      <input type="date" [(ngModel)]="filter.toDate" (change)="load()" placeholder="Đến ngày" />
-    </div>
-
-    <table class="data" *ngIf="sessions().length; else empty">
-      <thead>
-        <tr>
-          <th>Lớp</th>
-          <th>Học sinh</th>
-          <th>Giáo viên</th>
-          <th>Ngày</th>
-          <th>{{ timeColumnLabel() }}</th>
-          <th *ngIf="showTuitionColumn()">Học phí</th>
-          <th>{{ payoutOrDurationColumnLabel() }}</th>
-          <th>Trạng thái</th>
-          <th>Hành động</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let s of sessions()" [class]="'row-' + s.status.toLowerCase()">
-          <td>{{ s.classId.code || '—' }}</td>
-          <td>
-            {{ s.studentId.fullName }}
-            <small *ngIf="s.studentId.studentCode">({{ s.studentId.studentCode }})</small>
-          </td>
-          <td>{{ s.teacherId.fullName }}</td>
-          <td>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</td>
-          <td>{{ timeDisplay(s) }}</td>
-          <td *ngIf="showTuitionColumn()" [class.zero-finance]="s.status === 'NO_SHOW' || s.status === 'CANCELLED'">
-            {{ formatCurrency(s.amountCharged) }}
-            <span *ngIf="s.status === 'NO_SHOW'" class="zero-note" title="Vắng mặt — không thu phí">⊘</span>
-            <span *ngIf="s.status === 'CANCELLED'" class="zero-note" title="Đã hủy — không thu phí">⊘</span>
-          </td>
-          <td *ngIf="showTeacherPayoutColumn(); else durationColumn" [class.zero-finance]="s.status === 'NO_SHOW' || s.status === 'CANCELLED'">
-            {{ formatTeacherCurrency(s.teacherPayout) }}
-            <span *ngIf="s.status === 'NO_SHOW'" class="zero-note" title="Vắng mặt — không tính lương GV">⊘</span>
-            <span *ngIf="s.status === 'CANCELLED'" class="zero-note" title="Đã hủy — không tính lương GV">⊘</span>
-          </td>
-          <ng-template #durationColumn>
-            <td>{{ formatDuration(s) }}</td>
-          </ng-template>
-          <td>
-            <span class="badge" [class]="'badge-' + s.status.toLowerCase()">
-              {{ sessionStatusLabel(s) }}
-            </span>
-          </td>
-          <td class="actions-cell">
-            <button class="ghost sm" (click)="viewDetail(s)" title="Chi tiết">Xem</button>
-
-            <ng-container *ngIf="s.status === 'SCHEDULED'">
-              <button class="ghost sm" (click)="completeSession(s)" *ngIf="isTeacher()">Hoàn thành</button>
-              <button class="ghost sm" (click)="cancelSession(s)" *ngIf="canCreate()">Hủy</button>
-            </ng-container>
-
-            <button
-              class="ghost sm"
-              (click)="confirmSession(s)"
-              *ngIf="canParentConfirmSession(s)">
-              Xác nhận
-            </button>
-
-
-            <button class="danger sm" (click)="remove(s)" *ngIf="s.status === 'SCHEDULED' && isDirector()">Xóa</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-
-    <ng-template #empty>
-      <p class="empty-msg">Không có buổi học nào.</p>
-    </ng-template>
-
-    <div class="pagination" *ngIf="totalPages() > 1">
-      <button (click)="goPage(currentPage() - 1)" [disabled]="currentPage() <= 1">&laquo;</button>
-      <span>Trang {{ currentPage() }} / {{ totalPages() }}</span>
-      <button (click)="goPage(currentPage() + 1)" [disabled]="currentPage() >= totalPages()">&raquo;</button>
-    </div>
-
-    <div class="modal-backdrop" *ngIf="showCreateModal()">
-      <div class="modal">
-        <h3>Tạo buổi học</h3>
-
-        <div class="tab-bar">
-          <button [class.active]="createMode === 'single'" (click)="createMode = 'single'">Tạo 1 buổi</button>
-          <button [class.active]="createMode === 'bulk'" (click)="createMode = 'bulk'">Tạo hàng loạt</button>
-        </div>
-
-        <form (ngSubmit)="submitCreate()">
-          <label>
-            Lớp học
-            <select [(ngModel)]="createForm.classId" name="classId" required (change)="onCreateClassChange()">
-              <option value="" disabled>-- Chọn lớp --</option>
-              <option *ngFor="let c of classes()" [value]="c._id">{{ c.code }} - {{ c.name }}</option>
-            </select>
-          </label>
-
-          <div *ngIf="createMode === 'single'">
-            <label>
-              Học sinh
-              <select [(ngModel)]="createForm.studentId" name="studentId" required>
-                <option value="" disabled>-- Chọn HS --</option>
-                <option *ngFor="let st of selectedClassStudents()" [value]="st._id">{{ st.fullName }}</option>
-              </select>
-            </label>
-
-            <label>
-              Ngày học
-              <input type="date" [(ngModel)]="createForm.scheduledDate" name="scheduledDate" required />
-            </label>
-
-            <div class="row-2">
-              <label>
-                Giờ bắt đầu
-                <input type="time" [(ngModel)]="createForm.scheduledStartTime" name="startTime" required />
-              </label>
-
-              <label>
-                Giờ kết thúc
-                <input type="time" [(ngModel)]="createForm.scheduledEndTime" name="endTime" required />
-              </label>
-            </div>
-          </div>
-
-          <div *ngIf="createMode === 'bulk'">
-            <label>
-              Ngày học
-              <input type="date" [(ngModel)]="createForm.scheduledDate" name="bulkDate" required />
-            </label>
-
-            <div class="row-2">
-              <label>
-                Giờ bắt đầu
-                <input type="time" [(ngModel)]="createForm.scheduledStartTime" name="bulkStart" required />
-              </label>
-
-              <label>
-                Giờ kết thúc
-                <input type="time" [(ngModel)]="createForm.scheduledEndTime" name="bulkEnd" required />
-              </label>
-            </div>
-
-            <p class="hint">Sẽ tạo buổi cho tất cả học sinh trong lớp.</p>
-          </div>
-
-          <div class="modal-actions">
-            <button type="button" class="ghost" (click)="showCreateModal.set(false)">Hủy</button>
-            <button type="submit" class="primary">Tạo</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <div class="modal-backdrop" *ngIf="showDetailModal()">
-      <div class="modal modal-lg">
-        <h3>Chi tiết buổi học</h3>
-
-        <p class="detail-loading" *ngIf="detailLoading()">Dang tai chi tiet moi nhat...</p>
-
-        <div class="detail-grid" *ngIf="selectedSession()">
-          <div class="detail-row">
-            <span>Lớp:</span>
-            <span>{{ selectedSession()?.classId?.name }} ({{ selectedSession()?.classId?.code }})</span>
-          </div>
-          <div class="detail-row">
-            <span>Học sinh:</span>
-            <span>{{ selectedSession()?.studentId?.fullName }}</span>
-          </div>
-          <div class="detail-row">
-            <span>Giáo viên:</span>
-            <span>{{ selectedSession()?.teacherId?.fullName }}</span>
-          </div>
-          <div class="detail-row">
-            <span>Ngày:</span>
-            <span>{{ selectedSession()?.scheduledDate | date:'dd/MM/yyyy' }}</span>
-          </div>
-          <div class="detail-row">
-            <span>{{ timeColumnLabel() }}:</span>
-            <span>{{ timeDisplay(selectedSession()) }}</span>
-          </div>
-          <div class="detail-row" *ngIf="showTuitionColumn()">
-            <span>Học phí:</span>
-            <span>{{ formatCurrency(selectedSession()?.amountCharged || 0) }}</span>
-          </div>
-          <div class="detail-row" *ngIf="isParent(); else teacherPayoutDetail">
-            <span>Thời lượng:</span>
-            <span>{{ formatDuration(selectedSession()) }}</span>
-          </div>
-          <ng-template #teacherPayoutDetail>
-            <div class="detail-row">
-              <span>Lương GV:</span>
-              <span>{{ formatTeacherCurrency(selectedSession()?.teacherPayout || 0) }}</span>
-            </div>
-          </ng-template>
-          <div class="detail-row">
-            <span>Trạng thái:</span>
-            <span class="badge" [class]="'badge-' + (selectedSession()?.status || '').toLowerCase()">
-              {{ sessionStatusLabel(selectedSession()) }}
-            </span>
-          </div>
-          <div class="detail-row" *ngIf="selectedSession()?.topicsCovered">
-            <span>Nội dung:</span>
-            <span>{{ selectedSession()?.topicsCovered }}</span>
-          </div>
-          <div class="detail-row" *ngIf="selectedSession()?.homework">
-            <span>BTVN:</span>
-            <span>{{ selectedSession()?.homework }}</span>
-          </div>
-          <div class="detail-row" *ngIf="selectedSession()?.teacherNotes">
-            <span>Ghi chú GV:</span>
-            <span>{{ selectedSession()?.teacherNotes }}</span>
-          </div>
-          <div class="detail-row" *ngIf="selectedSession()?.parentNotes">
-            <span>Ghi chú PH:</span>
-            <span>{{ selectedSession()?.parentNotes }}</span>
-          </div>
-          <div class="detail-row" *ngIf="selectedSession()?.parentRating">
-            <span>Đánh giá PH:</span>
-            <span>{{ '⭐'.repeat(selectedSession()?.parentRating || 0) }}</span>
-          </div>
-        </div>
-
-        <section class="report-card" *ngIf="selectedSession() as session">
-          <div class="report-head">
-            <h4>BÃ¡o cÃ¡o giáº£ng dáº¡y</h4>
-            <span
-              class="report-status"
-              [class.report-status-ok]="session.hasTeachingReport"
-              [class.report-status-missing]="!session.hasTeachingReport">
-              {{ session.hasTeachingReport ? 'ÄÃ£ cÃ³ bÃ¡o cÃ¡o' : 'ChÆ°a cÃ³ bÃ¡o cÃ¡o' }}
-            </span>
-          </div>
-
-          <div class="report-grid">
-            <div class="detail-row">
-              <span>NgÃ y ná»™p bÃ¡o cÃ¡o:</span>
-              <span>{{ formatDateTime(session.teachingReport?.submittedAt, 'ChÆ°a ná»™p') }}</span>
-            </div>
-            <div class="detail-row">
-              <span>Deadline bÃ¡o cÃ¡o:</span>
-              <span>{{ formatDateTime(session.teachingReport?.deadline, 'ChÆ°a cÃ³ deadline') }}</span>
-            </div>
-            <div class="detail-row">
-              <span>Tráº¡ng thÃ¡i ná»™p:</span>
-              <span [class.report-late]="session.teachingReport?.isLateSubmission">
-                {{ session.teachingReport?.isLateSubmission ? 'Ná»™p trá»…' : (session.hasTeachingReport ? 'ÄÃºng háº¡n / há»£p lá»‡' : 'ChÆ°a ná»™p') }}
-              </span>
-            </div>
-            <div class="detail-row">
-              <span>Link ghi hÃ¬nh:</span>
-              <span>
-                <a *ngIf="getRecordingUrl(session) as recordingUrl; else missingRecordingUrl"
-                  [href]="recordingUrl"
-                  class="report-link"
-                  target="_blank"
-                  rel="noopener noreferrer">
-                  Má»Ÿ link video
-                </a>
-                <ng-template #missingRecordingUrl>ChÆ°a gáº¯n link ghi hÃ¬nh</ng-template>
-              </span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>Ná»™i dung há»c:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.lessonContent, 'ChÆ°a cÃ³ ná»™i dung bÃ¡o cÃ¡o') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>ThÃ¡i Ä‘á»™ há»c sinh:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.studentAttitude, 'ChÆ°a cÃ³ nháº­n xÃ©t thÃ¡i Ä‘á»™ há»c sinh') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>Nháº­n xÃ©t chung:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.teacherComment, 'ChÆ°a cÃ³ nháº­n xÃ©t chung') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>BÃ i táº­p vá» nhÃ :</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.homework, 'ChÆ°a giao bÃ i táº­p vá» nhÃ ') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>Ghi chÃº thÃªm:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.additionalNotes, 'KhÃ´ng cÃ³ ghi chÃº thÃªm') }}</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="report-card report-card-clean" *ngIf="selectedSession() as session">
-          <div class="report-head">
-            <h4>B&#225;o c&#225;o gi&#7843;ng d&#7841;y</h4>
-            <span
-              class="report-status"
-              [class.report-status-ok]="session.hasTeachingReport"
-              [class.report-status-missing]="!session.hasTeachingReport">
-              {{ session.hasTeachingReport ? 'Da co bao cao' : 'Chua co bao cao' }}
-            </span>
-          </div>
-
-          <div class="report-grid">
-            <div class="detail-row">
-              <span>Ng&#224;y n&#7897;p b&#225;o c&#225;o:</span>
-              <span>{{ formatDateTime(session.teachingReport?.submittedAt, 'Chua nop') }}</span>
-            </div>
-            <div class="detail-row">
-              <span>Deadline b&#225;o c&#225;o:</span>
-              <span>{{ formatDateTime(session.teachingReport?.deadline, 'Chua co deadline') }}</span>
-            </div>
-            <div class="detail-row">
-              <span>Tr&#7841;ng th&#225;i n&#7897;p:</span>
-              <span [class.report-late]="session.teachingReport?.isLateSubmission">
-                {{ session.teachingReport?.isLateSubmission ? 'Nop tre' : (session.hasTeachingReport ? 'Dung han / hop le' : 'Chua nop') }}
-              </span>
-            </div>
-            <div class="detail-row">
-              <span>Link ghi h&#236;nh:</span>
-              <span>
-                <a *ngIf="getRecordingUrl(session) as recordingUrl; else missingRecordingUrlClean"
-                  [href]="recordingUrl"
-                  class="report-link"
-                  target="_blank"
-                  rel="noopener noreferrer">
-                  M&#7903; link video
-                </a>
-                <ng-template #missingRecordingUrlClean>Chua gan link ghi hinh</ng-template>
-              </span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>N&#7897;i dung h&#7885;c:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.lessonContent, 'Chua co noi dung bao cao') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>Th&#225;i do h&#7885;c sinh:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.studentAttitude, 'Chua co nhan xet thai do hoc sinh') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>Nh&#7853;n x&#233;t chung:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.teacherComment, 'Chua co nhan xet chung') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>B&#224;i t&#7853;p v&#7873; nh&#224;:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.homework, 'Chua giao bai tap ve nha') }}</span>
-            </div>
-            <div class="detail-row detail-row-block">
-              <span>Ghi ch&#250; th&#234;m:</span>
-              <span class="report-text">{{ formatOptionalText(session.teachingReport?.additionalNotes, 'Khong co ghi chu them') }}</span>
-            </div>
-          </div>
-        </section>
-
-        <section class="history-card" *ngIf="selectedSession()">
-          <div class="history-head">
-            <h4>Lich su chinh sua</h4>
-            <span *ngIf="selectedSession()?.editHistory?.length">{{ selectedSession()?.editHistory?.length }} lan</span>
-          </div>
-
-          <p class="history-empty" *ngIf="!selectedSession()?.editHistory?.length">
-            Chua co lan chinh sua nao.
-          </p>
-
-          <div class="history-list" *ngIf="selectedSession()?.editHistory?.length">
-            <article class="history-item" *ngFor="let entry of sessionEditHistory(selectedSession())">
-              <div class="history-item-head">
-                <strong>{{ entry.editedByName || 'He thong' }}</strong>
-                <span>{{ formatHistoryTimestamp(entry.editedAt) }}</span>
-              </div>
-              <div class="history-role" *ngIf="entry.editedByRole">
-                {{ roleLabel(entry.editedByRole) }}
-              </div>
-
-              <div class="history-change" *ngFor="let change of entry.changes">
-                <span class="history-label">{{ change.label }}:</span>
-                <span>{{ change.beforeValue || 'Khong co' }} -> {{ change.afterValue || 'Khong co' }}</span>
-              </div>
-
-              <div class="history-snapshot" *ngIf="entry.durationSnapshot">
-                Sau khi doi sang {{ entry.durationSnapshot.newDurationMinutes }} phut, con
-                {{ formatSessionCount(entry.durationSnapshot.totalSessionsRemaining) }} buoi theo thoi luong moi
-                <span class="history-snapshot-breakdown">
-                  (hoc phi: {{ formatSessionCount(entry.durationSnapshot.paidSessionsRemaining) }},
-                  tang: {{ formatSessionCount(entry.durationSnapshot.bonusSessionsRemaining) }})
-                </span>
-              </div>
-            </article>
-          </div>
-        </section>
-
-        <div class="modal-actions detail-modal-actions-clean">
-          <button
-            class="primary"
-            type="button"
-            (click)="confirmSalaryFromDetailClean()"
-            [disabled]="detailLoading()"
-            *ngIf="selectedSession() && canConfirmSalarySession(selectedSession()!)">
-            X&#225;c nh&#7853;n l&#432;&#417;ng
-          </button>
-          <button class="ghost" (click)="showDetailModal.set(false)">&#272;&#243;ng</button>
-        </div>
-
-        <div class="modal-actions">
-          <button
-            class="primary"
-            type="button"
-            (click)="confirmSalaryFromDetail()"
-            [disabled]="detailLoading()"
-            *ngIf="selectedSession() && canConfirmSalarySession(selectedSession()!)">
-            Xác nhận lương
-          </button>
-          <button class="ghost" (click)="showDetailModal.set(false)">Đóng</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-backdrop" *ngIf="showCompleteModal()">
-      <div class="modal">
-        <h3>Hoàn thành buổi dạy</h3>
-
-        <form (ngSubmit)="submitComplete()">
-          <label>
-            Nội dung đã dạy
-            <textarea [(ngModel)]="completeForm.topicsCovered" name="topicsCovered" rows="3"></textarea>
-          </label>
-
-          <label>
-            Bài tập về nhà
-            <textarea [(ngModel)]="completeForm.homework" name="homework" rows="2"></textarea>
-          </label>
-
-          <label>
-            Ghi chú
-            <textarea [(ngModel)]="completeForm.teacherNotes" name="teacherNotes" rows="2"></textarea>
-          </label>
-
-          <div class="modal-actions">
-            <button type="button" class="ghost" (click)="showCompleteModal.set(false)">Hủy</button>
-            <button type="submit" class="primary">Hoàn thành</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
-    <div class="modal-backdrop" *ngIf="showConfirmModal()">
-      <div class="modal">
-        <h3>Xác nhận buổi học</h3>
-
-        <form (ngSubmit)="submitConfirm()">
-          <label>
-            Đánh giá (1-5 sao)
-            <input type="number" [(ngModel)]="confirmForm.rating" name="rating" min="1" max="5" />
-          </label>
-
-          <label>
-            Ghi chú
-            <textarea [(ngModel)]="confirmForm.parentNotes" name="parentNotes" rows="2"></textarea>
-          </label>
-
-          <div class="modal-actions">
-            <button type="button" class="ghost" (click)="showConfirmModal.set(false)">Hủy</button>
-            <button type="submit" class="primary">Xác nhận</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `,
-  styles: [`
-    :host { display: block; padding: 24px; font-family: 'Segoe UI', sans-serif; }
-    .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
-    .page-header h2 { margin: 0; color: #1e293b; }
-    .page-header p { margin: 4px 0 0; color: #64748b; font-size: 13px; }
-
-    .primary {
-      background: #2563eb;
-      color: #fff;
-      border: none;
-      padding: 10px 20px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-weight: 600;
-    }
-    .primary:hover { background: #1d4ed8; }
-
-    .ghost {
-      background: none;
-      border: 1px solid #cbd5e1;
-      color: #334155;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .ghost:hover { background: #f1f5f9; }
-    .ghost.sm, .danger.sm { padding: 4px 8px; font-size: 12px; }
-
-    .danger {
-      background: #dc2626;
-      color: #fff;
-      border: none;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .danger:hover { background: #b91c1c; }
-
-    .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
-    .stat-card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 14px 18px;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-      text-align: center;
-    }
-    .stat-value { display: block; font-size: 20px; font-weight: 700; color: #1e293b; }
-    .stat-label { font-size: 12px; color: #64748b; }
-
-    .filters { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-    .filters select, .filters input {
-      padding: 7px 10px;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      font-size: 13px;
-      background: #fff;
-    }
-
-    .data {
-      width: 100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      background: #fff;
-      border-radius: 8px;
-      overflow: hidden;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-    }
-    .data th {
-      text-align: left;
-      background: #f1f5f9;
-      padding: 10px 12px;
-      font-size: 12px;
-      color: #64748b;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    .data td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
-    .data tr:last-child td { border-bottom: none; }
-    .data tr:hover td { background: #f8fafc; }
-
-    .actions-cell { white-space: nowrap; }
-    .actions-cell button { margin-right: 4px; }
-
-    .badge {
-      display: inline-block;
-      padding: 3px 10px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-    .badge-scheduled { background: #dbeafe; color: #1d4ed8; }
-    .badge-teacher_completed { background: #fef3c7; color: #92400e; }
-    .badge-parent_confirmed { background: #d1fae5; color: #065f46; }
-    .badge-finalized { background: #dcfce7; color: #166534; }
-    .badge-cancelled { background: #fee2e2; color: #991b1b; }
-    .badge-no_show { background: #fce7f3; color: #9d174d; }
-
-    .row-cancelled td { opacity: 0.5; }
-    .row-no_show td { opacity: 0.65; }
-    .zero-finance { color: #94a3b8; }
-    .zero-note { font-size: 10px; color: #94a3b8; margin-left: 3px; cursor: help; }
-
-    .pagination { display: flex; align-items: center; gap: 12px; justify-content: center; margin-top: 16px; }
-    .pagination button {
-      background: #fff;
-      border: 1px solid #cbd5e1;
-      padding: 6px 14px;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .pagination button:disabled { opacity: 0.4; cursor: default; }
-
-    .empty-msg { color: #64748b; padding: 32px 0; text-align: center; }
-
-    .modal-backdrop {
-      position: fixed;
-      inset: 0;
-      background: rgba(0, 0, 0, 0.45);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 1000;
-    }
-    .modal {
-      background: #fff;
-      border-radius: 12px;
-      padding: 28px;
-      width: 500px;
-      max-height: 85vh;
-      overflow-y: auto;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
-    }
-    .modal-lg { width: 760px; }
-    .modal h3 { margin: 0 0 16px; color: #1e293b; }
-    .modal label {
-      display: block;
-      margin-bottom: 10px;
-      font-size: 13px;
-      font-weight: 500;
-      color: #334155;
-    }
-    .modal input, .modal select, .modal textarea {
-      width: 100%;
-      margin-top: 4px;
-      padding: 8px 10px;
-      border: 1px solid #cbd5e1;
-      border-radius: 6px;
-      font-size: 13px;
-      box-sizing: border-box;
-    }
-    .modal textarea { resize: vertical; }
-    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
-    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-
-    .tab-bar { display: flex; gap: 6px; margin-bottom: 14px; }
-    .tab-bar button {
-      background: #f1f5f9;
-      border: 1px solid #e2e8f0;
-      padding: 6px 16px;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-    }
-    .tab-bar button.active { background: #2563eb; color: #fff; border-color: #2563eb; }
-
-    .hint { color: #64748b; font-size: 12px; font-style: italic; margin: 6px 0; }
-
-    .detail-grid { display: grid; gap: 8px; }
-    .detail-row {
-      display: grid;
-      grid-template-columns: 140px 1fr;
-      gap: 8px;
-      font-size: 13px;
-      padding: 4px 0;
-      border-bottom: 1px solid #f1f5f9;
-    }
-    .detail-row span:first-child { color: #64748b; font-weight: 500; }
-
-    .detail-loading {
-      margin: 0 0 12px;
-      color: #2563eb;
-      font-size: 13px;
-    }
-
-    .report-card {
-      margin-top: 18px;
-      border-top: 1px solid #e2e8f0;
-      padding-top: 18px;
-    }
-    .report-card:not(.report-card-clean) {
-      display: none;
-    }
-    .report-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .report-head h4 {
-      margin: 0;
-      color: #1e293b;
-      font-size: 15px;
-    }
-    .report-status {
-      display: inline-flex;
-      align-items: center;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .report-status-ok {
-      background: #dcfce7;
-      color: #15803d;
-    }
-    .report-status-missing {
-      background: #fee2e2;
-      color: #dc2626;
-    }
-    .report-grid {
-      display: grid;
-      gap: 8px;
-    }
-    .detail-row-block {
-      align-items: start;
-    }
-    .report-text {
-      white-space: pre-wrap;
-      line-height: 1.5;
-    }
-    .report-link {
-      color: #2563eb;
-      font-weight: 600;
-      text-decoration: none;
-    }
-    .report-link:hover {
-      text-decoration: underline;
-    }
-    .report-late {
-      color: #dc2626;
-      font-weight: 600;
-    }
-    .modal-lg > .modal-actions:not(.detail-modal-actions-clean) {
-      display: none;
-    }
-
-    .history-card {
-      margin-top: 18px;
-      border-top: 1px solid #e2e8f0;
-      padding-top: 18px;
-    }
-    .history-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-    .history-head h4 {
-      margin: 0;
-      color: #1e293b;
-      font-size: 15px;
-    }
-    .history-head span {
-      color: #64748b;
-      font-size: 12px;
-    }
-    .history-empty {
-      margin: 0;
-      color: #64748b;
-      font-size: 13px;
-    }
-    .history-list {
-      display: grid;
-      gap: 12px;
-    }
-    .history-item {
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 12px 14px;
-      background: #f8fafc;
-    }
-    .history-item-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 4px;
-      font-size: 13px;
-    }
-    .history-item-head strong { color: #0f172a; }
-    .history-item-head span {
-      color: #64748b;
-      font-size: 12px;
-    }
-    .history-role {
-      color: #475569;
-      font-size: 12px;
-      margin-bottom: 10px;
-    }
-    .history-change {
-      display: grid;
-      grid-template-columns: 140px 1fr;
-      gap: 8px;
-      font-size: 13px;
-      margin-bottom: 6px;
-    }
-    .history-label {
-      color: #475569;
-      font-weight: 600;
-    }
-    .history-snapshot {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px dashed #cbd5e1;
-      color: #0f172a;
-      font-size: 13px;
-      line-height: 1.5;
-    }
-    .history-snapshot-breakdown {
-      color: #64748b;
-    }
-  `],
+  templateUrl: './sessions.component.html',
+  styleUrl: './sessions.component.css',
 })
 export class SessionsComponent implements OnInit {
   private sessionSvc = inject(SessionService);
   private classSvc = inject(ClassService);
+  private teacherSvc = inject(TeacherService);
   private auth: AuthService;
 
   sessions = signal<SessionItem[]>([]);
@@ -864,9 +75,22 @@ export class SessionsComponent implements OnInit {
   showDetailModal = signal(false);
   showCompleteModal = signal(false);
   showConfirmModal = signal(false);
+  showGeneralFeedbackModal = signal(false);
+  showChangeRequestForm = signal(false);
+  showRescheduleForm = signal(false);
   detailLoading = signal(false);
+  changeRequestsLoading = signal(false);
+  submittingComplete = signal(false);
+  submittingGeneralFeedback = signal(false);
+  submittingChangeRequest = signal(false);
+  submittingReschedule = signal(false);
+  success = signal('');
+  error = signal('');
   selectedSession = signal<SessionItem | null>(null);
+  latestRescheduledSession = signal<SessionItem | null>(null);
   selectedClassStudents = signal<any[]>([]);
+  changeRequests = signal<SessionChangeRequestItem[]>([]);
+  teacherOptions = signal<TeacherOption[]>([]);
   currentPage = signal(1);
   totalPages = signal(1);
 
@@ -882,7 +106,16 @@ export class SessionsComponent implements OnInit {
     scheduledEndTime: '',
   };
   completeForm: any = { topicsCovered: '', homework: '', teacherNotes: '' };
+  completeTouched: Record<CompleteField, boolean> = {
+    topicsCovered: false,
+    homework: false,
+    teacherNotes: false,
+  };
+  completeSubmitAttempted = false;
   confirmForm: SessionParentConfirmPayload = { rating: 5, parentNotes: '' };
+  generalFeedbackForm: GeneralFeedbackFormState = this.createGeneralFeedbackForm();
+  changeRequestForm: SessionChangeRequestFormState = this.createChangeRequestForm();
+  rescheduleForm: SessionRescheduleFormState = this.createRescheduleForm();
   actionSessionId = '';
 
   constructor(auth: AuthService) {
@@ -961,7 +194,7 @@ export class SessionsComponent implements OnInit {
         this.showCreateModal.set(false);
         this.load();
       } else {
-        alert('Lỗi khi tạo hàng loạt');
+        alert('\u004c\u1ed7i khi t\u1ea1o h\u00e0ng lo\u1ea1t');
       }
       return;
     }
@@ -977,39 +210,276 @@ export class SessionsComponent implements OnInit {
       this.showCreateModal.set(false);
       this.load();
     } else {
-      alert('Lỗi khi tạo buổi học');
+      alert('\u004c\u1ed7i khi t\u1ea1o bu\u1ed5i h\u1ecdc');
     }
   }
 
   async viewDetail(session: SessionItem): Promise<void> {
+    this.error.set('');
+    this.success.set('');
     this.selectedSession.set(session);
+    this.showChangeRequestForm.set(false);
+    this.showRescheduleForm.set(false);
+    this.latestRescheduledSession.set(null);
+    this.changeRequests.set([]);
+    this.teacherOptions.set([]);
+    this.changeRequestForm = this.createChangeRequestForm(session);
+    this.rescheduleForm = this.createRescheduleForm(session);
     this.showDetailModal.set(true);
     this.detailLoading.set(true);
+    this.changeRequestsLoading.set(true);
 
     try {
-      const detail = await this.sessionSvc.getById(session._id);
+      const [detail, changeRequests] = await Promise.all([
+        this.sessionSvc.getById(session._id),
+        this.sessionSvc.getChangeRequests(session._id),
+      ]);
       if (detail) {
         this.selectedSession.set({ ...session, ...detail });
+        this.changeRequestForm = this.createChangeRequestForm({ ...session, ...detail });
+        this.rescheduleForm = this.createRescheduleForm({ ...session, ...detail });
+        if (this.canRequestSessionChange({ ...session, ...detail })) {
+          await this.loadTeacherOptions({ ...session, ...detail });
+        }
       }
+      this.changeRequests.set(this.sortChangeRequests(changeRequests));
     } finally {
       this.detailLoading.set(false);
+      this.changeRequestsLoading.set(false);
+    }
+  }
+
+  closeDetailModal(): void {
+    this.showDetailModal.set(false);
+    this.selectedSession.set(null);
+    this.showChangeRequestForm.set(false);
+    this.showRescheduleForm.set(false);
+    this.changeRequestsLoading.set(false);
+    this.submittingChangeRequest.set(false);
+    this.submittingReschedule.set(false);
+    this.latestRescheduledSession.set(null);
+    this.changeRequests.set([]);
+    this.teacherOptions.set([]);
+    this.changeRequestForm = this.createChangeRequestForm();
+    this.rescheduleForm = this.createRescheduleForm();
+  }
+
+  async openChangeRequestForm(): Promise<void> {
+    const session = this.selectedSession();
+    if (!session || !this.canRequestSessionChange(session)) {
+      return;
+    }
+
+    this.error.set('');
+    this.success.set('');
+    this.changeRequestForm = this.createChangeRequestForm(session);
+    this.showChangeRequestForm.set(true);
+    if (!this.teacherOptions().length) {
+      await this.loadTeacherOptions(session);
+    }
+  }
+
+  cancelChangeRequestForm(): void {
+    this.showChangeRequestForm.set(false);
+    this.changeRequestForm = this.createChangeRequestForm(this.selectedSession());
+  }
+
+  openRescheduleForm(): void {
+    const session = this.selectedSession();
+    if (!session || !this.canRescheduleSession(session)) {
+      return;
+    }
+
+    this.error.set('');
+    this.success.set('');
+    this.rescheduleForm = this.createRescheduleForm(session);
+    this.showRescheduleForm.set(true);
+  }
+
+  cancelRescheduleForm(): void {
+    this.showRescheduleForm.set(false);
+    this.rescheduleForm = this.createRescheduleForm(this.selectedSession());
+  }
+
+  async submitReschedule(): Promise<void> {
+    const session = this.selectedSession();
+    if (!session || !this.canRescheduleSession(session)) {
+      return;
+    }
+
+    const form = this.normalizeRescheduleForm();
+    if (!form.newScheduledDate || !form.newStartTime || !form.newEndTime) {
+      this.error.set('Vui long nhap du ngay gio moi.');
+      return;
+    }
+
+    const nextDurationMinutes = this.calculateDurationMinutes(form.newStartTime, form.newEndTime);
+    if (!nextDurationMinutes) {
+      this.error.set('Khung gio moi khong hop le.');
+      return;
+    }
+
+    const currentDate = this.formatDateInput(session.scheduledDate);
+    const currentStartTime = `${session.scheduledStartTime || ''}`.trim();
+    const currentEndTime = `${session.scheduledEndTime || ''}`.trim();
+    const dateChanged = form.newScheduledDate !== currentDate;
+    const startChanged = form.newStartTime !== currentStartTime;
+    const endChanged = form.newEndTime !== currentEndTime;
+
+    if (!dateChanged && !startChanged && !endChanged) {
+      this.error.set('Lich moi phai khac buoi hoc hien tai.');
+      return;
+    }
+
+    this.submittingReschedule.set(true);
+    this.error.set('');
+    this.success.set('');
+
+    try {
+      const result = await this.sessionSvc.reschedule(session._id, {
+        newScheduledDate: form.newScheduledDate,
+        newStartTime: form.newStartTime,
+        newEndTime: form.newEndTime,
+        durationMinutes: nextDurationMinutes,
+        reason: form.reason || undefined,
+      });
+
+      if (!result.ok || !result.data?.oldSession || !result.data?.newSession) {
+        this.error.set(result.errorMessage || 'Khong the doi lich buoi hoc.');
+        return;
+      }
+
+      const nextSession = this.mergeSessionSnapshot(session, result.data.newSession);
+      const currentSession = this.mergeSessionSnapshot(session, result.data.oldSession, {
+        status: result.data.oldSession.status || 'RESCHEDULED',
+        rescheduledToId: this.toSessionReference(nextSession),
+      });
+
+      this.latestRescheduledSession.set(nextSession);
+      this.selectedSession.set(currentSession);
+      this.showRescheduleForm.set(false);
+      this.rescheduleForm = this.createRescheduleForm(nextSession);
+      this.success.set('Da doi lich buoi hoc thanh cong.');
+      await this.load();
+    } finally {
+      this.submittingReschedule.set(false);
+    }
+  }
+
+  async submitChangeRequest(): Promise<void> {
+    const session = this.selectedSession();
+    if (!session || !this.canRequestSessionChange(session)) {
+      return;
+    }
+
+    const form = this.normalizeChangeRequestForm();
+    const currentTeacherId = this.teacherUserId(session);
+    const currentDurationMinutes = this.sessionDurationMinutes(session);
+    const currentDate = this.formatDateInput(session.scheduledDate);
+    const currentStartTime = `${session.scheduledStartTime || ''}`.trim();
+    const requestedEndTime = form.requestedStartTime
+      ? this.addMinutesToTime(form.requestedStartTime, currentDurationMinutes)
+      : null;
+
+    if (!form.reason) {
+      this.error.set('Vui long nhap ly do thay doi.');
+      return;
+    }
+
+    const teacherChanged = !!form.requestedTeacherId && form.requestedTeacherId !== currentTeacherId;
+    const dateChanged = !!form.requestedScheduledDate && form.requestedScheduledDate !== currentDate;
+    const timeChanged = !!form.requestedStartTime && form.requestedStartTime !== currentStartTime;
+
+    if (!teacherChanged && !dateChanged && !timeChanged) {
+      this.error.set('Yeu cau thay doi phai khac thong tin hien tai.');
+      return;
+    }
+
+    if (timeChanged && (!currentDurationMinutes || !requestedEndTime)) {
+      this.error.set('Gio hoc moi khong hop le voi thoi luong hien tai.');
+      return;
+    }
+
+    this.submittingChangeRequest.set(true);
+    this.error.set('');
+    this.success.set('');
+    try {
+      await this.sessionSvc.createChangeRequest(session._id, {
+        requestedScheduledDate: dateChanged ? form.requestedScheduledDate : undefined,
+        requestedStartTime: timeChanged ? form.requestedStartTime : undefined,
+        requestedEndTime: timeChanged ? requestedEndTime || undefined : undefined,
+        requestedTeacherId: teacherChanged ? form.requestedTeacherId : undefined,
+        reason: form.reason,
+      });
+
+      this.changeRequestsLoading.set(true);
+      const latestRequests = await this.sessionSvc.getChangeRequests(session._id);
+      this.changeRequests.set(this.sortChangeRequests(latestRequests));
+      this.showChangeRequestForm.set(false);
+      this.changeRequestForm = this.createChangeRequestForm(session);
+      this.success.set('Đã gửi yêu cầu thay đổi buổi học.');
+    } catch (error: any) {
+      this.error.set(this.extractUiErrorMessage(error, 'Không thể gửi yêu cầu thay đổi buổi học.'));
+    } finally {
+      this.submittingChangeRequest.set(false);
+      this.changeRequestsLoading.set(false);
     }
   }
 
   completeSession(session: SessionItem): void {
     this.actionSessionId = session._id;
-    this.completeForm = { topicsCovered: '', homework: '', teacherNotes: '' };
+    this.resetCompleteForm();
     this.showCompleteModal.set(true);
   }
 
   async submitComplete(): Promise<void> {
-    const ok = await this.sessionSvc.teacherComplete(this.actionSessionId, this.completeForm);
-    if (ok) {
-      this.showCompleteModal.set(false);
-      this.load();
-    } else {
-      alert('Lỗi khi hoàn thành buổi học');
+    this.completeSubmitAttempted = true;
+    const payload = this.normalizeCompleteForm();
+    this.completeForm = { ...payload };
+    if (!this.isCompleteFormValid(payload)) {
+      return;
     }
+
+    this.submittingComplete.set(true);
+    try {
+      const ok = await this.sessionSvc.teacherComplete(this.actionSessionId, payload);
+      if (ok) {
+        this.closeCompleteModal();
+        await this.load();
+      } else {
+        alert('\u004c\u1ed7i khi ho\u00e0n th\u00e0nh bu\u1ed5i h\u1ecdc');
+      }
+    } finally {
+      this.submittingComplete.set(false);
+    }
+  }
+
+  closeCompleteModal(): void {
+    this.showCompleteModal.set(false);
+    this.resetCompleteForm();
+  }
+
+  markCompleteFieldTouched(field: CompleteField): void {
+    this.completeTouched[field] = true;
+  }
+
+  completeError(field: CompleteField): string {
+    if (!(this.completeSubmitAttempted || this.completeTouched[field])) {
+      return '';
+    }
+    const value = `${this.completeForm[field] || ''}`.trim();
+    if (value) return '';
+
+    const messages: Record<CompleteField, string> = {
+      topicsCovered: 'Vui long nhap noi dung da day.',
+      homework: 'Vui long nhap bai tap ve nha.',
+      teacherNotes: 'Vui long nhap ghi chu giao vien.',
+    };
+    return messages[field];
+  }
+
+  canSubmitComplete(): boolean {
+    return !this.submittingComplete() && this.isCompleteFormValid(this.normalizeCompleteForm());
   }
 
   confirmSession(session: SessionItem): void {
@@ -1017,6 +487,7 @@ export class SessionsComponent implements OnInit {
       alert('Bu\u1ed5i h\u1ecdc ch\u01b0a c\u00f3 b\u00e1o c\u00e1o gi\u1ea3ng d\u1ea1y, ch\u01b0a th\u1ec3 x\u00e1c nh\u1eadn.');
       return;
     }
+    this.success.set('');
     this.actionSessionId = session._id;
     this.confirmForm = { rating: 5, parentNotes: '' };
     this.showConfirmModal.set(true);
@@ -1026,45 +497,173 @@ export class SessionsComponent implements OnInit {
     const ok = await this.sessionSvc.parentConfirm(this.actionSessionId, this.confirmForm);
     if (ok) {
       this.showConfirmModal.set(false);
+      this.success.set('Da ghi nhan danh gia buoi hoc thanh cong.');
       this.load();
     } else {
-      alert('Lỗi khi xác nhận buổi học');
+      alert('\u004c\u1ed7i khi x\u00e1c nh\u1eadn bu\u1ed5i h\u1ecdc');
+    }
+  }
+
+  openGeneralFeedback(): void {
+    const targets = this.generalFeedbackTargets();
+    if (!targets.length) {
+      this.error.set('Chưa có buổi đã chốt để gửi đánh giá tổng quát.');
+      return;
+    }
+
+    this.success.set('');
+    this.error.set('');
+    this.generalFeedbackForm = this.createGeneralFeedbackForm(targets[0]);
+    this.showGeneralFeedbackModal.set(true);
+  }
+
+  closeGeneralFeedbackModal(): void {
+    this.showGeneralFeedbackModal.set(false);
+    this.generalFeedbackForm = this.createGeneralFeedbackForm();
+  }
+
+  generalFeedbackTargets(): GeneralFeedbackTarget[] {
+    if (!this.isParent()) {
+      return [];
+    }
+
+    const latestByStudent = new Map<string, GeneralFeedbackTarget>();
+    const finalizedSessions = [...this.sessions()]
+      .filter((session) => session.status === 'FINALIZED' && !!session.studentId?._id)
+      .sort((left, right) => {
+        const leftTime = new Date(left.scheduledDate || '').getTime();
+        const rightTime = new Date(right.scheduledDate || '').getTime();
+        return rightTime - leftTime;
+      });
+
+    for (const session of finalizedSessions) {
+      const studentId = session.studentId._id;
+      if (!studentId || latestByStudent.has(studentId)) {
+        continue;
+      }
+
+      latestByStudent.set(studentId, {
+        studentId,
+        studentName: session.studentId.fullName || 'Học sinh',
+        sessionId: session._id,
+        classLabel: session.classId.code || session.classId.name || 'Lớp học',
+        scheduledDate: session.scheduledDate,
+      });
+    }
+
+    return Array.from(latestByStudent.values());
+  }
+
+  onGeneralFeedbackStudentChange(studentId: string): void {
+    this.generalFeedbackForm.studentId = studentId;
+    const target = this.generalFeedbackTargets().find((item) => item.studentId === studentId);
+    this.generalFeedbackForm.sessionId = target?.sessionId || '';
+  }
+
+  selectedGeneralFeedbackTarget(): GeneralFeedbackTarget | null {
+    const studentId = this.generalFeedbackForm.studentId;
+    if (!studentId) {
+      return null;
+    }
+    return this.generalFeedbackTargets().find((item) => item.studentId === studentId) || null;
+  }
+
+  selectedGeneralFeedbackTargetLabel(): string {
+    const target = this.selectedGeneralFeedbackTarget();
+    if (!target) {
+      return '';
+    }
+    return `${target.classLabel} • ${this.formatShortDate(target.scheduledDate)}`;
+  }
+
+  canSubmitGeneralFeedback(): boolean {
+    const form = this.normalizeGeneralFeedbackForm();
+    return !this.submittingGeneralFeedback() && this.isGeneralFeedbackFormValid(form);
+  }
+
+  async submitGeneralFeedback(): Promise<void> {
+    const form = this.normalizeGeneralFeedbackForm();
+    if (!this.isGeneralFeedbackFormValid(form)) {
+      this.error.set('Vui lòng nhập đủ các trường đánh giá tổng quát từ 1 đến 5.');
+      return;
+    }
+
+    this.submittingGeneralFeedback.set(true);
+    this.error.set('');
+    try {
+      const result = await this.sessionSvc.submitGeneralFeedback(form);
+      if (result.ok) {
+        this.closeGeneralFeedbackModal();
+        this.success.set(result.data?.message || 'Đã gửi đánh giá tổng quát.');
+        await this.load();
+      } else {
+        this.error.set(result.errorMessage || 'Lỗi khi gửi đánh giá tổng quát');
+      }
+    } finally {
+      this.submittingGeneralFeedback.set(false);
+    }
+  }
+
+  private mergeSessionDetail(
+    detail: SessionItem,
+    fallback?: SessionItem | null,
+  ): SessionItem {
+    return {
+      ...(fallback || {} as SessionItem),
+      ...detail,
+    };
+  }
+
+  private async handleFinalizePostState(
+    sessionId: string,
+    fallbackSession?: SessionItem | null,
+  ): Promise<void> {
+    await this.load();
+
+    const detail = await this.sessionSvc.getById(sessionId);
+    if (!detail) {
+      if (this.selectedSession()?._id === sessionId) {
+        this.showDetailModal.set(false);
+        this.selectedSession.set(null);
+      }
+      return;
+    }
+
+    const merged = this.mergeSessionDetail(detail, fallbackSession || this.selectedSession());
+    this.selectedSession.set(merged);
+
+    const walletWarning = `${merged.walletDeductError || ''}`.trim();
+    if (walletWarning) {
+      this.showDetailModal.set(true);
+      this.error.set(walletWarning);
+      return;
+    }
+
+    if (this.selectedSession()?._id === sessionId || fallbackSession?._id === sessionId) {
+      this.showDetailModal.set(false);
+      this.selectedSession.set(null);
     }
   }
 
   async finalizeSession(session: SessionItem): Promise<void> {
     const message = session.status === 'FINALIZED'
-      ? 'Xác nhận payroll cho buổi học này? Hệ thống sẽ đánh dấu OPS/Giám đốc đã chốt để buổi học đủ điều kiện tính lương.'
-      : 'Chốt buổi học này? Sẽ trừ ví học sinh và ghi nhận lương GV.';
+      ? 'X\u00e1c nh\u1eadn payroll cho bu\u1ed5i h\u1ecdc n\u00e0y? H\u1ec7 th\u1ed1ng s\u1ebd \u0111\u00e1nh d\u1ea5u OPS/Gi\u00e1m \u0111\u1ed1c \u0111\u00e3 ch\u1ed1t \u0111\u1ec3 bu\u1ed5i h\u1ecdc \u0111\u1ee7 \u0111i\u1ec1u ki\u1ec7n t\u00ednh l\u01b0\u01a1ng.'
+      : 'Ch\u1ed1t bu\u1ed5i h\u1ecdc n\u00e0y? S\u1ebd tr\u1eeb v\u00ed h\u1ecdc sinh v\u00e0 ghi nh\u1eadn l\u01b0\u01a1ng GV.';
     if (!confirm(message)) return;
-    const ok = await this.sessionSvc.finalize(session._id);
-    if (ok) {
-      await this.load();
-      if (this.selectedSession()?._id === session._id) {
-        this.showDetailModal.set(false);
-        this.selectedSession.set(null);
-      }
+    this.success.set('');
+    this.error.set('');
+    const result = await this.sessionSvc.finalize(session._id);
+    if (result.ok) {
+      await this.handleFinalizePostState(session._id, session);
     } else {
-      alert('Lỗi khi chốt buổi học');
+      const errorMessage = result.errorMessage || '\u004c\u1ed7i khi ch\u1ed1t bu\u1ed5i h\u1ecdc';
+      this.error.set(errorMessage);
+      alert(errorMessage);
     }
   }
 
   async confirmSalaryFromDetail(): Promise<void> {
-    const session = this.selectedSession();
-    if (!session) return;
-    const message = session.status === 'FINALIZED'
-      ? 'Xác nhận lương cho buổi học này? Hệ thống sẽ đánh dấu buổi học đã được OPS/Kế toán/Giám đốc duyệt để vào điều kiện tính lương.'
-      : 'Xác nhận lương cho buổi học này? Hệ thống sẽ hoàn tất buổi học và ghi nhận lương giáo viên.';
-    if (!confirm(message)) return;
-
-    const ok = await this.sessionSvc.finalize(session._id);
-    if (ok) {
-      await this.load();
-      this.showDetailModal.set(false);
-      this.selectedSession.set(null);
-    } else {
-      alert('Lỗi khi xác nhận lương buổi học');
-    }
+    return this.confirmSalaryFromDetailClean();
   }
 
   async confirmSalaryFromDetailClean(): Promise<void> {
@@ -1076,29 +675,31 @@ export class SessionsComponent implements OnInit {
       : 'X\u00e1c nh\u1eadn l\u01b0\u01a1ng cho bu\u1ed5i h\u1ecdc n\u00e0y? H\u1ec7 th\u1ed1ng s\u1ebd ho\u00e0n t\u1ea5t bu\u1ed5i h\u1ecdc v\u00e0 ghi nh\u1eadn l\u01b0\u01a1ng gi\u00e1o vi\u00ean.';
     if (!confirm(message)) return;
 
-    const ok = await this.sessionSvc.finalize(session._id);
-    if (ok) {
-      await this.load();
-      this.showDetailModal.set(false);
-      this.selectedSession.set(null);
+    this.success.set('');
+    this.error.set('');
+    const result = await this.sessionSvc.finalize(session._id);
+    if (result.ok) {
+      await this.handleFinalizePostState(session._id, session);
     } else {
-      alert('L\u1ed7i khi x\u00e1c nh\u1eadn l\u01b0\u01a1ng bu\u1ed5i h\u1ecdc');
+      const errorMessage = result.errorMessage || 'L\u1ed7i khi x\u00e1c nh\u1eadn l\u01b0\u01a1ng bu\u1ed5i h\u1ecdc';
+      this.error.set(errorMessage);
+      alert(errorMessage);
     }
   }
 
   async cancelSession(session: SessionItem): Promise<void> {
-    const reason = prompt('Lý do hủy buổi học:');
+    const reason = prompt('\u004c\u00fd do h\u1ee7y bu\u1ed5i h\u1ecdc:');
     if (!reason) return;
     const ok = await this.sessionSvc.cancel(session._id, reason);
     if (ok) {
       this.load();
     } else {
-      alert('Lỗi khi hủy buổi học');
+      alert('\u004c\u1ed7i khi h\u1ee7y bu\u1ed5i h\u1ecdc');
     }
   }
 
   async remove(session: SessionItem): Promise<void> {
-    if (!confirm('Xóa buổi học này?')) return;
+    if (!confirm('\u0058\u00f3a bu\u1ed5i h\u1ecdc n\u00e0y?')) return;
     const ok = await this.sessionSvc.remove(session._id);
     if (ok) {
       this.load();
@@ -1120,21 +721,22 @@ export class SessionsComponent implements OnInit {
   }
 
   formatCurrency(value: number): string {
-    return this.roundMoneyToThousand(value).toLocaleString('vi-VN') + ' ₫';
+    return this.roundMoneyToThousand(value).toLocaleString('vi-VN') + ' \u20ab';
   }
 
   formatTeacherCurrency(value: number): string {
-    return this.roundMoneyDownToThousand(value).toLocaleString('vi-VN') + ' ₫';
+    return this.roundMoneyDownToThousand(value).toLocaleString('vi-VN') + ' \u20ab';
   }
 
   statusLabel(status: string): string {
     const map: Record<string, string> = {
-      SCHEDULED: 'Đã lên lịch',
-      TEACHER_COMPLETED: 'GV hoàn thành',
-      PARENT_CONFIRMED: 'PH xác nhận',
-      FINALIZED: 'Đã chốt',
-      CANCELLED: 'Đã hủy',
-      NO_SHOW: 'Vắng',
+      SCHEDULED: '\u0110\u00e3 l\u00ean l\u1ecbch',
+      TEACHER_COMPLETED: 'GV ho\u00e0n th\u00e0nh',
+      PARENT_CONFIRMED: 'PH x\u00e1c nh\u1eadn',
+      FINALIZED: '\u0110\u00e3 ch\u1ed1t',
+      CANCELLED: '\u0110\u00e3 h\u1ee7y',
+      RESCHEDULED: '\u0110\u00e3 d\u1eddi l\u1ecbch',
+      NO_SHOW: 'V\u1eafng',
     };
     return map[status] || status;
   }
@@ -1143,6 +745,10 @@ export class SessionsComponent implements OnInit {
     if (!session) return '';
     if (session.status !== 'FINALIZED') {
       return this.statusLabel(session.status);
+    }
+
+    if (!session.isPaid && !!session.walletDeductError?.trim()) {
+      return '\u0110\u00e3 ch\u1ed1t, ch\u1edd n\u1ea1p v\u00ed';
     }
 
     const hasReport = !!session.hasTeachingReport && !!session.teachingReport?.lessonContent?.trim();
@@ -1157,8 +763,53 @@ export class SessionsComponent implements OnInit {
     return '\u0110\u00e3 x\u00e1c nh\u1eadn l\u01b0\u01a1ng';
   }
 
+  shouldShowLowRatingFlag(session: SessionItem | null | undefined): boolean {
+    if (!session?.parentRating || session.parentRating > 2) {
+      return false;
+    }
+    const role = this.auth.userSignal()?.role;
+    return role === 'OPS' || role === 'DIRECTOR';
+  }
+
+  lowRatingFlagLabel(session: SessionItem | null | undefined): string {
+    const rating = Math.max(1, Math.min(Number(session?.parentRating || 0), 5));
+    return '★'.repeat(rating);
+  }
+
+  confirmationSourceLabel(session: SessionItem | null | undefined): string {
+    if (!session?.confirmation) return '';
+    if (session.confirmation.autoConfirmedAt) {
+      return 'Xác nhận tự động bởi Hệ thống';
+    }
+    if (session.confirmation.parentConfirmedAt) {
+      return 'Xác nhận bởi Phụ huynh';
+    }
+    return '';
+  }
+
+  confirmationTimestamp(session: SessionItem | null | undefined): string {
+    const confirmedAt = session?.confirmation?.autoConfirmedAt || session?.confirmation?.parentConfirmedAt;
+    return confirmedAt ? this.formatDateTime(confirmedAt, '') : '';
+  }
+
+  cancellationSourceLabel(session: SessionItem | null | undefined): string {
+    const cancelledBy = session?.cancellation?.cancelledBy;
+    const labels: Record<string, string> = {
+      TEACHER: 'Giáo viên',
+      PARENT: 'Phụ huynh',
+      OPS: 'OPS',
+      SYSTEM: 'Hệ thống',
+    };
+    return cancelledBy ? labels[cancelledBy] || cancelledBy : '';
+  }
+
+  cancellationTimestamp(session: SessionItem | null | undefined): string {
+    const cancelledAt = session?.cancellation?.cancelledAt;
+    return cancelledAt ? this.formatDateTime(cancelledAt, '') : '';
+  }
+
   timeColumnLabel(): string {
-    return this.isTeacher() ? 'Giờ điểm danh' : 'Giờ';
+    return this.isTeacher() ? 'Gi\u1edd \u0111i\u1ec3m danh' : 'Gi\u1edd';
   }
 
   showTuitionColumn(): boolean {
@@ -1170,20 +821,20 @@ export class SessionsComponent implements OnInit {
   }
 
   payoutOrDurationColumnLabel(): string {
-    return this.showTeacherPayoutColumn() ? 'Lương GV' : 'Thời lượng';
+    return this.showTeacherPayoutColumn() ? 'L\u01b0\u01a1ng GV' : 'Th\u1eddi l\u01b0\u1ee3ng';
   }
 
   timeDisplay(session: SessionItem | null | undefined): string {
-    if (!session) return '—';
+    if (!session) return '\u2014';
     return this.isTeacher()
       ? this.formatAttendanceTime(session.attendedAt)
       : this.formatScheduledWindow(session);
   }
 
   private formatAttendanceTime(attendedAt?: string | null): string {
-    if (!attendedAt) return '—';
+    if (!attendedAt) return '\u2014';
     const date = new Date(attendedAt);
-    if (Number.isNaN(date.getTime())) return '—';
+    if (Number.isNaN(date.getTime())) return '\u2014';
     return date.toLocaleTimeString('vi-VN', {
       hour: '2-digit',
       minute: '2-digit',
@@ -1193,23 +844,23 @@ export class SessionsComponent implements OnInit {
   private formatScheduledWindow(session: SessionItem): string {
     const start = session.scheduledStartTime?.trim();
     const end = session.scheduledEndTime?.trim();
-    if (start && end) return `${start} – ${end}`;
-    return start || end || '—';
+    if (start && end) return `${start} \u2013 ${end}`;
+    return start || end || '\u2014';
   }
 
   formatDuration(session: SessionItem | null | undefined): string {
-    if (!session) return '—';
+    if (!session) return '\u2014';
     const explicitDuration = Number(session.durationMinutes ?? 0);
     if (Number.isFinite(explicitDuration) && explicitDuration > 0) {
-      return `${Math.round(explicitDuration)} phút`;
+      return `${Math.round(explicitDuration)} ph\u00fat`;
     }
 
     const startMinutes = this.parseTimeToMinutes(session.scheduledStartTime);
     const endMinutes = this.parseTimeToMinutes(session.scheduledEndTime);
     if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
-      return '—';
+      return '\u2014';
     }
-    return `${endMinutes - startMinutes} phút`;
+    return `${endMinutes - startMinutes} ph\u00fat`;
   }
 
   private parseTimeToMinutes(value?: string | null): number | null {
@@ -1224,6 +875,32 @@ export class SessionsComponent implements OnInit {
     return (hours * 60) + minutes;
   }
 
+  private calculateDurationMinutes(startTime?: string | null, endTime?: string | null): number | null {
+    const startMinutes = this.parseTimeToMinutes(startTime);
+    const endMinutes = this.parseTimeToMinutes(endTime);
+    if (startMinutes === null || endMinutes === null || endMinutes <= startMinutes) {
+      return null;
+    }
+    return endMinutes - startMinutes;
+  }
+
+  private addMinutesToTime(startTime?: string | null, durationMinutes?: number | null): string | null {
+    const startMinutes = this.parseTimeToMinutes(startTime);
+    const safeDuration = Number(durationMinutes ?? 0);
+    if (startMinutes === null || !Number.isFinite(safeDuration) || safeDuration <= 0) {
+      return null;
+    }
+
+    const endMinutes = startMinutes + Math.round(safeDuration);
+    if (endMinutes <= startMinutes || endMinutes > (24 * 60)) {
+      return null;
+    }
+
+    const hours = Math.floor(endMinutes / 60);
+    const minutes = endMinutes % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+  }
+
   sessionEditHistory(session: SessionItem | null | undefined): SessionEditHistoryEntry[] {
     return [...(session?.editHistory || [])].sort((left, right) => {
       const leftTime = new Date(left.editedAt).getTime();
@@ -1233,9 +910,9 @@ export class SessionsComponent implements OnInit {
   }
 
   formatHistoryTimestamp(value?: string): string {
-    if (!value) return 'Khong ro thoi gian';
+    if (!value) return 'Kh\u00f4ng r\u00f5 th\u1eddi gian';
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return 'Khong ro thoi gian';
+    if (Number.isNaN(date.getTime())) return 'Kh\u00f4ng r\u00f5 th\u1eddi gian';
     return date.toLocaleString('vi-VN', {
       day: '2-digit',
       month: '2-digit',
@@ -1245,7 +922,7 @@ export class SessionsComponent implements OnInit {
     });
   }
 
-  formatDateTime(value?: string, emptyLabel = 'Chua co'): string {
+  formatDateTime(value?: string, emptyLabel = 'Ch\u01b0a c\u00f3'): string {
     if (!value) return emptyLabel;
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return emptyLabel;
@@ -1258,9 +935,20 @@ export class SessionsComponent implements OnInit {
     });
   }
 
-  formatOptionalText(value?: string | null, emptyLabel = 'Chua cap nhat'): string {
+  formatOptionalText(value?: string | null, emptyLabel = 'Ch\u01b0a c\u1eadp nh\u1eadt'): string {
     const safeValue = value?.trim();
     return safeValue && safeValue.length > 0 ? safeValue : emptyLabel;
+  }
+
+  private formatShortDate(value?: string): string {
+    if (!value) return 'Chưa rõ ngày';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString('vi-VN', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    });
   }
 
   getRecordingUrl(session: SessionItem | null | undefined): string | null {
@@ -1270,11 +958,11 @@ export class SessionsComponent implements OnInit {
 
   roleLabel(role?: string): string {
     const map: Record<string, string> = {
-      DIRECTOR: 'Giam doc',
-      OPS: 'Van hanh',
-      ACCOUNTING: 'Ke toan',
-      TEACHER: 'Giao vien',
-      PARENT: 'Phu huynh',
+      DIRECTOR: 'Gi\u00e1m \u0111\u1ed1c',
+      OPS: 'V\u1eadn h\u00e0nh',
+      ACCOUNTING: 'K\u1ebf to\u00e1n',
+      TEACHER: 'Gi\u00e1o vi\u00ean',
+      PARENT: 'Ph\u1ee5 huynh',
       SALE: 'Sale',
       ADSMANAGER: 'Ads',
     };
@@ -1285,6 +973,59 @@ export class SessionsComponent implements OnInit {
   formatSessionCount(value?: number): string {
     const safeValue = Number(value || 0);
     return Math.max(Math.floor(safeValue), 0).toLocaleString('vi-VN');
+  }
+
+  changeRequestHistory(): SessionChangeRequestItem[] {
+    return this.sortChangeRequests(this.changeRequests());
+  }
+
+  formatChangeRequestStatus(status?: string): string {
+    const map: Record<string, string> = {
+      PENDING: 'Chờ duyệt',
+      APPROVED: 'Đã duyệt',
+      REJECTED: 'Từ chối',
+      CANCELLED: 'Đã hủy',
+    };
+    return map[`${status || ''}`] || (status || 'Không rõ');
+  }
+
+  changeRequestScheduleLabel(request: SessionChangeRequestItem): string {
+    const currentDate = this.formatShortDate(request.currentScheduledDate || request.sessionId?.scheduledDate);
+    const currentStart = `${request.currentStartTime || request.sessionId?.scheduledStartTime || ''}`.trim();
+    const currentEnd = `${request.currentEndTime || request.sessionId?.scheduledEndTime || ''}`.trim();
+    const requestedDate = this.formatShortDate(request.requestedScheduledDate || request.currentScheduledDate || request.sessionId?.scheduledDate);
+    const requestedStart = `${request.requestedStartTime || request.currentStartTime || request.sessionId?.scheduledStartTime || ''}`.trim();
+    const requestedEnd = `${request.requestedEndTime || request.currentEndTime || request.sessionId?.scheduledEndTime || ''}`.trim();
+    return `${currentDate} ${currentStart} - ${currentEnd} -> ${requestedDate} ${requestedStart} - ${requestedEnd}`;
+  }
+
+  changeRequestTeacherLabel(request: SessionChangeRequestItem): string {
+    const currentTeacher = request.currentTeacherId?.fullName || 'Giáo viên hiện tại';
+    const requestedTeacher = request.requestedTeacherId?.fullName || currentTeacher;
+    return `${currentTeacher} -> ${requestedTeacher}`;
+  }
+
+  changeRequestDurationLabel(request: SessionChangeRequestItem): string {
+    const nextDuration = request.requestedDurationMinutes ?? request.currentDurationMinutes;
+    return `${request.currentDurationMinutes} phút -> ${nextDuration} phút`;
+  }
+
+  changeRequestDecisionNote(request: SessionChangeRequestItem): string {
+    if (request.status === 'REJECTED' && request.rejectionReason) {
+      return `Lý do từ chối: ${request.rejectionReason}`;
+    }
+    if (request.reviewedBy?.fullName && request.reviewedAt) {
+      return `${this.formatChangeRequestStatus(request.status)} bởi ${request.reviewedBy.fullName} lúc ${this.formatDateTime(request.reviewedAt, '')}`;
+    }
+    return '';
+  }
+
+  canRequestSessionChange(session: SessionItem | null | undefined): boolean {
+    return !!session && this.isSale() && session.status === 'SCHEDULED';
+  }
+
+  canRescheduleSession(session: SessionItem | null | undefined): boolean {
+    return !!session && this.canCreate() && session.status === 'SCHEDULED';
   }
 
   canCreate(): boolean {
@@ -1321,6 +1062,235 @@ export class SessionsComponent implements OnInit {
     return role === 'DIRECTOR' || role === 'OPS' || role === 'ACCOUNTING';
   }
 
+  private resetCompleteForm(): void {
+    this.completeForm = { topicsCovered: '', homework: '', teacherNotes: '' };
+    this.completeTouched = {
+      topicsCovered: false,
+      homework: false,
+      teacherNotes: false,
+    };
+    this.completeSubmitAttempted = false;
+  }
+
+  private createGeneralFeedbackForm(target?: GeneralFeedbackTarget | null): GeneralFeedbackFormState {
+    return {
+      overallRating: 5,
+      teachingQuality: 5,
+      communication: 5,
+      facility: 5,
+      comment: '',
+      studentId: target?.studentId || '',
+      sessionId: target?.sessionId || '',
+    };
+  }
+
+  private createChangeRequestForm(session?: SessionItem | null): SessionChangeRequestFormState {
+    return {
+      requestedScheduledDate: this.formatDateInput(session?.scheduledDate),
+      requestedStartTime: `${session?.scheduledStartTime || ''}`.trim(),
+      requestedTeacherId: '',
+      reason: '',
+    };
+  }
+
+  private normalizeChangeRequestForm(): SessionChangeRequestFormState {
+    return {
+      requestedScheduledDate: `${this.changeRequestForm.requestedScheduledDate || ''}`.trim(),
+      requestedStartTime: `${this.changeRequestForm.requestedStartTime || ''}`.trim(),
+      requestedTeacherId: `${this.changeRequestForm.requestedTeacherId || ''}`.trim(),
+      reason: `${this.changeRequestForm.reason || ''}`.trim(),
+    };
+  }
+
+  private createRescheduleForm(session?: SessionItem | null): SessionRescheduleFormState {
+    return {
+      newScheduledDate: this.formatDateInput(session?.scheduledDate),
+      newStartTime: `${session?.scheduledStartTime || ''}`.trim(),
+      newEndTime: `${session?.scheduledEndTime || ''}`.trim(),
+      reason: '',
+    };
+  }
+
+  private normalizeRescheduleForm(): SessionRescheduleFormState {
+    return {
+      newScheduledDate: `${this.rescheduleForm.newScheduledDate || ''}`.trim(),
+      newStartTime: `${this.rescheduleForm.newStartTime || ''}`.trim(),
+      newEndTime: `${this.rescheduleForm.newEndTime || ''}`.trim(),
+      reason: `${this.rescheduleForm.reason || ''}`.trim(),
+    };
+  }
+
+  private mergeSessionSnapshot(
+    base: SessionItem,
+    patch?: Partial<SessionItem> | null,
+    overrides: Partial<SessionItem> = {},
+  ): SessionItem {
+    const merged = {
+      ...base,
+      ...(patch || {}),
+      ...overrides,
+    } as SessionItem;
+
+    merged.classId = this.resolveSessionRelation(merged.classId, base.classId);
+    merged.studentId = this.resolveSessionRelation(merged.studentId, base.studentId);
+    merged.teacherId = this.resolveSessionRelation(merged.teacherId, base.teacherId);
+    if (base.parentUserId) {
+      merged.parentUserId = this.resolveSessionRelation(merged.parentUserId, base.parentUserId);
+    }
+
+    return merged;
+  }
+
+  private resolveSessionRelation<T>(value: T | string | null | undefined, fallback: T): T {
+    if (!value || typeof value === 'string') {
+      return fallback;
+    }
+    return value;
+  }
+
+  private toSessionReference(
+    value: SessionItem | SessionReference | string | null | undefined,
+  ): SessionReference | null {
+    if (!value) {
+      return null;
+    }
+
+    if (typeof value === 'string') {
+      return { _id: value };
+    }
+
+    return {
+      _id: value._id,
+      scheduledDate: value.scheduledDate,
+      scheduledStartTime: value.scheduledStartTime,
+      scheduledEndTime: value.scheduledEndTime,
+      status: value.status,
+    };
+  }
+
+  private async loadTeacherOptions(session: SessionItem): Promise<void> {
+    try {
+      const teachers = await this.teacherSvc.getAllTeachers({ status: 'ACTIVE' });
+      const options = teachers
+        .map((profile) => this.toTeacherOption(profile))
+        .filter((item): item is TeacherOption => !!item);
+      const currentTeacherId = this.teacherUserId(session);
+      const currentTeacherName = session.teacherId?.fullName || 'Giáo viên hiện tại';
+      if (currentTeacherId && !options.some((item) => item.userId === currentTeacherId)) {
+        options.unshift({ userId: currentTeacherId, fullName: currentTeacherName });
+      }
+      this.teacherOptions.set(options);
+    } catch {
+      const currentTeacherId = this.teacherUserId(session);
+      if (currentTeacherId) {
+        this.teacherOptions.set([{
+          userId: currentTeacherId,
+          fullName: session.teacherId?.fullName || 'Giáo viên hiện tại',
+        }]);
+      } else {
+        this.teacherOptions.set([]);
+      }
+    }
+  }
+
+  private toTeacherOption(profile: TeacherProfile | null | undefined): TeacherOption | null {
+    const user = profile?.userId;
+    if (!user) {
+      return null;
+    }
+
+    if (typeof user === 'string') {
+      return {
+        userId: user,
+        fullName: `Giáo viên ${user.slice(-6)}`,
+      };
+    }
+
+    if (!user._id) {
+      return null;
+    }
+
+    return {
+      userId: user._id,
+      fullName: user.fullName || `Giáo viên ${user._id.slice(-6)}`,
+    };
+  }
+
+  private teacherUserId(session: SessionItem | null | undefined): string {
+    const teacher = session?.teacherId;
+    if (!teacher) return '';
+    if (typeof teacher === 'string') return teacher;
+    return `${teacher._id || ''}`.trim();
+  }
+
+  private sessionDurationMinutes(session: SessionItem | null | undefined): number {
+    if (!session) return 0;
+    const explicitDuration = Number(session.durationMinutes ?? 0);
+    if (Number.isFinite(explicitDuration) && explicitDuration > 0) {
+      return Math.round(explicitDuration);
+    }
+    return this.calculateDurationMinutes(session.scheduledStartTime, session.scheduledEndTime) || 0;
+  }
+
+  private sortChangeRequests(requests: SessionChangeRequestItem[]): SessionChangeRequestItem[] {
+    return [...requests].sort((left, right) => {
+      const leftTime = new Date(left.requestedAt || '').getTime();
+      const rightTime = new Date(right.requestedAt || '').getTime();
+      return rightTime - leftTime;
+    });
+  }
+
+  formatDateInput(value?: string | Date | null): string {
+    if (!value) return '';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+  }
+
+  private normalizeGeneralFeedbackForm(): GeneralFeedbackFormState {
+    const normalizeRating = (value: number) => {
+      const normalized = Number(value);
+      if (!Number.isFinite(normalized)) {
+        return 0;
+      }
+      return Math.max(1, Math.min(5, Math.round(normalized)));
+    };
+
+    return {
+      overallRating: normalizeRating(this.generalFeedbackForm.overallRating),
+      teachingQuality: normalizeRating(this.generalFeedbackForm.teachingQuality),
+      communication: normalizeRating(this.generalFeedbackForm.communication),
+      facility: normalizeRating(this.generalFeedbackForm.facility),
+      comment: `${this.generalFeedbackForm.comment || ''}`.trim(),
+      studentId: `${this.generalFeedbackForm.studentId || ''}`.trim(),
+      sessionId: `${this.generalFeedbackForm.sessionId || ''}`.trim(),
+    };
+  }
+
+  private isGeneralFeedbackFormValid(form: GeneralFeedbackFormState): boolean {
+    const ratings = [
+      form.overallRating,
+      form.teachingQuality,
+      form.communication,
+      form.facility,
+    ];
+    return !!form.studentId
+      && !!form.sessionId
+      && ratings.every((rating) => Number.isInteger(rating) && rating >= 1 && rating <= 5);
+  }
+
+  private normalizeCompleteForm(): Record<CompleteField, string> {
+    return {
+      topicsCovered: `${this.completeForm.topicsCovered || ''}`.trim(),
+      homework: `${this.completeForm.homework || ''}`.trim(),
+      teacherNotes: `${this.completeForm.teacherNotes || ''}`.trim(),
+    };
+  }
+
+  private isCompleteFormValid(form: Record<CompleteField, string>): boolean {
+    return !!form.topicsCovered && !!form.homework && !!form.teacherNotes;
+  }
+
   private hasManualPayrollConfirmation(session: SessionItem): boolean {
     const finalizedBy: any = session.confirmation?.finalizedBy;
     if (!finalizedBy) return false;
@@ -1343,5 +1313,72 @@ export class SessionsComponent implements OnInit {
 
   isDirector(): boolean {
     return this.auth.userSignal()?.role === 'DIRECTOR';
+  }
+
+  isSale(): boolean {
+    return this.auth.userSignal()?.role === 'SALE';
+  }
+
+  canSubmitReschedule(): boolean {
+    const session = this.selectedSession();
+    const form = this.normalizeRescheduleForm();
+    if (this.submittingReschedule() || !session || !this.canRescheduleSession(session)) {
+      return false;
+    }
+
+    if (!form.newScheduledDate || !form.newStartTime || !form.newEndTime) {
+      return false;
+    }
+
+    const nextDurationMinutes = this.calculateDurationMinutes(form.newStartTime, form.newEndTime);
+    if (!nextDurationMinutes) {
+      return false;
+    }
+
+    const currentDate = this.formatDateInput(session.scheduledDate);
+    const currentStartTime = `${session.scheduledStartTime || ''}`.trim();
+    const currentEndTime = `${session.scheduledEndTime || ''}`.trim();
+
+    return form.newScheduledDate !== currentDate
+      || form.newStartTime !== currentStartTime
+      || form.newEndTime !== currentEndTime;
+  }
+
+  canSubmitChangeRequest(): boolean {
+    const session = this.selectedSession();
+    const form = this.normalizeChangeRequestForm();
+    if (this.submittingChangeRequest() || !session || !form.reason) {
+      return false;
+    }
+
+    const currentTeacherId = this.teacherUserId(session);
+    const currentDate = this.formatDateInput(session.scheduledDate);
+    const currentStartTime = `${session.scheduledStartTime || ''}`.trim();
+    const teacherChanged = !!form.requestedTeacherId && form.requestedTeacherId !== currentTeacherId;
+    const dateChanged = !!form.requestedScheduledDate && form.requestedScheduledDate !== currentDate;
+    const timeChanged = !!form.requestedStartTime && form.requestedStartTime !== currentStartTime;
+
+    if (!teacherChanged && !dateChanged && !timeChanged) {
+      return false;
+    }
+
+    return !timeChanged || !!this.addMinutesToTime(form.requestedStartTime, this.sessionDurationMinutes(session));
+  }
+
+  private extractUiErrorMessage(error: any, fallback: string): string {
+    const payload = error?.error;
+    if (Array.isArray(payload?.message)) {
+      const message = payload.message.find((item: unknown) => typeof item === 'string' && item.trim());
+      if (message) {
+        return String(message).trim();
+      }
+    }
+    if (typeof payload?.message === 'string' && payload.message.trim()) {
+      return payload.message.trim();
+    }
+    if (typeof error?.message === 'string' && error.message.trim()) {
+      return error.message.trim();
+    }
+    return fallback;
   }
 }

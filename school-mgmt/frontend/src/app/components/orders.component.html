@@ -1,0 +1,247 @@
+  <header class="head">
+    <div><h2>Đơn đăng ký học</h2><p>Nhập nhanh tài khoản phụ huynh, học sinh, lớp và hóa đơn ngay trong order.</p></div>
+    <button class="primary" (click)="openCreate()" data-testid="orders-create-button">+ Tạo đơn</button>
+  </header>
+  <app-flow-guide featureKey="orders"></app-flow-guide>
+
+  <section class="pipeline" *ngIf="pipeline()">
+    <div class="pipe" *ngFor="let s of pipelineStatuses" [style.borderLeftColor]="statusColor(s)">
+      <strong>{{ getPipeCount(s) }}</strong><span>{{ statusLabel(s) }}</span><small>{{ getPipeValue(s) | number }}d</small>
+    </div>
+  </section>
+
+  <section class="filters">
+    <input [(ngModel)]="keyword" placeholder="Tìm mã đơn, học sinh, phụ huynh..." />
+    <select [(ngModel)]="filterStatus"><option value="">Tất cả trạng thái</option><option *ngFor="let s of allStatuses" [value]="s">{{ statusLabel(s) }}</option></select>
+    <select [(ngModel)]="filterType"><option value="">Tất cả loại</option><option *ngFor="let t of allTypes" [value]="t.value">{{ t.label }}</option></select>
+    <button (click)="reload()">Làm mới</button>
+  </section>
+
+  <table class="data" *ngIf="filtered().length; else empty">
+    <thead><tr><th>Mã đơn</th><th>Loại</th><th>Học sinh</th><th>Phụ huynh</th><th>Giá tiền khóa học</th><th>Số tiền hóa đơn</th><th>Trạng thái</th><th>Sale</th><th></th></tr></thead>
+    <tbody>
+      <tr *ngFor="let o of filtered()" (click)="openDetail(o)" class="click" [attr.data-order-id]="o._id" [attr.data-order-code]="o.orderCode" data-testid="order-row">
+        <td><code>{{ o.orderCode }}</code></td>
+        <td>{{ typeLabel(o.orderType) }}</td>
+        <td>{{ o.studentName }}<div class="muted" *ngIf="o.studentCode">{{ o.studentCode }}</div></td>
+        <td>{{ o.parentName }}<div class="muted">{{ o.parentPhone }}</div></td>
+        <td class="right" data-testid="order-row-course-price">{{ orderCoursePrice(o) | number }}d</td>
+        <td class="right" data-testid="order-row-invoice-amount">
+          <div><strong>{{ orderInvoiceAmount(o) | number }}d</strong></div>
+          <div class="payment-split" *ngIf="showPartialPaymentStatus(o)">
+            <small data-testid="order-row-paid-amount">Đã TT {{ partialPaymentPaidAmount(o) | number }}d</small>
+            <small data-testid="order-row-remaining-amount">Còn thiếu {{ partialPaymentRemainingAmount(o) | number }}d</small>
+          </div>
+        </td>
+        <td>
+          <div class="status-stack">
+            <span class="badge" [style.background]="statusColor(o.status)+'20'" [style.color]="statusColor(o.status)">{{ statusLabel(o.status) }}</span>
+            <span class="badge payment-gap-badge" *ngIf="showPartialPaymentStatus(o)" data-testid="order-row-partial-badge">Chưa thanh toán đủ</span>
+          </div>
+        </td>
+        <td>{{ o.saleName || '-' }}</td>
+        <td (click)="$event.stopPropagation()">
+          <button class="btn-sm" *ngIf="canEdit(o)" (click)="openEdit(o)" data-testid="order-row-edit">Sửa</button>
+          <button class="btn-sm" *ngIf="canSubmit(o)" (click)="submitOrder(o)" data-testid="order-row-submit">Gửi</button>
+          <button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="openApproveOrderModal(o)" data-testid="order-row-approve">Duyệt</button>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+  <ng-template #empty><p class="empty">Chưa có đơn nào.</p></ng-template>
+
+  <div class="backdrop" *ngIf="showModal()" data-testid="order-form-modal">
+    <div class="modal wide">
+      <h3>{{ editingId ? 'Cập nhật đơn' : 'Tạo đơn đăng ký' }}</h3>
+      <form (ngSubmit)="submitForm()" data-testid="order-form">
+        <div class="grid">
+          <label>Loại đơn<select name="orderType" [(ngModel)]="form.orderType" required data-testid="order-type"><option *ngFor="let t of allTypes" [value]="t.value">{{ t.label }}</option></select></label>
+          <label>Nguồn<select name="leadSource" [(ngModel)]="form.leadSource" (ngModelChange)="onLeadSourceChange()" data-testid="order-lead-source"><option value="">--</option><option *ngFor="let s of allSources" [value]="s.value">{{ s.label }}</option></select></label>
+          <label *ngIf="['FACEBOOK','GOOGLE','TIKTOK'].includes(form.leadSource)">Nhóm QC<select name="adGroupId" [(ngModel)]="form.adGroupId" (ngModelChange)="onAdGroupChange()" [disabled]="form.leadId && form.adGroupFromLead" data-testid="order-ad-group"><option value="">--</option><option *ngFor="let g of orderAdGroups()" [value]="g._id">{{ g.name }}</option></select></label>
+          <label *ngIf="!isSaleRole">Sale phụ trách<select name="saleId" [(ngModel)]="form.saleId" data-testid="order-sale"><option value="">-- Tự suy từ dữ liệu liên kết --</option><option *ngFor="let sale of sales()" [value]="sale._id">{{ sale.fullName }}</option></select></label>
+        </div>
+
+        <h4>Liên kết hệ thống</h4>
+        <div class="grid two">
+          <div class="stack-field">
+            <label>Phụ huynh đã có<input name="parentLookup" [(ngModel)]="parentLookup" placeholder="Tìm tên, SĐT, email..." data-testid="order-parent-lookup" /><select name="parentUserId" [ngModel]="form.parentUserId || ''" (ngModelChange)="onParentSelected($event)" data-testid="order-parent-existing"><option value="">-- Không liên kết --</option><option *ngFor="let p of filteredParents()" [value]="p._id">{{ formatParentOption(p) }}</option></select></label>
+            <div class="inline-actions"><button type="button" class="btn-sm" (click)="startNewParent()" data-testid="order-parent-new">+ Tạo mới PH</button><span class="muted">Tài khoản PH mới mặc định mật khẩu 123456</span></div>
+          </div>
+          <div class="stack-field">
+            <label>Học sinh đã có<input name="studentLookup" [(ngModel)]="studentLookup" placeholder="Tìm mã HS, tên..." data-testid="order-student-lookup" /><select name="existingStudentId" [ngModel]="form.existingStudentId || ''" (ngModelChange)="onExistingStudentSelected($event)" data-testid="order-student-existing"><option value="">-- Không liên kết --</option><option *ngFor="let s of filteredStudents()" [value]="s._id">{{ formatStudentOption(s) }}</option></select></label>
+            <div class="inline-actions"><button type="button" class="btn-sm" (click)="startNewStudent()" data-testid="order-student-new">+ Tạo mới HS</button></div>
+          </div>
+        </div>
+
+        <h4>Thông tin phụ huynh</h4>
+        <div class="grid">
+          <label>Tên PH<input name="parentName" [(ngModel)]="form.parentName" (ngModelChange)="onParentFieldsChanged()" required data-testid="order-parent-name" /></label>
+          <label>SĐT<input name="parentPhone" [(ngModel)]="form.parentPhone" (ngModelChange)="onParentFieldsChanged()" required data-testid="order-parent-phone" /></label>
+          <label>Email<input name="parentEmail" [(ngModel)]="form.parentEmail" (ngModelChange)="onParentFieldsChanged()" data-testid="order-parent-email" /></label>
+          <label>Mã tài khoản<input name="parentUserCode" [(ngModel)]="form.parentUserCode" (ngModelChange)="onParentFieldsChanged()" data-testid="order-parent-code" /></label>
+          <label>Địa chỉ<input name="parentAddress" [(ngModel)]="form.parentAddress" data-testid="order-parent-address" /></label>
+          <label>Facebook<input name="parentFacebookLink" [(ngModel)]="form.parentFacebookLink" data-testid="order-parent-facebook" /></label>
+        </div>
+        <p class="muted">Nếu không liên kết phụ huynh có sẵn, order sẽ tự tạo tài khoản PH mới với mật khẩu 123456 khi duyệt.</p>
+
+        <h4>Thông tin học sinh</h4>
+        <div class="grid">
+          <label>Mã HS<input name="studentCode" [(ngModel)]="form.studentCode" (ngModelChange)="onStudentFieldsChanged()" placeholder="Để trống để hệ thống tự sinh" data-testid="order-student-code" /></label>
+          <label>Tên HS<input name="studentName" [(ngModel)]="form.studentName" (ngModelChange)="onStudentFieldsChanged()" required data-testid="order-student-name" /></label>
+          <label>Tuổi<input type="number" name="studentAge" [(ngModel)]="form.studentAge" min="3" max="25" (ngModelChange)="onStudentFieldsChanged()" data-testid="order-student-age" /></label>
+          <label>Level<input name="studentLevel" [(ngModel)]="form.studentLevel" (ngModelChange)="onStudentFieldsChanged()" placeholder="VD: Starter, Movers..." data-testid="order-student-level" /></label>
+          <label>Ngày sinh<input type="date" name="studentDob" [(ngModel)]="form.studentDob" data-testid="order-student-dob" /></label>
+          <label>Tháng sinh HS<input type="number" name="studentBirthMonth" [(ngModel)]="form.studentBirthMonth" min="1" max="12" data-testid="order-student-birth-month" /></label>
+          <label>Tháng sinh PH<input type="number" name="parentBirthMonth" [(ngModel)]="form.parentBirthMonth" min="1" max="12" data-testid="order-parent-birth-month" /></label>
+        </div>
+        <p class="muted">Nếu không nhập mã HS, hệ thống sẽ tự sinh khi duyệt order.</p>
+        <div class="upload"><input type="file" accept="image/*" (change)="uploadStudentFace($event)" data-testid="order-student-face-file" /><span *ngIf="isUploadingStudentFace()">Đang tải ảnh HS...</span><span *ngIf="!isUploadingStudentFace() && form.studentFaceImage">Đã có ảnh HS</span><button type="button" class="btn-sm" *ngIf="form.studentFaceImage" (click)="form.studentFaceImage = ''" data-testid="order-student-face-clear">Xóa ảnh</button></div>
+
+        <h4>Sản phẩm</h4>
+        <div class="item" *ngFor="let item of form.items; let i = index">
+          <div class="grid">
+            <label>Gói học<select [(ngModel)]="item.productId" [name]="'productId_'+i" (ngModelChange)="onProductSelect(item, $event)" required [attr.data-testid]="'order-item-product-'+i"><option value="">-- Chọn --</option><option *ngFor="let p of availableProductsForItem(item)" [value]="p._id">{{ p.name }}</option></select></label>
+            <label>Môn học<input [(ngModel)]="item.subject" [name]="'subject_'+i" placeholder="VD: Toán, Tiếng Anh..." [attr.data-testid]="'order-item-subject-'+i" /></label>
+            <label>Số buổi KH<input type="number" [(ngModel)]="item.sessions" [name]="'sessions_'+i" min="1" [attr.data-testid]="'order-item-sessions-'+i" /></label>
+            <label>Số tiền gói<input type="number" [value]="productSuggestedPrice(item)" disabled [attr.data-testid]="'order-item-suggested-'+i" /></label>
+            <label>Thời lượng cơ sở<input type="number" [(ngModel)]="item.baseDuration" [name]="'baseDuration_'+i" min="15" (ngModelChange)="calcItemAmount(item)" [attr.data-testid]="'order-item-base-duration-'+i" /></label>
+            <label>Thời lượng<input type="number" [(ngModel)]="item.sessionDuration" [name]="'duration_'+i" min="15" (ngModelChange)="calcItemAmount(item)" [attr.data-testid]="'order-item-duration-'+i" /></label>
+            <label>Giá cơ sở/buổi<input type="number" [(ngModel)]="item.pricePerSession" [name]="'price_'+i" min="0" (ngModelChange)="calcItemAmount(item)" [attr.data-testid]="'order-item-price-'+i" /></label>
+            <label>Hình thức<select [(ngModel)]="item.teachingMode" [name]="'mode_'+i" (ngModelChange)="onTeachingModeChange(item, $event)" [attr.data-testid]="'order-item-mode-'+i"><option value="ONLINE">ONLINE</option><option value="OFFLINE">OFFLINE</option></select></label>
+            <label>Buổi tặng<input type="number" [(ngModel)]="item.bonusSessions" [name]="'bonus_'+i" min="0" [attr.data-testid]="'order-item-bonus-'+i" /></label>
+            <label>Học thử<input type="number" [(ngModel)]="item.trialSessions" [name]="'trial_'+i" min="0" [attr.data-testid]="'order-item-trial-'+i" /></label>
+            <label>Trạng thái<select [(ngModel)]="item.courseStatus" [name]="'course_'+i" [attr.data-testid]="'order-item-course-status-'+i"><option value="">-- Tự động --</option><option *ngFor="let s of allCourseStatuses" [value]="s.value">{{ s.label }}</option></select></label>
+            <label>Lớp dự kiến<select [ngModel]="classSelectionValue(item)" [name]="'class_'+i" (ngModelChange)="onClassSelectionChange(item, $event)" [attr.data-testid]="'order-item-class-'+i"><option value="__CREATE_NEW__">-- Tạo lớp mới khi duyệt --</option><option value="">-- Để xếp lớp sau --</option><option *ngFor="let c of classOptionsForItem(item)" [value]="c._id">{{ formatClassOption(c) }}</option></select></label>
+            <label>Giáo viên dự kiến<select [(ngModel)]="item.preferredTeacherId" [name]="'teacher_'+i" [disabled]="!!item.selectedClassId || !item.createNewClassWhenApproved" [attr.data-testid]="'order-item-teacher-'+i"><option value="">--</option><option *ngFor="let t of teachers()" [value]="t._id">{{ t.fullName }}</option></select></label>
+            <label *ngIf="item.teachingMode === 'ONLINE'">Lương GV/buổi<input type="number" [(ngModel)]="item.teacherPayPerSession" [name]="'teacherPaySession_'+i" min="0" [attr.data-testid]="'order-item-teacher-pay-session-'+i" /></label>
+            <label *ngIf="item.teachingMode === 'OFFLINE'">Lương GV/HS/buổi<input type="number" [(ngModel)]="item.teacherPayPerStudent" [name]="'teacherPayStudent_'+i" min="0" [attr.data-testid]="'order-item-teacher-pay-student-'+i" /></label>
+            <label>Sĩ số tối đa<input type="number" [(ngModel)]="item.maxStudents" [name]="'maxStudents_'+i" min="1" placeholder="Bỏ trống = không giới hạn" [attr.data-testid]="'order-item-max-students-'+i" /></label>
+            <label>Lịch mong muốn<input [(ngModel)]="item.preferredSchedule" [name]="'schedule_'+i" [attr.data-testid]="'order-item-schedule-'+i" /></label>
+            <label>Ghi chú<input [(ngModel)]="item.notes" [name]="'notes_'+i" [attr.data-testid]="'order-item-notes-'+i" /></label>
+            <label class="full-span">Mục tiêu học<textarea [(ngModel)]="item.learningGoals" [name]="'learningGoals_'+i" rows="2" placeholder="Mục tiêu học / yêu cầu lớp" [attr.data-testid]="'order-item-learning-goals-'+i"></textarea></label>
+            <label class="full-span">Mô tả hóa đơn<textarea [(ngModel)]="item.invoiceDescription" [name]="'invoiceDescription_'+i" rows="2" placeholder="Nội dung hiển thị trên hóa đơn nếu cần" [attr.data-testid]="'order-item-invoice-description-'+i"></textarea></label>
+          </div>
+          <p class="muted">{{ classSelectionHint(item) }}</p>
+          <button type="button" class="btn-sm" *ngIf="form.items.length > 1" (click)="removeItem(i)" [attr.data-testid]="'order-item-remove-'+i">Xóa item</button>
+        </div>
+        <button type="button" class="btn-sm" (click)="addItem()" data-testid="order-add-item">+ Thêm sản phẩm</button>
+
+        <h4>Hóa đơn chờ duyệt</h4>
+        <div class="grid">
+          <label>Kế hoạch<select name="paymentPlan" [(ngModel)]="form.paymentPlan" data-testid="order-payment-plan"><option *ngFor="let p of allPaymentPlans" [value]="p.value">{{ p.label }}</option></select></label>
+          <label>Ngày thanh toán<input type="date" name="paymentDate" [(ngModel)]="form.paymentDate" data-testid="order-payment-date" /></label>
+          <label>Hoa hồng sale<input type="number" name="saleCommission" [(ngModel)]="form.saleCommission" min="0" data-testid="order-sale-commission" /></label>
+        </div>
+        <p class="muted section-note">Mỗi sản phẩm sẽ tạo một hóa đơn chờ duyệt. Số buổi HĐ, số hóa đơn và số tiền được nhập tại đây.</p>
+        <div class="invoice-list" data-testid="order-invoice-list">
+          <div class="invoice-card" *ngFor="let item of form.items; let i = index">
+            <div class="invoice-card-head">
+              <div>
+                <strong>Hóa đơn {{ i + 1 }}</strong>
+                <div class="muted invoice-subtitle">{{ invoiceItemLabel(item, i) }}</div>
+              </div>
+              <button type="button" class="btn-sm" (click)="resetInvoiceAmount(item)" [attr.data-testid]="'order-invoice-reset-'+i">Tính lại tiền</button>
+            </div>
+            <div class="grid">
+              <label>Tiền hóa đơn<input type="number" [(ngModel)]="item.amount" [name]="'invoiceAmount_'+i" min="0" (ngModelChange)="markInvoiceAmountEdited(item)" (blur)="normalizeInvoiceAmount(item)" [attr.data-testid]="'order-invoice-amount-'+i" /></label>
+              <label>Số buổi HĐ<input type="number" [(ngModel)]="item.invoiceSessions" [name]="'invoiceSessions_'+i" min="0" (ngModelChange)="calcItemAmount(item)" (blur)="normalizeInvoiceSessions(item)" [attr.data-testid]="'order-invoice-sessions-'+i" /></label>
+              <label>Số hóa đơn<input [(ngModel)]="item.invoiceNumber" [name]="'invoiceNumber_'+i" placeholder="VD: HD20260001" [attr.data-testid]="'order-invoice-number-'+i" /></label>
+              <label>Lần TT<input type="number" [(ngModel)]="item.paymentRound" [name]="'paymentRound_'+i" min="1" placeholder="Để trống để tự động" [attr.data-testid]="'order-invoice-payment-round-'+i" /></label>
+            </div>
+          </div>
+        </div>
+        <div class="upload"><input type="file" accept="image/*" (change)="uploadReceipt($event)" data-testid="order-receipt-file" /><span *ngIf="isUploadingReceipt()">Đang tải chứng từ...</span><span *ngIf="!isUploadingReceipt() && form.receiptImage">Đã có chứng từ</span><button type="button" class="btn-sm" *ngIf="form.receiptImage" (click)="form.receiptImage = ''" data-testid="order-receipt-clear">Xóa chứng từ</button></div>
+
+        <h4>Tổng kết</h4>
+        <div class="grid"><label>Tổng tiền<input type="number" [value]="calcTotal()" disabled data-testid="order-total-amount" /></label><label>Giảm giá<input type="number" name="discountAmount" [(ngModel)]="form.discountAmount" (ngModelChange)="onDiscountAmountChange()" min="0" data-testid="order-discount-amount" /></label><label>Lý do giảm<input name="discountReason" [(ngModel)]="form.discountReason" data-testid="order-discount-reason" /></label><label>Thành tiền cuối<input type="number" [value]="calcFinal()" disabled data-testid="order-final-amount" /></label></div>
+        <label>Ghi chú tư vấn<textarea name="consultationNotes" [(ngModel)]="form.consultationNotes" rows="3" data-testid="order-consultation-notes"></textarea></label>
+        <div class="actions"><button type="submit" class="primary" [disabled]="submitDisabled()" data-testid="order-submit">{{ editingId ? 'Cập nhật' : 'Tạo đơn nháp' }}</button><button type="button" (click)="closeModal()" data-testid="order-cancel">Hủy</button></div>
+        <p class="error" *ngIf="hasInvalidDiscount()" data-testid="order-discount-error">{{ discountExceedsTotalMessage() }}</p>
+        <p class="error" *ngIf="error() && !hasInvalidDiscount()" data-testid="order-error">{{ error() }}</p>
+      </form>
+    </div>
+  </div>
+
+  <div class="backdrop" *ngIf="detailOrder() as o" data-testid="order-detail-modal">
+    <div class="modal wide">
+      <div class="detail-head"><h3>{{ o.orderCode }}</h3><span class="badge" [style.background]="statusColor(o.status)+'20'" [style.color]="statusColor(o.status)">{{ statusLabel(o.status) }}</span></div>
+      <div class="grid two">
+        <div><strong>Phụ huynh:</strong> {{ o.parentName }} - {{ o.parentPhone }}</div><div><strong>Mã PH:</strong> {{ o.parentUserCode || '-' }}</div>
+        <div><strong>Học sinh:</strong> {{ o.studentName }}</div><div><strong>Mã HS:</strong> {{ o.studentCode || '-' }}</div>
+        <div><strong>Level:</strong> {{ o.studentLevel || '-' }}</div><div><strong>Tuổi:</strong> {{ o.studentAge || '-' }}</div>
+        <div><strong>Ngày TT:</strong> {{ o.paymentDate ? (o.paymentDate | date:'yyyy-MM-dd') : '-' }}</div><div><strong>Kế hoạch TT:</strong> {{ paymentPlanLabel(o.paymentPlan) }}</div>
+        <div data-testid="order-detail-course-price"><strong>Giá tiền khóa học:</strong> {{ orderCoursePrice(o) | number }}d</div><div data-testid="order-detail-invoice-amount"><strong>Số tiền hóa đơn:</strong> {{ orderInvoiceAmount(o) | number }}d</div>
+        <div *ngIf="showPartialPaymentStatus(o)" data-testid="order-detail-paid-amount"><strong>Đã thanh toán:</strong> {{ partialPaymentPaidAmount(o) | number }}d</div><div *ngIf="showPartialPaymentStatus(o)" data-testid="order-detail-remaining-amount"><strong>Còn thiếu:</strong> {{ partialPaymentRemainingAmount(o) | number }}d</div>
+        <div *ngIf="showPartialPaymentStatus(o)" data-testid="order-detail-partial-badge"><strong>Trạng thái thanh toán:</strong> <span class="badge payment-gap-badge">Chưa thanh toán đủ</span></div><div *ngIf="showPartialPaymentStatus(o)"><strong>Tổng phải thu:</strong> {{ orderRequiredPaymentAmount(o) | number }}d</div>
+        <div><strong>Chứng từ:</strong>
+          <span *ngIf="o.receiptImage"><img [src]="getImageUrl(o.receiptImage)" alt="Chứng từ" class="receipt-thumb" (click)="showImageModal(getImageUrl(o.receiptImage))" /> HD sale</span>
+          <span *ngIf="!o.receiptImage">Chưa có</span>
+          <span *ngIf="o.approvalImage" style="margin-left:8px"><img [src]="getImageUrl(o.approvalImage)" alt="HD đối ứng" class="receipt-thumb" (click)="showImageModal(getImageUrl(o.approvalImage))" /> HD đối ứng</span>
+        </div><div><strong>PH tạo mới:</strong> mật khẩu 123456</div>
+      </div>
+      <div class="detail-items" *ngIf="o.items?.length">
+        <div class="item" *ngFor="let item of o.items; let i = index">
+          <div class="grid">
+            <div><strong>Item {{ i + 1 }}:</strong> {{ item.productName || item.productId }}</div>
+            <div><strong>Môn học:</strong> {{ item.subject || '-' }}</div>
+            <div><strong>Lớp dự kiến:</strong> {{ plannedClassLabel(item) }}</div>
+            <div><strong>Giáo viên dự kiến:</strong> {{ teacherLabel(item.preferredTeacherId) }}</div>
+            <div><strong>Số hóa đơn:</strong> {{ item.invoiceNumber || 'Tự động' }}</div>
+            <div><strong>Lần TT:</strong> {{ item.paymentRound || 'Tự động' }}</div>
+            <div><strong>Trạng thái khóa học:</strong> {{ courseStatusLabel(item.courseStatus) }}</div>
+            <div [attr.data-testid]="'order-detail-item-sessions-' + i"><strong>Số buổi KH:</strong> {{ item.sessions || 0 }}</div>
+            <div [attr.data-testid]="'order-detail-item-invoice-sessions-' + i"><strong>Số buổi HĐ:</strong> {{ displayInvoiceSessions(item) }} + {{ item.bonusSessions || 0 }} tặng + {{ item.trialSessions || 0 }} học thử</div>
+            <div><strong>Số tiền gói:</strong> {{ productSuggestedPrice(item) | number }}d</div>
+            <div><strong>Hình thức:</strong> {{ item.teachingMode || '-' }}</div>
+            <div><strong>Thời lượng:</strong> {{ item.baseDuration || item.sessionDuration || '-' }} / {{ item.sessionDuration || '-' }} phút</div>
+            <div><strong>Giá cơ sở:</strong> {{ (item.pricePerSession || 0) | number }}d</div>
+            <div><strong>Lương GV:</strong> {{ teacherPayLabelForItem(item) }}</div>
+            <div><strong>Sĩ số tối đa:</strong> {{ item.maxStudents || '-' }}</div>
+            <div><strong>Lịch:</strong> {{ item.preferredSchedule || '-' }}</div>
+            <div><strong>Ghi chú:</strong> {{ item.notes || '-' }}</div>
+            <div class="full-span"><strong>Mục tiêu học:</strong> {{ item.learningGoals || '-' }}</div>
+            <div class="full-span"><strong>Mô tả hóa đơn:</strong> {{ item.invoiceDescription || '-' }}</div>
+          </div>
+        </div>
+      </div>
+      <p class="muted" *ngIf="o.processedResults">Invoice: {{ o.processedResults.invoiceIds?.length || 0 }} | Lớp: {{ o.processedResults.classIds?.length || 0 }}</p>
+      <p class="error" *ngIf="o.rejectionReason"><strong>Lý do từ chối:</strong> {{ o.rejectionReason }}</p>
+      <p class="muted" *ngIf="o.needsInfoReason"><strong>Nội dung cần bổ sung:</strong> {{ o.needsInfoReason }}</p>
+      <p class="muted" *ngIf="o.consultationNotes">{{ o.consultationNotes }}</p>
+      <div class="summary-box" *ngIf="communicationSummary() as summary"><pre *ngIf="summary.saleMessage">{{ summary.saleMessage }}</pre><pre *ngIf="summary.parentMessage">{{ summary.parentMessage }}</pre><pre *ngIf="summary.teacherMessage">{{ summary.teacherMessage }}</pre></div>
+      <div class="actions"><button class="btn-sm" *ngIf="canEdit(o)" (click)="openEdit(o)" data-testid="order-detail-edit">Sửa</button><button class="btn-sm" *ngIf="canSubmit(o)" (click)="submitOrder(o)" data-testid="order-detail-submit">Gửi duyệt</button><button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="openApproveOrderModal(o)" data-testid="order-detail-approve">Duyệt</button><button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="requestMoreInfo(o)" data-testid="order-detail-request-info">Cần bổ sung</button><button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="rejectOrder(o)" data-testid="order-detail-reject">Từ chối</button><button class="btn-sm" *ngIf="canCancel(o)" (click)="cancelOrder(o)" data-testid="order-detail-cancel">Hủy đơn</button><button type="button" (click)="detailOrder.set(null)" data-testid="order-detail-close">Đóng</button></div>
+    </div>
+  </div>
+
+  <div class="backdrop" *ngIf="showApproveOrderModal()" data-testid="order-approve-modal">
+    <div class="modal">
+      <h3>Xác nhận duyệt đơn</h3>
+      <p *ngIf="approvingOrder() as ao">Đơn <strong>{{ ao.orderCode }}</strong> - {{ ao.studentName }} - <strong>{{ ao.finalAmount | number }}d</strong></p>
+      <div *ngIf="approvingOrder() as ao">
+        <div class="proof-compare">
+          <div class="proof-panel">
+            <span class="proof-label">Hóa đơn sale upload</span>
+            <img *ngIf="ao.receiptImage" [src]="getImageUrl(ao.receiptImage)" alt="Hóa đơn sale" class="preview" (click)="showImageModal(getImageUrl(ao.receiptImage))" />
+            <p *ngIf="!ao.receiptImage && requiresApprovalProof(ao)" class="muted">Chưa có hóa đơn sale upload.</p>
+            <p *ngIf="!ao.receiptImage && !requiresApprovalProof(ao)" class="muted">Đơn học thử offline 0đ, không bắt buộc upload hóa đơn sale.</p>
+          </div>
+        </div>
+        <label>Hóa đơn đối ứng
+          <span class="muted" *ngIf="requiresApprovalProof(ao)">Hóa đơn đối ứng do người duyệt upload để đối chiếu.</span>
+          <span class="muted" *ngIf="!requiresApprovalProof(ao)">Đơn học thử offline 0đ, ảnh đối ứng không bắt buộc.</span>
+          <input type="file" accept="image/*" (change)="handleOrderApproveImageChange($event)" data-testid="order-approve-image" />
+        </label>
+        <div *ngIf="orderApproveUploading()">Đang tải ảnh...</div>
+        <div *ngIf="orderApproveError()" class="error">{{ orderApproveError() }}</div>
+        <img *ngIf="orderApproveImage && !orderApproveUploading()" [src]="getImageUrl(orderApproveImage)" alt="HD đối ứng" class="preview" />
+      </div>
+      <div class="actions">
+        <button class="primary" [disabled]="orderApproveUploading()" (click)="confirmApproveOrder()" data-testid="order-approve-confirm">Duyệt đơn</button>
+        <button type="button" (click)="closeApproveOrderModal()" data-testid="order-approve-cancel">Hủy</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="backdrop" *ngIf="modalImage()" (click)="closeImageModal()">
+    <div class="image-modal"><span class="close" (click)="closeImageModal()">&times;</span><img [src]="modalImage()" alt="Ảnh" /></div>
+  </div>

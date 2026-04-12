@@ -60,6 +60,9 @@ export class Attendance {
   @Prop({ type: String })
   imageUrl?: string;
 
+  @Prop({ type: String, trim: true })
+  imageFileKey?: string;
+
   @Prop({ type: String, unique: true, sparse: true })
   attendanceToken?: string;
 
@@ -75,3 +78,6 @@ export const AttendanceSchema = SchemaFactory.createForClass(Attendance);
 AttendanceSchema.index({ classId: 1, studentId: 1, date: 1 }, { unique: true });
 AttendanceSchema.index({ sessionId: 1 }, { sparse: true });
 AttendanceSchema.index({ date: 1, status: 1 });
+AttendanceSchema.index({ classId: 1, date: 1 });
+AttendanceSchema.index({ studentId: 1, date: -1 });
+AttendanceSchema.index({ teacherId: 1, date: -1 });

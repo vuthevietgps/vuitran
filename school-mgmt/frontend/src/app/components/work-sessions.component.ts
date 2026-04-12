@@ -9,7 +9,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE: 'Đang online',
   COMPLETED: 'Hoàn thành',
-  AUTO_CLOSED: 'Tự đóng',
+  AUTO_CLOSED: 'Tự đóng do quên check-out',
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -79,7 +79,7 @@ const STATUS_COLORS: Record<string, string> = {
           <th>Giờ ra</th>
           <th>Tổng giờ</th>
           <th>Trạng thái</th>
-          <th>Đi muộn</th>
+          <th>Đi muộn / về sớm</th>
           <th *ngIf="canEdit()"></th>
         </tr>
       </thead>
@@ -99,11 +99,17 @@ const STATUS_COLORS: Record<string, string> = {
               {{ statusLabel(s.status) }}
             </span>
           </td>
-          <td class="center">
-            <span *ngIf="s.isLate" class="badge late-badge">
-              +{{ s.lateMinutes }}p
-            </span>
-            <span *ngIf="!s.isLate" class="on-time">—</span>
+          <td class="center timing-cell">
+            <div class="timing-flags">
+              <span *ngIf="s.isLate" class="badge late-badge">
+                +{{ s.lateMinutes }}p
+              </span>
+              <span *ngIf="s.isEarlyLeave" class="badge early-leave-badge">
+                Về sớm {{ s.earlyLeaveMinutes }}p
+              </span>
+              <span *ngIf="!hasTimingViolation(s)" class="on-time">—</span>
+            </div>
+            <div *ngIf="scheduleHint(s)" class="schedule-hint">{{ scheduleHint(s) }}</div>
           </td>
           <td *ngIf="canEdit()" class="actions-cell">
             <button class="btn-sm primary" (click)="openEdit(s)">✏️ Sửa</button>
@@ -216,9 +222,13 @@ const STATUS_COLORS: Record<string, string> = {
     .center { text-align:center; }
 
     .badge { font-size:11px; padding:2px 8px; border-radius:9px; font-weight:600; white-space:nowrap; }
+    .timing-cell { min-width:160px; }
+    .timing-flags { display:flex; gap:6px; justify-content:center; flex-wrap:wrap; }
     .late-badge { background:#fee2e2; color:#dc2626; font-weight:700; }
+    .early-leave-badge { background:#fee2e2; color:#dc2626; font-weight:700; }
     .on-time { color:#94a3b8; font-size:12px; }
     .late-text { color:#dc2626; font-weight:700; }
+    .schedule-hint { margin-top:4px; font-size:11px; color:#94a3b8; }
 
     .actions-cell { white-space:nowrap; }
     .btn-sm { padding:4px 8px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; cursor:pointer; font-size:12px; }
@@ -254,6 +264,7 @@ export class WorkSessionsComponent implements OnInit {
   editingSession = signal<any | null>(null);
   editError = signal('');
   page = signal(1);
+  filterVersion = signal(0);
   pageSize = 20;
 
   fromDate = '';
@@ -299,8 +310,8 @@ export class WorkSessionsComponent implements OnInit {
     const m = now.getMonth();
     const first = new Date(y, m, 1);
     const last = new Date(y, m + 1, 0);
-    this.fromDate = first.toISOString().split('T')[0];
-    this.toDate = last.toISOString().split('T')[0];
+    this.fromDate = this.toLocalDateString(first);
+    this.toDate = this.toLocalDateString(last);
   }
 
   async reload() {
@@ -327,8 +338,8 @@ export class WorkSessionsComponent implements OnInit {
   async loadSummary() {
     if (!this.summaryMonth) return;
     const [year, month] = this.summaryMonth.split('-').map(Number);
-    const start = new Date(year, month - 1, 1).toISOString().split('T')[0];
-    const end = new Date(year, month, 0).toISOString().split('T')[0];
+    const start = this.toLocalDateString(new Date(year, month - 1, 1));
+    const end = this.toLocalDateString(new Date(year, month, 0));
     try {
       const res = await this.wsService.getSummary(start, end);
       this.summary.set(Array.isArray(res) ? res : (res?.data ?? []));
@@ -338,6 +349,7 @@ export class WorkSessionsComponent implements OnInit {
   }
 
   applyFilter() {
+    this.filterVersion.update((value) => value + 1);
     this.page.set(1);
   }
 
@@ -357,6 +369,7 @@ export class WorkSessionsComponent implements OnInit {
   }
 
   filtered = computed(() => {
+    this.filterVersion();
     let list = this.sessions();
     const kw = this.userKeyword.trim().toLowerCase();
     if (kw) {
@@ -384,6 +397,18 @@ export class WorkSessionsComponent implements OnInit {
 
   setPage(p: number) {
     this.page.set(p);
+  }
+
+  hasTimingViolation(session: any): boolean {
+    return !!(session?.isLate || session?.isEarlyLeave);
+  }
+
+  scheduleHint(session: any): string {
+    const start = session?.scheduledStartTime;
+    const end = session?.scheduledEndTime;
+    if (!start && !end) return '';
+    if (start && end) return `Ca ${start}-${end}`;
+    return `Ca ${start || end}`;
   }
 
   openEdit(s: any) {
@@ -424,5 +449,10 @@ export class WorkSessionsComponent implements OnInit {
     const d = new Date(iso);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  private toLocalDateString(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
   }
 }

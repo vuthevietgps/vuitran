@@ -48,6 +48,13 @@ export function isAccounting(user: JwtPayload | { role: Role }): boolean {
 }
 
 /**
+ * Check if user is SHAREHOLDER
+ */
+export function isShareholder(user: JwtPayload | { role: Role }): boolean {
+  return user.role === Role.SHAREHOLDER;
+}
+
+/**
  * Check if user has any of the specified roles
  */
 export function hasAnyRole(user: JwtPayload | { role: Role }, roles: Role[]): boolean {

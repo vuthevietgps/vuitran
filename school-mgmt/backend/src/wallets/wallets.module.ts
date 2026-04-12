@@ -6,6 +6,9 @@ import { existsSync, mkdirSync } from 'fs';
 import { extname, join } from 'path';
 import type { Express } from 'express';
 import { WalletsService } from './wallets.service';
+import { WalletsTopUpService } from './wallets-topup.service';
+import { WalletsOperationsService } from './wallets-operations.service';
+import { WalletsQueryService } from './wallets-query.service';
 import { WalletsController } from './wallets.controller';
 import { Wallet, WalletSchema } from './schemas/wallet.schema';
 import { LedgerEntry, LedgerEntrySchema } from './schemas/ledger-entry.schema';
@@ -52,7 +55,7 @@ const walletImageFilter = (req: any, file: Express.Multer.File, cb: any) => {
     }),
   ],
   controllers: [WalletsController],
-  providers: [WalletsService],
+  providers: [WalletsService, WalletsTopUpService, WalletsOperationsService, WalletsQueryService],
   exports: [WalletsService],
 })
 export class WalletsModule {}

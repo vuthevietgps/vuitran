@@ -1,7 +1,7 @@
 import { Component, OnInit, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { TeacherService, TeacherProfile, TeacherFullProfile, Qualification, AvailabilitySlot, BankInfo } from '../services/teacher.service';
+import { TeacherService, TeacherProfile, TeacherFullProfile, Qualification, AvailabilitySlot, BankInfo, TeacherProfileUpdatePayload } from '../services/teacher.service';
 import { AuthService } from '../services/auth.service';
 
 import { FlowGuideComponent } from './shared/flow-guide.component';
@@ -9,7 +9,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 interface ProfileForm {
   subjects: string;
   grades: string;
-  teachingMode: string;
+  teachingMode: TeacherProfile['teachingMode'];
   locations: string;
   bio: string;
   yearsOfExperience: number;
@@ -717,7 +717,7 @@ export class TeacherProfileComponent implements OnInit {
     this.success.set('');
 
     try {
-      const payload: any = {
+      const payload: TeacherProfileUpdatePayload = {
         subjects: this.form.subjects.split(',').map(s => s.trim()).filter(Boolean),
         grades: this.form.grades.split(',').map(s => s.trim()).filter(Boolean),
         teachingMode: this.form.teachingMode,
@@ -742,14 +742,13 @@ export class TeacherProfileComponent implements OnInit {
         })),
       };
 
-      // Bank info only if any field is filled
-      if (this.form.bankName || this.form.accountNumber || this.form.accountHolderName) {
-        payload.bankInfo = {
-          bankName: this.form.bankName,
-          accountNumber: this.form.accountNumber,
-          accountHolderName: this.form.accountHolderName,
-          branch: this.form.bankBranch || undefined,
-        };
+      const bankInfoResult = this.buildBankInfoPayload();
+      if (bankInfoResult.error) {
+        this.error.set(bankInfoResult.error);
+        return;
+      }
+      if (bankInfoResult.bankInfo) {
+        payload.bankInfo = bankInfoResult.bankInfo;
       }
 
       await this.teacherService.updateProfile(p._id, payload);
@@ -771,6 +770,29 @@ export class TeacherProfileComponent implements OnInit {
       bio: '', yearsOfExperience: 0, videoIntroUrl: '',
       pricePerSession: 0, pricePerHour: 0,
       bankName: '', accountNumber: '', accountHolderName: '', bankBranch: '',
+    };
+  }
+
+  buildBankInfoPayload(): { bankInfo?: BankInfo; error?: string } {
+    const bankName = this.form.bankName.trim();
+    const accountNumber = this.form.accountNumber.trim();
+    const accountHolderName = this.form.accountHolderName.trim();
+    const branch = this.form.bankBranch.trim();
+    if (!bankName && !accountNumber && !accountHolderName && !branch) {
+      return {};
+    }
+    if (!bankName || !accountNumber || !accountHolderName) {
+      return {
+        error: 'Vui long nhap day du ten ngan hang, so tai khoan va chu tai khoan.',
+      };
+    }
+    return {
+      bankInfo: {
+        bankName,
+        accountNumber,
+        accountHolderName,
+        branch: branch || undefined,
+      },
     };
   }
 

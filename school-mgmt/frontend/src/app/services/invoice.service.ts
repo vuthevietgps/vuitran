@@ -165,6 +165,21 @@ export class InvoiceService {
     }
   }
 
+  async cancel(id: string, reason?: string): Promise<InvoiceMutationResult> {
+    try {
+      await firstValueFrom(
+        this.http.post(
+          `${environment.apiBase}/invoices/${id}/cancel`,
+          { reason },
+          { withCredentials: true },
+        ),
+      );
+      return { ok: true };
+    } catch (error: any) {
+      return this.fail(error);
+    }
+  }
+
   async remove(id: string): Promise<InvoiceMutationResult> {
     try {
       await firstValueFrom(

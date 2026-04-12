@@ -35,6 +35,7 @@ export enum AuditModule {
   LEADS = 'LEADS',
   ORDERS = 'ORDERS',
   ADS = 'ADS',
+  CHATBOT = 'CHATBOT',
 }
 
 @Schema({ timestamps: true })

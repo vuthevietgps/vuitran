@@ -1,53 +1,67 @@
-import { IsNotEmpty, IsOptional, IsString, MinLength, MaxLength, IsUrl, Matches } from 'class-validator';
 import { Transform } from 'class-transformer';
+import {
+  IsMongoId,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUrl,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
-/**
- * GV nộp báo cáo giảng dạy cho 1 buổi học.
- * Báo cáo bắt buộc để tính lương GV.
- * Có deadline: phải nộp trong vòng 24h sau buổi học.
- */
+const trimToUndefined = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+};
+
 export class SubmitTeachingReportDto {
-  /** Nội dung đã học trong buổi (bắt buộc, 20-2000 ký tự) */
-  @IsString({ message: 'Nội dung học phải là chuỗi văn bản' })
-  @IsNotEmpty({ message: 'Nội dung học không được để trống' })
-  @MinLength(20, { message: 'Nội dung học phải có ít nhất 20 ký tự' })
-  @MaxLength(2000, { message: 'Nội dung học không được vượt quá 2000 ký tự' })
-  @Transform(({ value }) => value?.trim())
-  lessonContent!: string;
-
-  /** Thái độ / hành vi của học sinh (tùy chọn, tối đa 1000 ký tự) */
-  @IsString({ message: 'Thái độ học sinh phải là chuỗi văn bản' })
+  @IsString({ message: 'Noi dung hoc phai la chuoi van ban' })
   @IsOptional()
-  @MaxLength(1000, { message: 'Thái độ học sinh không được vượt quá 1000 ký tự' })
-  @Transform(({ value }) => value?.trim())
+  @MinLength(20, { message: 'Noi dung hoc phai co it nhat 20 ky tu' })
+  @MaxLength(2000, { message: 'Noi dung hoc khong duoc vuot qua 2000 ky tu' })
+  @Transform(trimToUndefined)
+  lessonContent?: string;
+
+  @IsString({ message: 'Thai do hoc sinh phai la chuoi van ban' })
+  @IsOptional()
+  @MaxLength(1000, { message: 'Thai do hoc sinh khong duoc vuot qua 1000 ky tu' })
+  @Transform(trimToUndefined)
   studentAttitude?: string;
 
-  /** Link ghi hình bài giảng (tùy chọn, phải là URL hợp lệ) */
-  @IsString({ message: 'Link ghi hình phải là chuỗi văn bản' })
+  @IsString({ message: 'Link ghi hinh phai la chuoi van ban' })
   @IsOptional()
-  @IsUrl({ require_protocol: true }, { message: 'Link ghi hình phải là URL hợp lệ (https://...)' })
-  @MaxLength(500, { message: 'Link ghi hình không được vượt quá 500 ký tự' })
-  @Transform(({ value }) => value?.trim())
+  @IsUrl({ require_protocol: true }, { message: 'Link ghi hinh phai la URL hop le (https://...)' })
+  @MaxLength(500, { message: 'Link ghi hinh khong duoc vuot qua 500 ky tu' })
+  @Transform(trimToUndefined)
   recordingUrl?: string;
 
-  /** Nhận xét chung của GV (tùy chọn, tối đa 1000 ký tự) */
-  @IsString({ message: 'Nhận xét phải là chuỗi văn bản' })
+  @IsString({ message: 'Nhan xet phai la chuoi van ban' })
   @IsOptional()
-  @MaxLength(1000, { message: 'Nhận xét không được vượt quá 1000 ký tự' })
-  @Transform(({ value }) => value?.trim())
+  @MaxLength(1000, { message: 'Nhan xet khong duoc vuot qua 1000 ky tu' })
+  @Transform(trimToUndefined)
   teacherComment?: string;
 
-  /** Bài tập về nhà (tùy chọn, tối đa 1000 ký tự) */
-  @IsString({ message: 'Bài tập về nhà phải là chuỗi văn bản' })
+  @IsString({ message: 'Bai tap ve nha phai la chuoi van ban' })
   @IsOptional()
-  @MaxLength(1000, { message: 'Bài tập về nhà không được vượt quá 1000 ký tự' })
-  @Transform(({ value }) => value?.trim())
+  @MaxLength(1000, { message: 'Bai tap ve nha khong duoc vuot qua 1000 ky tu' })
+  @Transform(trimToUndefined)
   homework?: string;
 
-  /** Ghi chú thêm (tùy chọn, tối đa 500 ký tự) */
-  @IsString({ message: 'Ghi chú thêm phải là chuỗi văn bản' })
+  @IsString({ message: 'Ghi chu them phai la chuoi van ban' })
   @IsOptional()
-  @MaxLength(500, { message: 'Ghi chú thêm không được vượt quá 500 ký tự' })
-  @Transform(({ value }) => value?.trim())
+  @MaxLength(500, { message: 'Ghi chu them khong duoc vuot qua 500 ky tu' })
+  @Transform(trimToUndefined)
   additionalNotes?: string;
+
+  @IsMongoId({ message: 'templateId phai la ObjectId hop le' })
+  @IsOptional()
+  templateId?: string;
+
+  @IsObject({ message: 'dynamicFieldValues phai la object hop le' })
+  @IsOptional()
+  dynamicFieldValues?: Record<string, unknown>;
 }

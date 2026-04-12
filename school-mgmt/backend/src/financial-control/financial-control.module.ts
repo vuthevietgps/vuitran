@@ -27,11 +27,19 @@ import { PayrollFinancialAggregateService } from './aggregates/payroll-financial
 import { ExpenseFinancialAggregateService } from './aggregates/expense-financial.aggregate';
 import { LoanFinancialAggregateService } from './aggregates/loan-financial.aggregate';
 import { FinancialControlBankFundService } from './financial-control-bank-fund.service';
+import { FinancialControlCashflowService } from './financial-control-cashflow.service';
+import { FinancialControlPnlService } from './financial-control-pnl.service';
+import { FinancialControlDashboardService } from './financial-control-dashboard.service';
+import { FinancialControlAlertsService } from './financial-control-alerts.service';
+import { FinancialControlAgingService } from './financial-control-aging.service';
+import { FinancialControlBankReconciliationService } from './financial-control-bank-reconciliation.service';
 import { AdsModule } from '../ads/ads.module';
+import { DashboardModule } from '../dashboard/dashboard.module';
 
 @Module({
   imports: [
     AdsModule,
+    DashboardModule,
     MongooseModule.forFeature([
       { name: BankAccount.name, schema: BankAccountSchema },
       { name: BankTransaction.name, schema: BankTransactionSchema },
@@ -58,6 +66,12 @@ import { AdsModule } from '../ads/ads.module';
   providers: [
     FinancialControlService,
     FinancialControlBankFundService,
+    FinancialControlCashflowService,
+    FinancialControlPnlService,
+    FinancialControlDashboardService,
+    FinancialControlAlertsService,
+    FinancialControlAgingService,
+    FinancialControlBankReconciliationService,
     PayrollFinancialAggregateService,
     ExpenseFinancialAggregateService,
     LoanFinancialAggregateService,

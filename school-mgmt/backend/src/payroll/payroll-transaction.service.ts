@@ -78,13 +78,6 @@ export class PayrollTransactionService {
     dto: CreatePayrollTransactionDto,
     penaltyConfig: PenaltyConfig = DEFAULT_PENALTY_CONFIG,
   ): Promise<PayrollTransactionDocument> {
-    // Check xem đã có record chưa (idempotent)
-    const existing = await this.txModel.findOne({ sessionId: new Types.ObjectId(dto.sessionId) });
-    if (existing) {
-      this.logger.warn(`PayrollTransaction already exists for session ${dto.sessionId}`);
-      return existing;
-    }
-
     // Tính penalty nếu nộp trễ
     let penaltyAmount = 0;
     if (dto.isLateReport && dto.lateHours && dto.lateHours > penaltyConfig.graceHours) {
@@ -96,27 +89,38 @@ export class PayrollTransactionService {
     }
 
     const finalSalary = Math.max(0, dto.baseSalary - penaltyAmount);
+    const tx = await this.txModel.findOneAndUpdate(
+      { sessionId: new Types.ObjectId(dto.sessionId) },
+      {
+        $setOnInsert: {
+          teacherId: new Types.ObjectId(dto.teacherId),
+          sessionId: new Types.ObjectId(dto.sessionId),
+          classId: new Types.ObjectId(dto.classId),
+          studentId: new Types.ObjectId(dto.studentId),
+          sessionDate: dto.sessionDate,
+          baseSalary: dto.baseSalary,
+          penaltyAmount,
+          bonusAmount: 0,
+          adjustmentAmount: 0,
+          finalSalary,
+          status: PayrollTransactionStatus.PENDING,
+          isLateReport: dto.isLateReport ?? false,
+          lateHours: dto.lateHours ?? 0,
+          reportDeadline: dto.reportDeadline,
+          reportSubmittedAt: dto.reportSubmittedAt,
+          createdBy: dto.createdBy ? new Types.ObjectId(dto.createdBy) : undefined,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      },
+    );
 
-    const tx = new this.txModel({
-      teacherId: new Types.ObjectId(dto.teacherId),
-      sessionId: new Types.ObjectId(dto.sessionId),
-      classId: new Types.ObjectId(dto.classId),
-      studentId: new Types.ObjectId(dto.studentId),
-      sessionDate: dto.sessionDate,
-      baseSalary: dto.baseSalary,
-      penaltyAmount,
-      bonusAmount: 0,
-      adjustmentAmount: 0,
-      finalSalary,
-      status: PayrollTransactionStatus.PENDING,
-      isLateReport: dto.isLateReport ?? false,
-      lateHours: dto.lateHours ?? 0,
-      reportDeadline: dto.reportDeadline,
-      reportSubmittedAt: dto.reportSubmittedAt,
-      createdBy: dto.createdBy ? new Types.ObjectId(dto.createdBy) : undefined,
-    });
-
-    await tx.save();
+    if (!tx) {
+      throw new BadRequestException(`Khong the tao PayrollTransaction cho session ${dto.sessionId}`);
+    }
 
     if (penaltyAmount > 0) {
       this.logger.log(

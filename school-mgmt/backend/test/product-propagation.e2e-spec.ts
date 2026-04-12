@@ -7,6 +7,7 @@ import * as request from 'supertest';
 import * as cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { closeE2eResources } from './e2e-cleanup';
 
 type SessionCookies = {
   accessToken: string;
@@ -198,8 +199,7 @@ describe('Product propagation (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    await mongod.stop();
+    await closeE2eResources({ app, moduleRef, mongoServer: mongod });
   });
 
   it('propagates product creation and updates to sale, ops, students, and classes', async () => {

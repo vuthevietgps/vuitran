@@ -25,6 +25,14 @@ function addDays(date, days) {
   return d;
 }
 
+function randomCode(prefix) {
+  const stamp = Date.now().toString().slice(-8);
+  const rand = Math.floor(Math.random() * 9999)
+    .toString()
+    .padStart(4, '0');
+  return `${prefix}${stamp}${rand}`.toUpperCase();
+}
+
 function normalizeId(v) {
   if (!v) return null;
   if (typeof v === 'string') return v;
@@ -264,6 +272,7 @@ async function main() {
   let payroll1Id = null;
   let payroll2Id = null;
   let payrollBankAccountId = null;
+  let createdClassId = null;
   const sessions = {
     a: null,
     b: null,
@@ -318,6 +327,21 @@ async function main() {
     ensure(res.data && res.data.status === 'FINALIZED', `Expected FINALIZED for ${sessionId}`);
   };
 
+  const topUpParentWallet = async (userId, amount, description) => {
+    await request({
+      method: 'POST',
+      reqPath: '/wallets/adjust',
+      token: auth.director.token,
+      expectedStatus: [200, 201],
+      body: {
+        userId,
+        amount,
+        direction: 'ADD',
+        description,
+      },
+    });
+  };
+
   await runner.test('Ensure active bank account has enough balance for payroll payout', async () => {
     const bankAccountsRes = await request({
       method: 'GET',
@@ -365,6 +389,61 @@ async function main() {
     );
     ensure(teacherId, 'Cannot resolve teacher id from /users/me');
 
+    const studentsRes = await request({
+      method: 'GET',
+      reqPath: '/students',
+      token: auth.director.token,
+      expectedStatus: [200],
+    });
+    const students = Array.isArray(studentsRes.data) ? studentsRes.data : [];
+
+    let selectedStudent = null;
+    for (const student of students) {
+      const sid = normalizeId(student && student._id);
+      if (!sid) continue;
+      const detail = await request({
+        method: 'GET',
+        reqPath: `/students/${sid}`,
+        token: auth.director.token,
+        expectedStatus: [200],
+      });
+      const parentUserId = normalizeId(detail.data && detail.data.parentUserId);
+      if (!parentUserId) continue;
+      selectedStudent = {
+        studentId: sid,
+        parentUserId,
+      };
+      break;
+    }
+    ensure(selectedStudent, 'No student with parentUserId available for payroll ops tests');
+
+    const created = await request({
+      method: 'POST',
+      reqPath: '/classes',
+      token: auth.director.token,
+      expectedStatus: [200, 201],
+      body: {
+        name: `PAY WF ${Date.now()}`,
+        code: randomCode('PWF'),
+        teacherId,
+        classMode: 'ONLINE',
+        studentIds: [selectedStudent.studentId],
+        pricePerSession: 180_000,
+        teacherPayPerSession: 120_000,
+        teacherPayPerStudent: 0,
+        baseDuration: 60,
+        sessionDuration: 60,
+      },
+    });
+    createdClassId = normalizeId(created.data && created.data._id);
+    ensure(createdClassId, 'Temporary payroll workflow class was not created');
+
+    await topUpParentWallet(
+      selectedStudent.parentUserId,
+      3_000_000,
+      'Top up wallet for teacher payroll operational session flow',
+    );
+
     const classes = await request({
       method: 'GET',
       reqPath: '/attendance/classes-with-students',
@@ -373,10 +452,12 @@ async function main() {
     });
     ensure(Array.isArray(classes.data), 'Teacher classes endpoint should return array');
 
-    chosenClass = classes.data.find((c) => Array.isArray(c.students) && c.students.length > 0);
-    ensure(chosenClass, 'No teacher class with students available');
-    chosenStudent = chosenClass.students[0];
-    ensure(chosenStudent && chosenStudent.studentId, 'No student in selected teacher class');
+    chosenClass = classes.data.find((c) => normalizeId(c.classId) === createdClassId);
+    ensure(chosenClass, 'Temporary payroll workflow class not visible to teacher');
+    chosenStudent = (chosenClass.students || []).find(
+      (s) => normalizeId(s.studentId) === selectedStudent.studentId,
+    );
+    ensure(chosenStudent && chosenStudent.studentId, 'No student in selected temporary teacher class');
   });
 
   await runner.test('TEACHER is forbidden from creating production session directly', async () => {
@@ -407,9 +488,25 @@ async function main() {
     await finalizeSession(sessions.b);
   });
 
-  await runner.test('Create finalized but no-report session C (must not be payroll-eligible)', async () => {
+  await runner.test('Reject finalize for session C without teaching report and keep it out of payroll', async () => {
     sessions.c = await createAttendanceSession(dateC, 'C');
-    await finalizeSession(sessions.c);
+    await request({
+      method: 'POST',
+      reqPath: `/sessions/${sessions.c}/finalize`,
+      token: auth.ops.token,
+      expectedStatus: [400],
+    });
+
+    const detail = await request({
+      method: 'GET',
+      reqPath: `/sessions/${sessions.c}`,
+      token: auth.director.token,
+      expectedStatus: [200],
+    });
+    ensure(
+      detail.data && detail.data.status === 'TEACHER_COMPLETED',
+      `Session C must remain TEACHER_COMPLETED without report, got ${detail.data && detail.data.status}`,
+    );
   });
 
   await runner.test('Create teacher-completed session E with report but not finalized', async () => {
@@ -605,6 +702,18 @@ async function main() {
   });
 
   const result = runner.summary();
+  if (createdClassId && auth.director && auth.director.token) {
+    try {
+      await request({
+        method: 'DELETE',
+        reqPath: `/classes/${createdClassId}`,
+        token: auth.director.token,
+        expectedStatus: [200, 204],
+      });
+    } catch (err) {
+      console.log(`Cleanup warning: could not delete temporary class ${createdClassId}`);
+    }
+  }
   if (result.fail > 0) {
     process.exit(1);
   }

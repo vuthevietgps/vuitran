@@ -15,6 +15,7 @@ import { QueryTrialEnrollmentDto } from './dto/query-trial-enrollment.dto';
 import { RecordTrialSessionDto } from './dto/record-trial-session.dto';
 import { ConvertTrialEnrollmentDto } from './dto/convert-trial-enrollment.dto';
 import { RejectTrialEnrollmentDto } from './dto/reject-trial-enrollment.dto';
+import { TeacherPaidOnlyTrialEnrollmentDto } from './dto/teacher-paid-only-trial-enrollment.dto';
 import {
   TrialEnrollment,
   TrialEnrollmentDocument,
@@ -575,6 +576,7 @@ export class TrialEnrollmentsService {
     await this.maybePromoteStudentToOfficial(student._id as Types.ObjectId, this.getActorId(user));
 
     enrollment.status = TrialEnrollmentStatus.CONVERTED;
+    enrollment.teacherPaidOnlyDecision = false;
     enrollment.studentId = student._id as Types.ObjectId;
     enrollment.invoiceId = invoice._id as Types.ObjectId;
     enrollment.orderId = dto.orderId ? new Types.ObjectId(dto.orderId) : enrollment.orderId;
@@ -598,6 +600,7 @@ export class TrialEnrollmentsService {
     }
 
     enrollment.status = TrialEnrollmentStatus.REJECTED;
+    enrollment.teacherPaidOnlyDecision = false;
     enrollment.decisionAt = dto.decisionAt ? new Date(dto.decisionAt) : new Date();
     enrollment.notes = this.appendNotes(enrollment.notes, dto.notes, dto.decisionNotes);
     await enrollment.save();
@@ -608,6 +611,33 @@ export class TrialEnrollmentsService {
         { $pull: { students: enrollment.studentId } },
       );
       await this.sessionsService.markTrialRejectedNoPay(
+        enrollment.studentId.toString(),
+        enrollment.classId.toString(),
+        this.getActorId(user),
+      );
+    }
+
+    return this.findOne(id, user);
+  }
+
+  async teacherPaidOnly(id: string, dto: TeacherPaidOnlyTrialEnrollmentDto, user: any) {
+    const enrollment = await this.loadById(id);
+    this.assertSaleAccess(enrollment, user);
+    if (enrollment.status === TrialEnrollmentStatus.CONVERTED || enrollment.status === TrialEnrollmentStatus.REJECTED) {
+      throw new BadRequestException('Hoc thu da ket thuc');
+    }
+    if (enrollment.status !== TrialEnrollmentStatus.WAITING_DECISION) {
+      throw new BadRequestException('Chi co the chot tra luong GV khi hoc thu dang cho quyet dinh');
+    }
+
+    enrollment.status = TrialEnrollmentStatus.REJECTED;
+    enrollment.teacherPaidOnlyDecision = true;
+    enrollment.decisionAt = dto.decisionAt ? new Date(dto.decisionAt) : new Date();
+    enrollment.notes = this.appendNotes(enrollment.notes, dto.notes, dto.decisionNotes);
+    await enrollment.save();
+
+    if (enrollment.studentId) {
+      await this.sessionsService.markTrialTeacherPaidOnly(
         enrollment.studentId.toString(),
         enrollment.classId.toString(),
         this.getActorId(user),

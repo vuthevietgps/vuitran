@@ -18,6 +18,7 @@ export interface OrderItem {
   teachingMode?: string;
   preferredSchedule?: string;
   selectedClassId?: string;
+  createNewClassWhenApproved?: boolean;
   preferredTeacherId?: string;
   paymentRound?: number;
   teacherPayPerSession?: number;
@@ -44,6 +45,12 @@ export interface OrderProcessedResults {
   invoiceIds?: string[];
   classIds?: string[];
   communicationSummary?: OrderCommunicationSummary;
+}
+
+export interface OrderPaymentFrame {
+  dueDate: string;
+  amount: number;
+  status: string;
 }
 
 export interface OrderData {
@@ -75,6 +82,7 @@ export interface OrderData {
   finalAmount: number;
   paymentPlan?: string;
   paymentDate?: string;
+  paymentFrames?: OrderPaymentFrame[];
   receiptImage?: string;
   saleId: string;
   saleName?: string;
@@ -168,9 +176,10 @@ export class OrderService {
 
   async list(params?: Record<string, string>): Promise<OrderData[]> {
     try {
-      return await firstValueFrom(
-        this.http.get<OrderData[]>(this.base, { withCredentials: true, params }),
+      const response = await firstValueFrom(
+        this.http.get<OrderData[] | { data: OrderData[] }>(this.base, { withCredentials: true, params }),
       );
+      return Array.isArray(response) ? response : (response?.data ?? []);
     } catch {
       return [];
     }

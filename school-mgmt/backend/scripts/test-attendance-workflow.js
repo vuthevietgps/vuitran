@@ -30,6 +30,14 @@ function addDays(date, days) {
   return d;
 }
 
+function randomCode(prefix) {
+  const stamp = Date.now().toString().slice(-8);
+  const rand = Math.floor(Math.random() * 9999)
+    .toString()
+    .padStart(4, '0');
+  return `${prefix}${stamp}${rand}`.toUpperCase();
+}
+
 function normalizeId(v) {
   if (!v) return null;
   if (typeof v === 'string') return v;
@@ -283,6 +291,92 @@ async function main() {
   let parentUserId = null;
   let walletBeforeFinalize = null;
   let deductCountBefore = 0;
+  let createdClassId = null;
+
+  const submitTeachingReport = async (targetSessionId, label) => {
+    const report = await request({
+      method: 'PATCH',
+      path: `/sessions/${targetSessionId}/teaching-report`,
+      token: auth.teacher.token,
+      body: {
+        lessonContent: `Attendance workflow teaching report for ${label}, đủ chi tiết để hợp lệ.`,
+        teacherComment: `automation teacher comment ${label}`,
+      },
+      expectedStatus: [200],
+    });
+    ensure(
+      report.data && report.data.hasTeachingReport === true,
+      `Session ${targetSessionId} should have teaching report after submit`,
+    );
+  };
+
+  const ensureTemporaryTeacherClass = async () => {
+    const teacherId =
+      normalizeId(auth.teacher.user && (auth.teacher.user._id || auth.teacher.user.id)) ||
+      normalizeId(
+        (
+          await request({
+            method: 'GET',
+            path: '/users/me',
+            token: auth.teacher.token,
+            expectedStatus: [200],
+          })
+        ).data,
+      );
+    ensure(teacherId, 'Teacher demo id not found');
+
+    const studentsRes = await request({
+      method: 'GET',
+      path: '/students',
+      token: auth.director.token,
+      expectedStatus: [200],
+    });
+    const students = Array.isArray(studentsRes.data) ? studentsRes.data : [];
+
+    let selectedStudent = null;
+    for (const student of students) {
+      const sid = normalizeId(student && student._id);
+      if (!sid) continue;
+      const detail = await request({
+        method: 'GET',
+        path: `/students/${sid}`,
+        token: auth.director.token,
+        expectedStatus: [200],
+      });
+      const parentId = normalizeId(detail.data && detail.data.parentUserId);
+      if (!parentId) continue;
+      selectedStudent = {
+        studentId: sid,
+        parentUserId: parentId,
+        fullName: detail.data && detail.data.fullName,
+      };
+      break;
+    }
+    ensure(selectedStudent, 'Cannot find student with parentUserId for attendance workflow');
+
+    const created = await request({
+      method: 'POST',
+      path: '/classes',
+      token: auth.director.token,
+      expectedStatus: [200, 201],
+      body: {
+        name: `ATT WF ${Date.now()}`,
+        code: randomCode('ATW'),
+        teacherId,
+        classMode: 'ONLINE',
+        studentIds: [selectedStudent.studentId],
+        pricePerSession: 150000,
+        teacherPayPerSession: 90000,
+        teacherPayPerStudent: 0,
+        baseDuration: 60,
+        sessionDuration: 60,
+      },
+    });
+
+    createdClassId = normalizeId(created.data && created.data._id);
+    ensure(createdClassId, 'Temporary attendance workflow class was not created');
+    chosenStudent = selectedStudent;
+  };
 
   await runner.test('DIRECTOR can list classes with students', async () => {
     const res = await request({
@@ -292,10 +386,10 @@ async function main() {
       expectedStatus: [200],
     });
     ensure(Array.isArray(res.data), 'Expected classes-with-students to return array');
-    chosenClass = res.data.find((c) => Array.isArray(c.students) && c.students.length > 0);
-    ensure(chosenClass, 'No class with students found for testing');
-    chosenStudent = chosenClass.students[0];
-    ensure(chosenStudent && chosenStudent.studentId, 'No student found in chosen class');
+  });
+
+  await runner.test('DIRECTOR prepares teacher-owned class with student for attendance workflow', async () => {
+    await ensureTemporaryTeacherClass();
   });
 
   await runner.test('OPS can list classes with students', async () => {
@@ -337,6 +431,12 @@ async function main() {
       expectedStatus: [200],
     });
     ensure(Array.isArray(res.data), 'Teacher classes-with-students should return array');
+    chosenClass = res.data.find((c) => normalizeId(c.classId) === createdClassId);
+    ensure(chosenClass, 'Temporary teacher-owned class not visible in teacher attendance list');
+    const listedStudent = (chosenClass.students || []).find(
+      (s) => normalizeId(s.studentId) === chosenStudent.studentId,
+    );
+    ensure(listedStudent, 'Chosen student not found in temporary teacher class');
   });
 
   {
@@ -597,6 +697,10 @@ async function main() {
     deductCountBefore = (ledgerBefore.data && ledgerBefore.data.meta && ledgerBefore.data.meta.total) || 0;
   });
 
+  await runner.test('TEACHER submits teaching report for attendance-created finalize session', async () => {
+    await submitTeachingReport(finalizeSessionId, 'attendance-finalize-flow');
+  });
+
   await runner.test('DIRECTOR manually finalizes session created by attendance', async () => {
     const res = await request({
       method: 'POST',
@@ -668,6 +772,18 @@ async function main() {
   });
 
   const result = runner.summary();
+  if (createdClassId && auth.director && auth.director.token) {
+    try {
+      await request({
+        method: 'DELETE',
+        path: `/classes/${createdClassId}`,
+        token: auth.director.token,
+        expectedStatus: [200, 204],
+      });
+    } catch (err) {
+      console.log(`Cleanup warning: could not delete temporary class ${createdClassId}`);
+    }
+  }
   if (result.fail > 0) {
     process.exit(1);
   }

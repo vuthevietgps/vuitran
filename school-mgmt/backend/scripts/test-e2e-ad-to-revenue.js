@@ -42,6 +42,8 @@ const DUMMY_PRODUCT_ID = '000000000000000000000001'; // valid ObjectId (not vali
 const SESSIONS = 3;
 const UNIT_PRICE = 500_000; // VND per session
 const INVOICE_AMOUNT = SESSIONS * UNIT_PRICE; // 1_500_000 VND
+const AD_SPEND = 900_000;
+const COST_DATE = new Date().toISOString().slice(0, 10);
 
 // ── Shared state ──────────────────────────────────────────────────────────────
 let directorToken;
@@ -365,6 +367,41 @@ async function main() {
     console.log(`      fanpageId : ${fanpageId}`);
   });
 
+  await runner.test('SETUP | Create manual ad cost and verify accounting can read it', async () => {
+    ensure(adAccountId, 'adAccountId required');
+    ensure(adGroupId, 'adGroupId required');
+
+    await request({
+      method: 'POST',
+      reqPath: '/ads/costs',
+      token: directorToken,
+      body: {
+        adGroupId,
+        adAccountId,
+        platform: 'FACEBOOK',
+        date: COST_DATE,
+        spend: AD_SPEND,
+        impressions: 5000,
+        clicks: 120,
+        conversions: 6,
+        source: 'MANUAL',
+      },
+      expectedStatus: [200, 201],
+    });
+
+    const { data } = await request({
+      reqPath: `/ads/costs${qs({ startDate: COST_DATE, endDate: COST_DATE })}`,
+      token: accountingToken,
+      expectedStatus: [200],
+    });
+
+    const rows = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+    const row = rows.find((item) => normalizeId(item.adGroupId) === adGroupId && Number(item.spend) === AD_SPEND);
+    ensure(row, `Accounting must see manual ad cost ${AD_SPEND} for adGroupId=${adGroupId}`);
+    console.log(`      adCostDate  : ${COST_DATE}`);
+    console.log(`      adSpend     : ${row.spend}`);
+  });
+
   // ────────────────────────────────────────────────────────────────────────────
   // STEP 1: Facebook Webhook → Conversation with ad attribution
   // ────────────────────────────────────────────────────────────────────────────
@@ -508,6 +545,28 @@ async function main() {
     console.log(`      finalAmount  : ${data.finalAmount}`);
   });
 
+  await runner.test('STEP 3a.5 | Patch order with payment proof required by current invoice flow', async () => {
+    ensure(orderId, 'orderId required');
+    const paymentDate = new Date().toISOString();
+    const { data } = await request({
+      method: 'PATCH',
+      reqPath: `/orders/${orderId}`,
+      token: saleToken,
+      body: {
+        paymentDate,
+        receiptImage: '/uploads/e2e-order-receipt.jpg',
+      },
+      expectedStatus: [200],
+    });
+    ensure(
+      data.receiptImage === '/uploads/e2e-order-receipt.jpg',
+      `order.receiptImage must be persisted, got "${data.receiptImage}"`,
+    );
+    ensure(!!data.paymentDate, 'order.paymentDate must be persisted before submit');
+    console.log(`      paymentDate  : ${data.paymentDate}`);
+    console.log(`      receiptImage : ${data.receiptImage}`);
+  });
+
   await runner.test('STEP 3b | Submit order (DRAFT → SUBMITTED)', async () => {
     ensure(orderId, 'orderId required');
     const { data } = await request({
@@ -520,6 +579,25 @@ async function main() {
     ensure(status === 'SUBMITTED', `order.status must be SUBMITTED after submit, got "${status}"`);
   });
 
+  await runner.test('STEP 3b.5 | Capture financial baseline (before order approval)', async () => {
+    const [dashRes, pnlRes] = await Promise.all([
+      request({
+        reqPath: '/financial-control/dashboard',
+        token: directorToken,
+        expectedStatus: [200],
+      }),
+      request({
+        reqPath: '/financial-control/profit-and-loss',
+        token: directorToken,
+        expectedStatus: [200],
+      }),
+    ]);
+    dashboardWalletBefore = dashRes.data?.deferredRevenue?.walletBalance ?? 0;
+    sessionRevenueBefore = pnlRes.data?.revenue?.sessionRevenue ?? 0;
+    console.log(`      deferredRevenue.walletBalance (before): ${dashboardWalletBefore.toLocaleString()}`);
+    console.log(`      revenue.sessionRevenue (before)       : ${sessionRevenueBefore.toLocaleString()}`);
+  });
+
   // ────────────────────────────────────────────────────────────────────────────
   // STEP 3c: Approve order → auto-enrollment → Student + Invoice created
   // ────────────────────────────────────────────────────────────────────────────
@@ -530,6 +608,7 @@ async function main() {
       method: 'POST',
       reqPath: `/orders/${orderId}/approve`,
       token: directorToken,
+      body: { approvalImage: '/uploads/e2e-order-approval.jpg' },
       expectedStatus: [200, 201],
     });
 
@@ -557,7 +636,7 @@ async function main() {
     console.log(`      studentId    : ${normalizeId(enrollment.studentId)}`);
   });
 
-  await runner.test('STEP 3c verify | Invoice is in PENDING_APPROVAL with correct amount', async () => {
+  await runner.test('STEP 3c verify | Invoice is auto-approved with correct amount', async () => {
     ensure(invoiceId, 'invoiceId required');
     const { data } = await request({
       reqPath: `/invoices/${invoiceId}`,
@@ -565,8 +644,8 @@ async function main() {
       expectedStatus: [200],
     });
     ensure(
-      data.status === 'PENDING_APPROVAL',
-      `invoice.status must be PENDING_APPROVAL before approval, got "${data.status}"`,
+      data.status === 'APPROVED',
+      `invoice.status must be APPROVED after order approval, got "${data.status}"`,
     );
     ensure(
       data.amount === INVOICE_AMOUNT,
@@ -580,7 +659,7 @@ async function main() {
   // STEP 3d: Capture financial baseline before invoice approval
   // ────────────────────────────────────────────────────────────────────────────
 
-  await runner.test('STEP 3d | Capture financial baseline (before invoice approval)', async () => {
+  await runner.test('STEP 3d | Snapshot after order approval', async () => {
     const [dashRes, pnlRes] = await Promise.all([
       request({
         reqPath: '/financial-control/dashboard',
@@ -593,10 +672,10 @@ async function main() {
         expectedStatus: [200],
       }),
     ]);
-    dashboardWalletBefore = dashRes.data?.deferredRevenue?.walletBalance ?? 0;
-    sessionRevenueBefore = pnlRes.data?.revenue?.sessionRevenue ?? 0;
-    console.log(`      deferredRevenue.walletBalance (before): ${dashboardWalletBefore.toLocaleString()}`);
-    console.log(`      revenue.sessionRevenue (before)       : ${sessionRevenueBefore.toLocaleString()}`);
+    const walletAfterApproval = dashRes.data?.deferredRevenue?.walletBalance ?? 0;
+    const sessionRevenueAfterApproval = pnlRes.data?.revenue?.sessionRevenue ?? 0;
+    console.log(`      deferredRevenue.walletBalance (after approval): ${walletAfterApproval.toLocaleString()}`);
+    console.log(`      revenue.sessionRevenue (after approval)       : ${sessionRevenueAfterApproval.toLocaleString()}`);
   });
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -606,16 +685,14 @@ async function main() {
   await runner.test('STEP 3e | Approve invoice (ACCOUNTING) → wallet TOP_UP', async () => {
     ensure(invoiceId, 'invoiceId required');
     const { data } = await request({
-      method: 'POST',
-      reqPath: `/invoices/${invoiceId}/approve`,
+      reqPath: `/invoices/${invoiceId}`,
       token: accountingToken,
-      body: { action: 'APPROVE', approvalImage: 'uploads/e2e-test-proof.jpg' },
-      expectedStatus: [200, 201],
+      expectedStatus: [200],
     });
-    const invoice = data?.invoice || data;
+    const invoice = data;
     ensure(
       invoice.status === 'APPROVED',
-      `invoice.status must be APPROVED after approval, got "${invoice.status}"`,
+      `invoice.status must stay APPROVED after order workflow, got "${invoice.status}"`,
     );
     console.log(`      invoice.status: ${invoice.status}`);
   });
@@ -713,6 +790,95 @@ async function main() {
   // ────────────────────────────────────────────────────────────────────────────
   // BONUS: Idempotency — double-approve must be rejected
   // ────────────────────────────────────────────────────────────────────────────
+
+  await runner.test('STEP 4e | Ads analytics reflects spend, lead, and approved order propagation', async () => {
+    ensure(adGroupId, 'adGroupId required');
+    const { data } = await request({
+      reqPath: `/ads/analytics${qs({ startDate: COST_DATE, endDate: COST_DATE, adGroupId })}`,
+      token: directorToken,
+      expectedStatus: [200],
+    });
+    const rows = Array.isArray(data?.rows) ? data.rows : [];
+    const row = rows.find((item) => normalizeId(item.adGroupId) === adGroupId);
+    ensure(row, `Analytics must contain row for adGroupId=${adGroupId}`);
+    ensure(Number(row.totalSpend) === AD_SPEND, `row.totalSpend=${row.totalSpend} must equal AD_SPEND=${AD_SPEND}`);
+    ensure(Number(row.leadCount) >= 1, `row.leadCount=${row.leadCount} must be >= 1`);
+    ensure(Number(row.orderCount) >= 1, `row.orderCount=${row.orderCount} must be >= 1`);
+    ensure(
+      Number(row.bookedRevenue) >= INVOICE_AMOUNT,
+      `row.bookedRevenue=${row.bookedRevenue} must be >= ${INVOICE_AMOUNT}`,
+    );
+    console.log(`      analytics.spend      : ${row.totalSpend}`);
+    console.log(`      analytics.leadCount  : ${row.leadCount}`);
+    console.log(`      analytics.orderCount : ${row.orderCount}`);
+    console.log(`      analytics.bookedRev  : ${row.bookedRevenue}`);
+  });
+
+  await runner.test('STEP 4f | Realized cohort analytics returns attributed cohort summary', async () => {
+    ensure(adGroupId, 'adGroupId required');
+    const { data } = await request({
+      reqPath: `/ads/analytics/realized-cohort${qs({
+        startDate: COST_DATE,
+        endDate: COST_DATE,
+        adGroupId,
+        maturityDays: 60,
+      })}`,
+      token: directorToken,
+      expectedStatus: [200],
+    });
+    ensure(Array.isArray(data.rows), 'realized-cohort.rows must be an array');
+    ensure(data.rows.length >= 1, 'realized-cohort must contain at least one cohort row');
+    ensure(Number(data.summary.totalSpend) === AD_SPEND, `summary.totalSpend=${data.summary.totalSpend} must equal ${AD_SPEND}`);
+    ensure(Number(data.summary.totalLeads) >= 1, `summary.totalLeads=${data.summary.totalLeads} must be >= 1`);
+    ensure(Number(data.summary.totalOrders) >= 1, `summary.totalOrders=${data.summary.totalOrders} must be >= 1`);
+    ensure(Number(data.summary.totalNewParents) >= 1, `summary.totalNewParents=${data.summary.totalNewParents} must be >= 1`);
+    console.log(`      cohort.rows          : ${data.rows.length}`);
+    console.log(`      cohort.totalSpend    : ${data.summary.totalSpend}`);
+    console.log(`      cohort.totalLeads    : ${data.summary.totalLeads}`);
+    console.log(`      cohort.totalOrders   : ${data.summary.totalOrders}`);
+  });
+
+  await runner.test('STEP 4g | Parent profitability traces the attributed parent back to ad group', async () => {
+    ensure(adGroupId, 'adGroupId required');
+    const { data } = await request({
+      reqPath: `/ads/analytics/parents-profit${qs({
+        startDate: COST_DATE,
+        endDate: COST_DATE,
+        adGroupId,
+      })}`,
+      token: directorToken,
+      expectedStatus: [200],
+    });
+    ensure(Array.isArray(data.rows), 'parents-profit.rows must be an array');
+    ensure(Array.isArray(data.summaryByGroup), 'parents-profit.summaryByGroup must be an array');
+    ensure(Number(data.overall.parentCount) >= 1, `overall.parentCount=${data.overall.parentCount} must be >= 1`);
+    const row = data.rows.find((item) => normalizeId(item.adGroupId) === adGroupId);
+    ensure(row, `parents-profit must contain row for adGroupId=${adGroupId}`);
+    console.log(`      parentCount          : ${data.overall.parentCount}`);
+    console.log(`      parentRow.adGroupId  : ${normalizeId(row.adGroupId)}`);
+    console.log(`      parentRow.parentKey  : ${row.parentKey}`);
+  });
+
+  await runner.test('STEP 4h | Suggestions endpoint returns optimization data for ads analytics page', async () => {
+    const budget = 1_500_000;
+    const { data } = await request({
+      reqPath: `/ads/suggestions${qs({
+        startDate: COST_DATE,
+        endDate: COST_DATE,
+        totalBudget: budget,
+        maturityDays: 60,
+      })}`,
+      token: directorToken,
+      expectedStatus: [200],
+    });
+    ensure(Number(data.totalBudget) === budget, `suggestions.totalBudget=${data.totalBudget} must equal ${budget}`);
+    ensure(Array.isArray(data.suggestions), 'suggestions.suggestions must be an array');
+    ensure(Array.isArray(data.summaryTable), 'suggestions.summaryTable must be an array');
+    ensure(data.suggestions.length >= 1, 'suggestions must contain at least one row');
+    console.log(`      suggestions.count    : ${data.suggestions.length}`);
+    console.log(`      suggestions.allocated: ${data.allocated}`);
+    console.log(`      suggestions.budget   : ${data.totalBudget}`);
+  });
 
   await runner.test('BONUS | Double-approve invoice → 4xx (idempotent guard)', async () => {
     ensure(invoiceId, 'invoiceId required');

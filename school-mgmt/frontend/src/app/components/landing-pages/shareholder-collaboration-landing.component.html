@@ -1,0 +1,306 @@
+<div class="shareholder-page">
+  <section class="hero-card">
+    <div class="hero-copy">
+      <p class="eyebrow">Shareholder Collaboration</p>
+      <h1>Mô hình giáo dục tăng trưởng cần những cổ đông đồng hành bằng dữ liệu, năng lực quản trị và tầm nhìn dài hạn.</h1>
+      <p class="hero-text">
+        Landing page này được dùng để kêu gọi đối tác trở thành cổ đông chiến lược. Hệ thống
+        tách rõ 3 lớp: xem tầm nhìn ngành, hiểu quyền lợi cổ đông, đăng ký hợp tác và chỉ
+        sau khi duyệt mới mở khu quản lý cổ đông.
+      </p>
+
+      <div class="hero-actions">
+        <button type="button" class="btn btn-primary" (click)="openJourneyTab('registration', true)">
+          Đi đến tab Cổ đông đăng ký
+        </button>
+        <button type="button" class="btn btn-secondary" (click)="openJourneyTab('management', true)">
+          Xem khu quản lý sau duyệt
+        </button>
+        <a class="btn btn-ghost" routerLink="/login">Cổ đông đã duyệt đăng nhập</a>
+      </div>
+
+      <div class="hero-meta">
+        <article class="meta-card">
+          <span class="meta-label">Thesis 01</span>
+          <strong>Recurring revenue và retention là lợi thế cốt lõi</strong>
+        </article>
+        <article class="meta-card">
+          <span class="meta-label">Thesis 02</span>
+          <strong>Vận hành tập trung giúp scale có kiểm soát và minh bạch</strong>
+        </article>
+        <article class="meta-card">
+          <span class="meta-label">Governance</span>
+          <strong>Đăng ký, chờ duyệt, cấp quyền quản lý theo từng tầng rõ ràng</strong>
+        </article>
+      </div>
+    </div>
+
+    <div class="hero-side">
+      <div class="hero-side-card">
+        <button
+          type="button"
+          class="image-trigger hero-image-trigger"
+          (click)="openPreview(heroImage, 'Bảng điều hành tăng trưởng', 'Ảnh minh họa này đại diện cho cách cổ đông đã duyệt có thể nhìn bức tranh tăng trưởng và vận hành trên dashboard thật.')">
+          <img class="hero-image" [src]="heroImage" alt="Bảng điều hành tăng trưởng dành cho ban điều hành và cổ đông" loading="eager" />
+          <span class="zoom-pill">Bấm để phóng to</span>
+        </button>
+        <p class="section-kicker">Tầm nhìn ngành</p>
+        <h2>Giáo dục bổ trợ đang dịch chuyển sang giai đoạn đo lường được hiệu quả và vận hành được bằng hệ thống.</h2>
+        <div class="signal-grid">
+          <article class="signal-card" *ngFor="let thesis of marketTheses">
+            <span>{{ thesis.label }}</span>
+            <strong>{{ thesis.title }}</strong>
+            <p>{{ thesis.summary }}</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section vision-section">
+    <div class="section-heading">
+      <div>
+        <p class="section-kicker">Industry vision</p>
+        <h2>Việc đầu tư vào giáo dục không chỉ là góp vốn, mà là đồng hành vào một thị trường có nhu cầu thật, có tính lặp lại và có thể mở rộng.</h2>
+      </div>
+    </div>
+
+    <div class="thesis-grid">
+      <article class="thesis-card" *ngFor="let thesis of marketTheses">
+        <span class="thesis-label">{{ thesis.label }}</span>
+        <h3>{{ thesis.title }}</h3>
+        <p>{{ thesis.summary }}</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section benefit-section">
+    <div class="section-heading">
+      <div>
+        <p class="section-kicker">Shareholder benefits</p>
+        <h2>Quyền lợi lớn của cổ đông được xây trên minh bạch dữ liệu, năng lực governance và khả năng tham gia vào tăng trưởng.</h2>
+      </div>
+    </div>
+
+    <div class="benefit-grid">
+      <article class="benefit-card" *ngFor="let benefit of shareholderBenefits">
+        <div class="benefit-top">
+          <span class="benefit-highlight">{{ benefit.highlight }}</span>
+          <h3>{{ benefit.title }}</h3>
+        </div>
+        <p>{{ benefit.summary }}</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section visual-section">
+    <div class="section-heading">
+      <div>
+        <p class="section-kicker">Ảnh minh họa</p>
+        <h2>Ba lớp hình ảnh đại diện cho năng lực tăng trưởng, kiểm soát tài chính và governance trước khi mở khu quản lý cổ đông.</h2>
+      </div>
+    </div>
+
+    <div class="illustration-grid">
+      <article class="illustration-card" *ngFor="let item of illustrationCards">
+        <button
+          type="button"
+          class="illustration-trigger"
+          (click)="openPreview(item.image, item.title, item.summary)">
+          <img [src]="item.image" [alt]="item.title" loading="lazy" />
+          <div class="illustration-copy">
+            <div class="illustration-head">
+              <span class="illustration-tag">{{ item.tag }}</span>
+              <span class="zoom-pill subtle">Xem lớn</span>
+            </div>
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.summary }}</p>
+          </div>
+        </button>
+      </article>
+    </div>
+  </section>
+
+  <section class="section control-room" id="shareholder-control-room">
+    <div class="section-heading control-head">
+      <div>
+        <p class="section-kicker">Shareholder control room</p>
+        <h2>Luồng hợp tác cổ đông được tách thành các tab rõ ràng để tránh cấp quyền sớm và để bộ máy vận hành duyệt theo đúng quy trình.</h2>
+      </div>
+
+      <div class="approval-ribbon">
+        <span class="approval-chip">Only after approval</span>
+        <strong>Chỉ sau khi duyệt mới vào dashboard, báo cáo và khu quản lý cổ đông.</strong>
+      </div>
+    </div>
+
+    <div class="journey-tabs" role="tablist" aria-label="Shareholder journey tabs">
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="isActiveJourneyTab('registration')"
+        [class.active]="isActiveJourneyTab('registration')"
+        (click)="openJourneyTab('registration')">
+        Cổ đông đăng ký
+      </button>
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="isActiveJourneyTab('approval')"
+        [class.active]="isActiveJourneyTab('approval')"
+        (click)="openJourneyTab('approval')">
+        Đang duyệt
+      </button>
+      <button
+        type="button"
+        role="tab"
+        [attr.aria-selected]="isActiveJourneyTab('management')"
+        [class.active]="isActiveJourneyTab('management')"
+        (click)="openJourneyTab('management')">
+        Quản lý cổ đông
+      </button>
+    </div>
+
+    <div class="journey-panel" [ngSwitch]="activeJourneyTab()">
+      <ng-container *ngSwitchCase="'registration'">
+        <div class="panel-layout">
+          <div class="panel-block">
+            <div class="panel-intro">
+              <span class="state-pill gold">Tab ưu tiên</span>
+              <h3>Trang này sẽ đẩy người xem về tab Cổ đông đăng ký trước tiên.</h3>
+              <p>
+                Đối tác cần vào tab này để hiểu rõ phạm vi hợp tác, thông tin cần chuẩn bị và
+                nguyên tắc: chưa cấp quyền quản lý cho đến khi hồ sơ được duyệt xong.
+              </p>
+            </div>
+
+            <div class="checklist-grid">
+              <article class="checklist-card" *ngFor="let card of registrationChecklist">
+                <h4>{{ card.title }}</h4>
+                <ul>
+                  <li *ngFor="let item of card.items">{{ item }}</li>
+                </ul>
+              </article>
+            </div>
+          </div>
+
+          <aside class="panel-side">
+            <article class="side-card accent-teal">
+              <span class="side-label">Thông điệp nghiệp vụ</span>
+              <strong>Hồ sơ đăng ký sẽ vào lớp chờ duyệt nội bộ trước khi tạo tài khoản cổ đông.</strong>
+              <p>
+                Nghĩa là landing page này không mở thẳng vào khu quản lý. Cổ đông đăng ký trước,
+                bộ phận điều hành thẩm định sau, rồi mới kích hoạt quyền truy cập.
+              </p>
+            </article>
+
+            <div class="cta-stack">
+              <button type="button" class="btn btn-primary" (click)="openJourneyTab('approval')">
+                Xem bước đang duyệt
+              </button>
+              <a class="btn btn-ghost" routerLink="/login">Đã có tài khoản? Đăng nhập</a>
+            </div>
+          </aside>
+        </div>
+      </ng-container>
+
+      <ng-container *ngSwitchCase="'approval'">
+        <div class="panel-layout">
+          <div class="panel-block">
+            <div class="timeline">
+              <article class="timeline-step" *ngFor="let step of approvalTimeline; let i = index">
+                <div class="timeline-index">0{{ i + 1 }}</div>
+                <div class="timeline-copy">
+                  <span class="timeline-phase">{{ step.phase }}</span>
+                  <h3>{{ step.title }}</h3>
+                  <p>{{ step.summary }}</p>
+                </div>
+              </article>
+            </div>
+          </div>
+
+          <aside class="panel-side">
+            <article class="side-card accent-amber">
+              <span class="side-label">Nội bộ xử lý</span>
+              <strong>Bộ phận vận hành và ban điều hành xử lý hồ sơ tại lớp chờ duyệt.</strong>
+              <p>
+                Sau khi đánh giá xong, hệ thống mới tạo user role SHAREHOLDER, nhập tỷ lệ cổ phần
+                và mở route mặc định cho cổ đông đã duyệt.
+              </p>
+            </article>
+
+            <div class="cta-stack">
+              <button type="button" class="btn btn-secondary" (click)="openJourneyTab('management')">
+                Xem quyền sau khi duyệt
+              </button>
+              <a class="btn btn-ghost" routerLink="/login">Đăng nhập nội bộ để xử lý</a>
+            </div>
+          </aside>
+        </div>
+      </ng-container>
+
+      <ng-container *ngSwitchCase="'management'">
+        <div class="panel-layout">
+          <div class="panel-block">
+            <div class="panel-intro">
+              <span class="state-pill slate">Mở sau khi duyệt</span>
+              <h3>Khu quản lý cổ đông chỉ mở khi hồ sơ đã được duyệt và tài khoản đã được kích hoạt.</h3>
+              <p>
+                Sau khi vào hệ thống, cổ đông đã duyệt sẽ được đẩy vào khu dashboard và các module
+                được cấp quyền theo role. Các khung dưới đây là những giá trị truy cập lớn nhất.
+              </p>
+            </div>
+
+            <div class="module-grid">
+              <article class="module-card" *ngFor="let module of managementModules">
+                <div class="module-head">
+                  <div>
+                    <h4>{{ module.title }}</h4>
+                    <code>{{ module.route }}</code>
+                  </div>
+                  <span class="locked-pill">Locked until approved</span>
+                </div>
+                <p>{{ module.summary }}</p>
+              </article>
+            </div>
+          </div>
+
+          <aside class="panel-side">
+            <article class="side-card accent-slate">
+              <span class="side-label">Điều kiện vào quản lý</span>
+              <strong>1. Đã duyệt hồ sơ  2. Đã tạo tài khoản  3. Đã gán role cổ đông</strong>
+              <p>
+                Nếu chưa đủ 3 điều kiện trên, landing page sẽ vẫn chỉ đóng vai trò là kênh kêu gọi
+                và hướng dẫn, không thay thế quy trình governance nội bộ.
+              </p>
+            </article>
+
+            <div class="cta-stack">
+              <a class="btn btn-primary" routerLink="/login">Cổ đông đã duyệt đăng nhập</a>
+              <button type="button" class="btn btn-ghost" (click)="openJourneyTab('registration')">
+                Quay lại tab đăng ký
+              </button>
+            </div>
+          </aside>
+        </div>
+      </ng-container>
+    </div>
+  </section>
+
+  <div class="image-preview-backdrop" *ngIf="activePreview() as preview" (click)="closePreview()">
+    <div class="image-preview-dialog" (click)="$event.stopPropagation()">
+      <div class="image-preview-toolbar">
+        <div class="image-preview-copy">
+          <span class="image-preview-kicker">Ảnh minh họa phóng to</span>
+          <h3>{{ preview.title }}</h3>
+          <p>{{ preview.summary }}</p>
+        </div>
+        <button type="button" class="preview-close" (click)="closePreview()">Đóng</button>
+      </div>
+
+      <div class="image-preview-frame">
+        <img [src]="preview.image" [alt]="preview.title" />
+      </div>
+    </div>
+  </div>
+</div>

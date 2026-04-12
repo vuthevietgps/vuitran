@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Param, Query, Req, Res,
-  HttpStatus, Logger, RawBodyRequest,
+  HttpStatus, Logger, OnModuleInit, RawBodyRequest,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -10,14 +10,19 @@ import { WebhookService } from './webhook.service';
 import { CHATBOT_WEBHOOK_QUEUE, WebhookMessageJobData } from './chatbot-webhook.constants';
 
 @Controller('webhooks')
-export class WebhookController {
+export class WebhookController implements OnModuleInit {
   private readonly logger = new Logger(WebhookController.name);
+  private readonly queueReadyTimeoutMs = 5000;
 
   constructor(
     private readonly chatbotService: ChatbotService,
     private readonly webhookService: WebhookService,
     @InjectQueue(CHATBOT_WEBHOOK_QUEUE) private readonly webhookQueue: Queue,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    await this.tryWarmWebhookQueue('startup', this.queueReadyTimeoutMs);
+  }
 
   // ─── Facebook Webhook Verification ──────────────────────────
 
@@ -93,6 +98,9 @@ export class WebhookController {
             removeOnComplete: true,
             removeOnFail: 100, // keep last 100 failed jobs for inspection
           });
+          this.logger.debug(
+            `Enqueued Facebook webhook message ${jobData.messageId || 'no-mid'} for fanpage ${fanpage._id}`,
+          );
         } else {
           // Redis/BullMQ unavailable — process synchronously
           this.logger.warn(
@@ -172,6 +180,9 @@ export class WebhookController {
             removeOnComplete: true,
             removeOnFail: 100,
           });
+          this.logger.debug(
+            `Enqueued TikTok webhook message ${jobData.messageId || 'no-mid'} for fanpage ${fanpage._id}`,
+          );
         } else {
           this.logger.warn(
             `Redis not ready, processing TikTok webhook synchronously for fanpage ${fanpage._id}`,
@@ -200,21 +211,32 @@ export class WebhookController {
 
   // ─── Helpers ─────────────────────────────────────────────────
 
+  private async tryWarmWebhookQueue(reason: string, timeoutMs: number): Promise<boolean> {
+    try {
+      const client = await Promise.race([
+        this.webhookQueue.waitUntilReady(),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Redis check timeout')), timeoutMs),
+        ),
+      ]);
+      const ready = client?.status === 'ready';
+      if (ready) {
+        this.logger.debug(`Chatbot webhook queue ready via ${reason}`);
+      }
+      return ready;
+    } catch (err: any) {
+      if (reason === 'startup') {
+        this.logger.warn(`Chatbot webhook queue warmup failed: ${err.message}`);
+      }
+      return false;
+    }
+  }
+
   /** Returns true only when the BullMQ underlying Redis client is in 'ready' state.
    *  Uses a short race timeout so we never hang waiting for a Redis connection that
    *  may never arrive (e.g., Redis is not running).
    */
   private async isRedisReady(): Promise<boolean> {
-    try {
-      await Promise.race([
-        this.webhookQueue.client, // resolves only when ioredis emits 'ready'
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Redis check timeout')), 150),
-        ),
-      ]);
-      return true;
-    } catch {
-      return false;
-    }
+    return this.tryWarmWebhookQueue('request', 2000);
   }
 }

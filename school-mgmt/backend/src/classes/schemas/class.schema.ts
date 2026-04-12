@@ -61,6 +61,12 @@ export enum StudentConfigSlotType {
   UPDATE = 'UPDATE',
 }
 
+export enum ClassCoTeacherRole {
+  SUPPORT = 'SUPPORT',
+  REPORT = 'REPORT',
+  ATTENDANCE = 'ATTENDANCE',
+}
+
 // Sub-schema for class schedule (tham khảo — GV & PH tự thỏa thuận)
 @Schema({ _id: false })
 export class ClassSchedule {
@@ -193,6 +199,35 @@ export class SubstituteTeacher {
 }
 
 export const SubstituteTeacherSchema = SchemaFactory.createForClass(SubstituteTeacher);
+
+@Schema({ _id: false })
+export class ClassCoTeacher {
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
+  teacherId!: Types.ObjectId;
+
+  @Prop({ type: String, enum: ClassCoTeacherRole, default: ClassCoTeacherRole.SUPPORT })
+  role!: ClassCoTeacherRole;
+
+  @Prop({ type: Boolean, default: true })
+  canManageAttendance!: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  canManageReports!: boolean;
+
+  @Prop({ type: Boolean, default: true })
+  canCreateLink!: boolean;
+
+  @Prop({ type: String, trim: true })
+  note?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  assignedBy?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  assignedAt?: Date;
+}
+
+export const ClassCoTeacherSchema = SchemaFactory.createForClass(ClassCoTeacher);
 
 @Schema({ _id: false })
 export class DurationSnapshot {
@@ -480,6 +515,9 @@ export class Classroom {
   @Prop({ type: [SubstituteTeacherSchema], default: [] })
   substituteTeachers!: SubstituteTeacher[];
 
+  @Prop({ type: [ClassCoTeacherSchema], default: [] })
+  coTeachers!: ClassCoTeacher[];
+
   // ── Thông tin môn học ──
   @Prop({ type: String, trim: true })
   subject?: string; // Môn học (e.g. "Toán", "Tiếng Anh")
@@ -571,5 +609,6 @@ ClassroomSchema.index({ students: 1, status: 1 });
 ClassroomSchema.index({ students: 1 });
 ClassroomSchema.index({ 'studentConfigs.studentId': 1 });
 ClassroomSchema.index({ 'studentConfigs.teacherSlots.teacherId': 1 });
+ClassroomSchema.index({ 'coTeachers.teacherId': 1 });
 ClassroomSchema.index({ 'pendingSaleUpdate.status': 1, sale: 1 });
 

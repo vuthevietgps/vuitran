@@ -8,6 +8,7 @@ import {
   IsString,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { AdjustmentType } from '../schemas/ledger-entry.schema';
 
 /**
@@ -27,6 +28,7 @@ export class AdjustBalanceDto {
   direction!: 'ADD' | 'SUBTRACT'; // Cộng / Trừ
 
   @IsString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsNotEmpty()
   description!: string; // Mô tả ngắn
 
@@ -43,6 +45,7 @@ export class AdjustBalanceDto {
    * Phải ghi rõ lý do để kế toán và director có thể review.
    */
   @IsString()
-  @IsOptional()
-  reason?: string;
+  @IsNotEmpty()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  reason!: string;
 }

@@ -6,6 +6,7 @@ import {
   ParentAttributionDocument,
   ParentAttributionModel,
   ParentAttributionSourceType,
+  ParentAttributionTouchpoint,
 } from './schemas/parent-attribution.schema';
 import { TrackingAttribution } from './schemas/tracking-attribution.schema';
 import {
@@ -36,12 +37,62 @@ export type UpsertParentAttributionInput = {
   notes?: string | null;
 };
 
+export type ParentAttributionSnapshot = ParentAttribution & {
+  touchpoints?: ParentAttributionTouchpoint[];
+};
+
 @Injectable()
 export class MarketingAttributionService {
   constructor(
     @InjectModel(ParentAttribution.name)
     private readonly parentAttributionModel: Model<ParentAttributionDocument>,
   ) {}
+
+  private buildTouchpoint(
+    input: UpsertParentAttributionInput,
+    now: Date,
+    normalizedParentPhone?: string,
+    normalizedParentEmail?: string,
+    tracking?: Partial<TrackingAttribution>,
+  ): ParentAttributionTouchpoint {
+    return {
+      capturedAt: now,
+      firstTouchedAt: now,
+      lastConfirmedAt: now,
+      attributionModel: input.attributionModel || ParentAttributionModel.FIRST_TOUCH_LOCKED,
+      sourceType:
+        input.sourceType ||
+        (input.referredByUserId ? ParentAttributionSourceType.REFERRAL : ParentAttributionSourceType.SYSTEM),
+      parentUserId: toObjectId(input.parentUserId),
+      parentPhone: input.parentPhone || undefined,
+      normalizedParentPhone: normalizedParentPhone || undefined,
+      parentEmail: input.parentEmail || undefined,
+      normalizedParentEmail: normalizedParentEmail || undefined,
+      adGroupId: toObjectId(input.adGroupId),
+      adGroupName: input.adGroupName || undefined,
+      platform: input.platform || undefined,
+      adRefParam: input.adRefParam || undefined,
+      tracking,
+      sourceConversationId: toObjectId(input.sourceConversationId),
+      sourceLeadId: toObjectId(input.sourceLeadId),
+      sourceOrderId: toObjectId(input.sourceOrderId),
+      notes: input.notes || undefined,
+    };
+  }
+
+  private appendTouchpoint(
+    doc: ParentAttributionDocument,
+    touchpoint: ParentAttributionTouchpoint,
+    replaceFirstTouch = false,
+  ): void {
+    const touchpoints = Array.isArray((doc as any).touchpoints) ? [...(doc as any).touchpoints] : [];
+    if (replaceFirstTouch || touchpoints.length === 0) {
+      touchpoints.unshift(touchpoint);
+    } else {
+      touchpoints.push(touchpoint);
+    }
+    (doc as any).touchpoints = touchpoints;
+  }
 
   async upsertParentAttribution(
     input: UpsertParentAttributionInput,
@@ -85,6 +136,7 @@ export class MarketingAttributionService {
     const canOverride =
       requestedModel === ParentAttributionModel.MANUAL_OVERRIDE ||
       requestedModel === ParentAttributionModel.LAST_TOUCH;
+    const touchpoint = this.buildTouchpoint(input, now, normalizedParentPhone, normalizedParentEmail, tracking);
 
     if (!doc) {
       if (!adGroupId && !input.adGroupName && !referredByUserId) {
@@ -114,6 +166,7 @@ export class MarketingAttributionService {
         firstAttributedAt: now,
         lastConfirmedAt: now,
         notes: input.notes || undefined,
+        touchpoints: [touchpoint],
       });
       return doc.save({ session });
     }
@@ -148,6 +201,10 @@ export class MarketingAttributionService {
     if (!doc.sourceOrderId && sourceOrderId) doc.sourceOrderId = sourceOrderId;
     if (input.notes) doc.notes = input.notes;
     doc.lastConfirmedAt = now;
+    this.appendTouchpoint(doc, {
+      ...touchpoint,
+      lastConfirmedAt: now,
+    });
 
     return doc.save({ session });
   }
@@ -187,6 +244,21 @@ export class MarketingAttributionService {
     }
     if (!primary.notes && secondary.notes) primary.notes = secondary.notes;
 
+    const mergedTouchpoints = [
+      ...((primary as any).touchpoints || []),
+      ...((secondary as any).touchpoints || []),
+    ]
+      .map((touchpoint) => ({
+        ...touchpoint,
+        firstTouchedAt: touchpoint.firstTouchedAt || touchpoint.capturedAt || secondary.firstAttributedAt || primary.firstAttributedAt,
+        lastConfirmedAt: touchpoint.lastConfirmedAt || secondary.lastConfirmedAt || primary.lastConfirmedAt,
+      }))
+      .sort((a, b) => {
+        const left = new Date(a.firstTouchedAt || a.capturedAt || 0).getTime();
+        const right = new Date(b.firstTouchedAt || b.capturedAt || 0).getTime();
+        return left - right;
+      });
+
     primary.firstAttributedAt = primary.firstAttributedAt || secondary.firstAttributedAt || new Date();
     if (secondary.firstAttributedAt && secondary.firstAttributedAt < primary.firstAttributedAt) {
       primary.firstAttributedAt = secondary.firstAttributedAt;
@@ -196,8 +268,17 @@ export class MarketingAttributionService {
     }
 
     primary.parentKey = buildParentKey(primary.parentUserId, primary.normalizedParentPhone) || primary.parentKey;
+    (primary as any).touchpoints = mergedTouchpoints;
 
     await secondary.deleteOne({ session });
     return primary.save({ session });
+  }
+
+  async findByLeadId(leadId: string | Types.ObjectId, session?: ClientSession): Promise<ParentAttributionSnapshot | null> {
+    const sourceLeadId = toObjectId(leadId);
+    if (!sourceLeadId) return null;
+    const doc = await this.parentAttributionModel.findOne({ sourceLeadId }, null, { session }).lean();
+    if (!doc) return null;
+    return doc as ParentAttributionSnapshot;
   }
 }

@@ -299,6 +299,7 @@ export class ChatbotSettingsComponent implements OnInit {
 
   async saveFanpage() {
     if (!this.canEditFanpages()) return;
+    if (this.saving()) return;
     if (!this.fpForm.name || !this.fpForm.platform || !this.fpForm.pageId) {
       this.fpError.set('Vui long dien du cac truong bat buoc.');
       return;
@@ -376,6 +377,7 @@ export class ChatbotSettingsComponent implements OnInit {
 
   async saveToken() {
     if (!this.canManageTokenLibrary()) return;
+    if (this.saving()) return;
     if (!this.tokenForm.label || (!this.editingToken && !this.tokenForm.apiKey)) {
       this.tokenError.set('Vui long dien du cac truong bat buoc.');
       return;
@@ -458,6 +460,7 @@ export class ChatbotSettingsComponent implements OnInit {
 
   async saveAiProfile() {
     if (!this.canManageAiAssistantProfiles()) return;
+    if (this.saving()) return;
     if (!this.aiProfileForm.assistantType || !this.aiProfileForm.label) {
       this.aiProfileError.set('Vui long dien du cac truong bat buoc.');
       return;

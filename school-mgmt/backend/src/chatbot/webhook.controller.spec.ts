@@ -16,7 +16,10 @@ describe('WebhookController', () => {
     parseTikTokWebhookPayload: jest.fn(),
   };
 
-  const webhookQueue = { add: jest.fn().mockResolvedValue({}) };
+  const webhookQueue: any = {
+    add: jest.fn().mockResolvedValue({}),
+    waitUntilReady: jest.fn().mockResolvedValue({ status: 'ready' }),
+  };
 
   let controller: WebhookController;
 
@@ -153,6 +156,44 @@ describe('WebhookController', () => {
       'process-message',
       expect.objectContaining({ fanpageId: 'fanpage-4', platformUserId: 'sender-4' }),
       expect.any(Object),
+    );
+  });
+
+  it('falls back to synchronous Facebook processing when Redis is not ready', async () => {
+    chatbotService.findFanpageByPageId.mockResolvedValue({
+      _id: { toString: () => 'fanpage-5' },
+      appSecret: '',
+    });
+    webhookQueue.waitUntilReady.mockResolvedValueOnce({ status: 'connecting' });
+    webhookService.parseFacebookWebhookPayload.mockReturnValue([
+      {
+        senderId: 'sender-5',
+        messageText: 'hello',
+        senderName: 'User 5',
+        adRefParam: '',
+        messageId: 'msg-5',
+      },
+    ]);
+
+    const req: any = {
+      headers: {},
+      body: { entry: [] },
+      rawBody: Buffer.from('{}'),
+    };
+    const status = jest.fn().mockReturnThis();
+    const send = jest.fn().mockReturnThis();
+    const res: any = { status, send };
+
+    await controller.handleFacebook('page-5', req, res);
+
+    expect(webhookQueue.add).not.toHaveBeenCalled();
+    expect(chatbotService.handleIncomingCustomerMessage).toHaveBeenCalledWith(
+      'fanpage-5',
+      'sender-5',
+      'hello',
+      'User 5',
+      '',
+      'msg-5',
     );
   });
 });

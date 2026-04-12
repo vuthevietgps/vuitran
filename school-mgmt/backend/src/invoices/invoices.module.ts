@@ -6,6 +6,9 @@ import { existsSync, mkdirSync } from 'fs';
 import { extname, join } from 'path';
 import type { Express } from 'express';
 import { InvoicesService } from './invoices.service';
+import { InvoicesApprovalService } from './invoices-approval.service';
+import { InvoicesQueryService } from './invoices-query.service';
+import { InvoicesOrderService } from './invoices-order.service';
 import { InvoicesController } from './invoices.controller';
 import { Invoice, InvoiceSchema } from './schemas/invoice.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
@@ -20,11 +23,16 @@ if (!existsSync(receiptUploadPath)) {
   mkdirSync(receiptUploadPath, { recursive: true });
 }
 
+const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+
 const storage = diskStorage({
   destination: receiptUploadPath,
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = extname(file.originalname);
+    const ext = extname(file.originalname).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      return cb(new Error('Dinh dang file khong hop le'), '');
+    }
     cb(null, `receipt-${uniqueSuffix}${ext}`);
   },
 });
@@ -51,7 +59,7 @@ const imageFileFilter = (req: any, file: Express.Multer.File, cb: any) => {
     ClassesModule,
   ],
   controllers: [InvoicesController],
-  providers: [InvoicesService],
+  providers: [InvoicesService, InvoicesApprovalService, InvoicesQueryService, InvoicesOrderService],
   exports: [InvoicesService],
 })
 export class InvoicesModule {}

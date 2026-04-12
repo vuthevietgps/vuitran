@@ -201,8 +201,10 @@ class TestRunner {
 }
 
 function uniquePhone(prefix = '09') {
-  const tail = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-8);
-  return `${prefix}${tail}`;
+  const normalizedPrefix = String(prefix).replace(/\D/g, '').slice(0, 2) || '09';
+  const tailLength = Math.max(10 - normalizedPrefix.length, 1);
+  const tail = `${Date.now()}${Math.floor(Math.random() * 1000)}`.slice(-tailLength);
+  return `${normalizedPrefix}${tail}`;
 }
 
 async function main() {

@@ -14,9 +14,17 @@ interface StudentForm {
   studentBirthMonth: number | null;
   parentBirthMonth: number | null;
   parentUserId: string;
+  secondaryParentUserIds: string[];
   parentName: string;
   parentPhone: string;
   faceImage: string;
+}
+
+interface StudentParentLink {
+  _id: string;
+  userCode?: string;
+  fullName: string;
+  phone?: string;
 }
 
 @Component({
@@ -48,9 +56,9 @@ interface StudentForm {
             <th>Ho va ten</th>
             <th>Tuoi</th>
             <th>Thang sinh HS</th>
-            <th>Ten phu huynh</th>
+            <th>Phu huynh</th>
             <th>Thang sinh PH</th>
-            <th>Dien thoai</th>
+            <th>Dien thoai PH</th>
             <th>Hanh dong</th>
           </tr>
         </thead>
@@ -61,9 +69,19 @@ interface StudentForm {
             <td>{{s.fullName}}</td>
             <td>{{s.age}}</td>
             <td>{{ s.studentBirthMonth ? 'T' + s.studentBirthMonth : '-' }}</td>
-            <td>{{s.parentName}}</td>
+            <td>
+              <div class="parent-primary">{{ parentPrimaryLabel(s) }}</div>
+              <div class="parent-secondary" *ngIf="parentSecondaryLabels(s).length">
+                PH phu: {{ parentSecondaryLabels(s).join(' | ') }}
+              </div>
+            </td>
             <td>{{ s.parentBirthMonth ? 'T' + s.parentBirthMonth : '-' }}</td>
-            <td>{{s.parentPhone}}</td>
+            <td>
+              <div class="parent-primary">{{ parentPrimaryPhone(s) }}</div>
+              <div class="parent-secondary" *ngIf="parentSecondaryPhones(s).length">
+                PH phu: {{ parentSecondaryPhones(s).join(' | ') }}
+              </div>
+            </td>
             <td class="actions-cell">
               <button class="ghost" (click)="edit(s)" *ngIf="canMutateStudents">Sua</button>
               <button class="ghost" (click)="remove(s)" *ngIf="canDeleteStudents">Xoa</button>
@@ -100,6 +118,19 @@ interface StudentForm {
                 {{ p.userCode || 'N/A' }} - {{ p.fullName }}
               </option>
             </select>
+          </label>
+          <label>Ma phu huynh phu
+            <select
+              name="secondaryParentUserIds"
+              multiple
+              size="4"
+              [(ngModel)]="form.secondaryParentUserIds"
+              (ngModelChange)="onSecondaryParentsChange($event)">
+              <option *ngFor="let p of secondaryParentCandidates()" [value]="p._id">
+                {{ p.userCode || 'N/A' }} - {{ p.fullName }}
+              </option>
+            </select>
+            <small>Co the chon nhieu phu huynh phu. Khong trung voi phu huynh chinh.</small>
           </label>
           <label>Ten phu huynh
             <input
@@ -141,6 +172,7 @@ interface StudentForm {
     .filters { display:flex; gap:10px; margin-bottom:16px; }
     input { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; }
     select { padding:6px 8px; border:1px solid #cbd5f5; border-radius:4px; width:100%; background:#fff; }
+    select[multiple] { min-height: 120px; }
     .table-wrap { width:100%; overflow:auto; border:1px solid #e2e8f0; border-radius:6px; background:#fff; }
     .data { width:100%; min-width:900px; border-collapse:collapse; background:#fff; }
     th, td { padding:8px; border:1px solid #e2e8f0; vertical-align:middle; }
@@ -156,6 +188,8 @@ interface StudentForm {
     .actions-cell { width:120px; text-align:right; }
     .actions-cell button { margin-left:4px; }
     .error { color:#dc2626; }
+    .parent-primary { font-weight:600; }
+    .parent-secondary { color:#64748b; font-size:12px; margin-top:4px; }
     .upload-status { display:flex; flex-direction:column; gap:6px; font-size:13px; }
     .preview { width:120px; height:120px; object-fit:cover; border-radius:8px; border:1px solid #cbd5f5; }
     @media (max-width: 768px) {
@@ -220,6 +254,7 @@ export class StudentsComponent {
   }
 
   onParentChange(parentId: string) {
+    this.form.secondaryParentUserIds = (this.form.secondaryParentUserIds || []).filter((id) => id !== parentId);
     if (!parentId) {
       this.form.parentName = '';
       this.form.parentPhone = '';
@@ -229,6 +264,21 @@ export class StudentsComponent {
     if (!selectedParent) return;
     this.form.parentName = selectedParent.fullName || '';
     this.form.parentPhone = selectedParent.phone || '';
+  }
+
+  onSecondaryParentsChange(parentIds: string[] | string) {
+    const selected = Array.isArray(parentIds) ? parentIds : [parentIds];
+    const normalized = selected
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+      .filter((id, index, all) => all.indexOf(id) === index)
+      .filter((id) => id !== this.form.parentUserId);
+    this.form.secondaryParentUserIds = normalized;
+  }
+
+  secondaryParentCandidates(): UserItem[] {
+    const primaryId = this.form.parentUserId;
+    return this.parents().filter((parent) => parent._id !== primaryId);
   }
 
   openModal() {
@@ -243,6 +293,7 @@ export class StudentsComponent {
 
   edit(student: StudentItem) {
     if (!this.canMutateStudents) return;
+    const primaryParent = this.getPrimaryParent(student);
     this.editingStudent = student;
     this.form = {
       studentCode: student.studentCode || '',
@@ -250,9 +301,10 @@ export class StudentsComponent {
       age: student.age,
       studentBirthMonth: student.studentBirthMonth || null,
       parentBirthMonth: student.parentBirthMonth || null,
-      parentUserId: student.parentUserId || '',
-      parentName: student.parentName,
-      parentPhone: student.parentPhone,
+      parentUserId: student.parentUserId || primaryParent?._id || '',
+      secondaryParentUserIds: this.getSecondaryParentUserIds(student),
+      parentName: primaryParent?.fullName?.trim() || student.parentName,
+      parentPhone: primaryParent?.phone?.trim() || student.parentPhone,
       faceImage: student.faceImage,
     };
     this.error.set('');
@@ -274,6 +326,15 @@ export class StudentsComponent {
     const parentPhone = this.form.parentPhone.trim();
     const faceImage = this.form.faceImage.trim() || this.editingStudent?.faceImage?.trim() || '';
     const age = Number(this.form.age);
+    const secondaryParentUserIds = this.form.secondaryParentUserIds
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+      .filter((id, index, all) => all.indexOf(id) === index)
+      .filter((id) => id !== this.form.parentUserId);
+    const linkedParentUserIds = [this.form.parentUserId, ...secondaryParentUserIds]
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+      .filter((id, index, all) => all.indexOf(id) === index);
 
     if (!studentCode) {
       this.error.set('Vui long nhap ma hoc sinh');
@@ -303,6 +364,10 @@ export class StudentsComponent {
       this.error.set('Vui long tai anh nhan dien');
       return;
     }
+    if (this.form.parentUserId && secondaryParentUserIds.includes(this.form.parentUserId)) {
+      this.error.set('Phu huynh phu khong duoc trung phu huynh chinh');
+      return;
+    }
 
     const payload: any = {
       studentCode,
@@ -315,6 +380,9 @@ export class StudentsComponent {
 
     if (this.form.parentUserId) {
       payload.parentUserId = this.form.parentUserId;
+    }
+    if (linkedParentUserIds.length) {
+      payload.parentUserIds = linkedParentUserIds;
     }
     if (this.form.studentBirthMonth) {
       payload.studentBirthMonth = Number(this.form.studentBirthMonth);
@@ -376,9 +444,135 @@ export class StudentsComponent {
       studentBirthMonth: null,
       parentBirthMonth: null,
       parentUserId: '',
+      secondaryParentUserIds: [],
       parentName: '',
       parentPhone: '',
       faceImage: '',
     };
+  }
+
+  parentPrimaryLabel(student: StudentItem): string {
+    const primary = this.getPrimaryParent(student);
+    return primary?.fullName?.trim() || student.parentName || '-';
+  }
+
+  parentPrimaryPhone(student: StudentItem): string {
+    const primary = this.getPrimaryParent(student);
+    return primary?.phone?.trim() || student.parentPhone || '-';
+  }
+
+  parentSecondaryLabels(student: StudentItem): string[] {
+    return this.getSecondaryParents(student).map((parent) => this.formatParentLabel(parent));
+  }
+
+  parentSecondaryPhones(student: StudentItem): string[] {
+    return this.getSecondaryParents(student)
+      .map((parent) => parent.phone?.trim())
+      .filter((phone): phone is string => !!phone);
+  }
+
+  private getPrimaryParent(student: StudentItem): StudentParentLink | null {
+    const parents = this.getStudentParents(student);
+    if (!parents.length) return null;
+    const primaryId = student.parentUserId || '';
+    return parents.find((parent) => parent._id === primaryId) || parents[0];
+  }
+
+  private getSecondaryParents(student: StudentItem): StudentParentLink[] {
+    const parents = this.getStudentParents(student);
+    const primary = this.getPrimaryParent(student);
+    const primaryId = primary?._id || student.parentUserId || '';
+    return parents.filter((parent) => parent._id !== primaryId);
+  }
+
+  private getStudentParents(student: StudentItem): StudentParentLink[] {
+    const linkedParentIds = [
+      student.parentUserId,
+      ...(Array.isArray(student.parentUserIds) ? student.parentUserIds : []),
+      ...(Array.isArray(student.secondaryParentUserIds) ? student.secondaryParentUserIds : []),
+    ]
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+      .filter((id, index, all) => all.indexOf(id) === index);
+
+    const candidateById = new Map<string, StudentParentLink>();
+    const registerParent = (parent?: Partial<StudentParentLink> | null) => {
+      const parentId = String(parent?._id || '').trim();
+      if (!parentId || candidateById.has(parentId)) return;
+      candidateById.set(parentId, {
+        _id: parentId,
+        userCode: parent?.userCode?.trim(),
+        fullName: parent?.fullName?.trim() || '-',
+        phone: parent?.phone?.trim(),
+      });
+    };
+
+    for (const parent of this.parents()) {
+      if (!linkedParentIds.includes(parent._id)) continue;
+      registerParent(parent);
+    }
+    for (const parent of Array.isArray(student.parentUsers) ? student.parentUsers : []) {
+      registerParent(parent);
+    }
+    for (const parent of Array.isArray((student as any).linkedParents) ? (student as any).linkedParents : []) {
+      registerParent(parent);
+    }
+
+    if (student.parentUserId) {
+      registerParent({
+        _id: student.parentUserId,
+        fullName: student.parentName,
+        phone: student.parentPhone,
+      });
+    }
+
+    const orderedParents = linkedParentIds
+      .map((parentId) => {
+        if (candidateById.has(parentId)) {
+          return candidateById.get(parentId)!;
+        }
+        if (parentId === student.parentUserId) {
+          return {
+            _id: parentId,
+            fullName: student.parentName || '-',
+            phone: student.parentPhone || '',
+          } as StudentParentLink;
+        }
+        return null;
+      })
+      .filter((parent): parent is StudentParentLink => !!parent);
+
+    if (orderedParents.length) {
+      return orderedParents;
+    }
+
+    return student.parentUserId
+      ? [
+          {
+            _id: student.parentUserId,
+            userCode: '',
+            fullName: student.parentName || '-',
+            phone: student.parentPhone || '',
+          },
+        ]
+      : [];
+  }
+
+  private getSecondaryParentUserIds(student: StudentItem): string[] {
+    const ids = [
+      ...(Array.isArray(student.secondaryParentUserIds) ? student.secondaryParentUserIds : []),
+      ...(Array.isArray(student.parentUserIds) ? student.parentUserIds : []),
+    ]
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+
+    const primaryId = student.parentUserId || '';
+    return ids.filter((id, index, all) => id !== primaryId && all.indexOf(id) === index);
+  }
+
+  private formatParentLabel(parent: StudentParentLink): string {
+    const code = parent.userCode?.trim();
+    const name = parent.fullName?.trim() || '-';
+    return code ? `${code} - ${name}` : name;
   }
 }

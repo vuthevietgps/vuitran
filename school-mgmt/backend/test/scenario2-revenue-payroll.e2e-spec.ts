@@ -1,3 +1,4 @@
+import { closeE2eResources } from './e2e-cleanup';
 /**
  * KỊCH BẢN E2E SỐ 2: Revenue Consumption & Payroll Generation
  *
@@ -339,8 +340,7 @@ describe('Scenario 2: Revenue Consumption & Payroll Generation (e2e)', () => {
   }, 180_000);
 
   afterAll(async () => {
-    await app.close();
-    await replSet.stop();
+    await closeE2eResources({ app, moduleRef, mongoReplSet: replSet });
   });
 
   // ─────────────────────────────────────────────────────────────────────────

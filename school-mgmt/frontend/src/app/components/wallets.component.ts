@@ -28,6 +28,7 @@ interface BankAccountOption {
     </div>
     <div class="header-actions">
       <button class="primary" (click)="openTopUp()" *ngIf="canManage()">+ Nạp tiền</button>
+      <button class="secondary" (click)="openAdjust()" *ngIf="canAdjust()" data-testid="wallet-adjust-open-header">± Điều chỉnh</button>
       <button class="secondary" (click)="openTransfer()" *ngIf="canTransfer()">↔ Chuyển tiền</button>
       <button class="ghost" (click)="openPending()" *ngIf="canApprove()">⏳ Chờ duyệt ({{pendingCount()}})</button>
     </div>
@@ -78,6 +79,7 @@ interface BankAccountOption {
           <td class="actions-cell">
             <button class="ghost sm" (click)="viewWalletLedger(w)">📋</button>
             <button class="ghost sm" (click)="topUpForUser(w)" *ngIf="canManage()">💵 Nạp</button>
+            <button class="ghost sm" (click)="openAdjust(w)" *ngIf="canAdjust()" data-testid="wallet-adjust-button">± Điều chỉnh</button>
           </td>
         </tr>
       </tbody>
@@ -117,12 +119,17 @@ interface BankAccountOption {
         <tr *ngFor="let e of ledgerEntries()">
           <td>{{e.createdAt | date:'dd/MM/yyyy HH:mm'}}</td>
           <td><span class="chip" [class]="'chip-' + e.type.toLowerCase()">{{typeLabel(e.type)}}</span></td>
-          <td class="number" [class.positive]="isCredit(e.type)" [class.negative]="!isCredit(e.type)">
-            {{isCredit(e.type) ? '+' : '-'}}{{formatCurrency(e.amount)}}
+          <td class="number" [class.positive]="isCreditEntry(e)" [class.negative]="!isCreditEntry(e)">
+            {{signedAmount(e)}}
           </td>
           <td class="number">{{formatCurrency(e.balanceBefore)}}</td>
           <td class="number">{{formatCurrency(e.balanceAfter)}}</td>
-          <td>{{e.description || '—'}}</td>
+          <td>
+            <div>{{e.description || '—'}}</div>
+             <div class="muted-inline" *ngIf="e.type === 'ADJUSTMENT' && adjustmentReason(e)" data-testid="wallet-ledger-adjustment-reason">
+               Lý do: {{adjustmentReason(e)}}
+             </div>
+          </td>
           <td><span class="badge badge-active">{{e.status}}</span></td>
         </tr>
       </tbody>
@@ -161,11 +168,16 @@ interface BankAccountOption {
         <tr *ngFor="let e of myLedger()">
           <td>{{e.createdAt | date:'dd/MM/yyyy HH:mm'}}</td>
           <td><span class="chip" [class]="'chip-' + e.type.toLowerCase()">{{typeLabel(e.type)}}</span></td>
-          <td class="number" [class.positive]="isCredit(e.type)" [class.negative]="!isCredit(e.type)">
-            {{isCredit(e.type) ? '+' : '-'}}{{formatCurrency(e.amount)}}
+          <td class="number" [class.positive]="isCreditEntry(e)" [class.negative]="!isCreditEntry(e)">
+            {{signedAmount(e)}}
           </td>
           <td class="number">{{formatCurrency(e.balanceAfter)}}</td>
-          <td>{{e.description || '—'}}</td>
+          <td>
+            <div>{{e.description || '—'}}</div>
+             <div class="muted-inline" *ngIf="e.type === 'ADJUSTMENT' && adjustmentReason(e)" data-testid="wallet-ledger-adjustment-reason">
+               Lý do: {{adjustmentReason(e)}}
+             </div>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -230,6 +242,56 @@ interface BankAccountOption {
         <div class="modal-actions">
           <button type="button" class="ghost" (click)="showTransferModal.set(false)">Hủy</button>
           <button type="submit" class="primary">Chuyển tiền</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Adjust modal -->
+  <div class="modal-backdrop" *ngIf="showAdjustModal()">
+    <div class="modal" data-testid="wallet-adjust-modal">
+      <h3>Điều chỉnh ví</h3>
+      <p class="hint">Nhập lý do bắt buộc, sau đó kiểm tra phần xem trước trước khi gửi.</p>
+      <form (ngSubmit)="submitAdjust()">
+        <label>User ID
+          <input [(ngModel)]="adjustForm.userId" name="adjustUserId" required (ngModelChange)="syncAdjustPreview()" data-testid="wallet-adjust-user-id" />
+        </label>
+        <label>Người dùng
+          <input [ngModel]="adjustTargetLabel()" name="adjustTargetLabel" readonly />
+        </label>
+        <label>Số tiền (VNĐ)
+          <input type="number" [(ngModel)]="adjustForm.amount" name="adjustAmount" required min="1000" step="1000" (ngModelChange)="syncAdjustPreview()" data-testid="wallet-adjust-amount" />
+        </label>
+        <label>Chiều điều chỉnh
+          <select [(ngModel)]="adjustForm.direction" name="adjustDirection" required (ngModelChange)="syncAdjustPreview()" data-testid="wallet-adjust-direction">
+            <option value="ADD">Cộng vào ví</option>
+            <option value="SUBTRACT">Trừ khỏi ví</option>
+          </select>
+        </label>
+        <label>Mô tả
+          <textarea [(ngModel)]="adjustForm.description" name="adjustDescription" rows="2" (ngModelChange)="syncAdjustPreview()" data-testid="wallet-adjust-description"></textarea>
+        </label>
+        <label>Lý do điều chỉnh
+          <textarea
+            [(ngModel)]="adjustForm.reason"
+            name="adjustReason"
+            rows="2"
+            [class.input-error]="adjustReasonError()"
+            (blur)="adjustReasonTouched = true"
+            (ngModelChange)="syncAdjustPreview()"
+            data-testid="wallet-adjust-reason"
+          ></textarea>
+          <div class="field-error" *ngIf="adjustReasonError()" data-testid="wallet-adjust-reason-error">{{adjustReasonError()}}</div>
+        </label>
+        <div class="preview-box" data-testid="wallet-adjust-preview">
+          <div><span>Trước điều chỉnh:</span><strong data-testid="wallet-adjust-preview-before">{{formatCurrency(adjustPreview.before)}}</strong></div>
+          <div><span>Thay đổi:</span><strong [class.positive]="adjustPreview.delta >= 0" [class.negative]="adjustPreview.delta < 0" data-testid="wallet-adjust-preview-delta">{{adjustPreview.delta >= 0 ? '+' : '-'}}{{formatCurrency(abs(adjustPreview.delta))}}</strong></div>
+          <div><span>Sau điều chỉnh:</span><strong data-testid="wallet-adjust-preview-after">{{formatCurrency(adjustPreview.after)}}</strong></div>
+          <div><span>Lý do ghi nhận:</span><strong data-testid="wallet-adjust-preview-reason">{{adjustPreview.reason || '—'}}</strong></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost" (click)="closeAdjustModal()">Hủy</button>
+          <button type="submit" class="primary" data-testid="wallet-adjust-submit">Gửi điều chỉnh</button>
         </div>
       </form>
     </div>
@@ -376,6 +438,11 @@ interface BankAccountOption {
     .actions-cell button { margin-right:4px; }
     .ads-cell strong { display:block; color:#1e293b; }
     .muted-inline { color:#64748b; font-size:12px; margin-top:2px; }
+    .field-error { color:#dc2626; font-size:12px; margin-top:4px; }
+    .input-error { border-color:#dc2626 !important; box-shadow:0 0 0 1px rgba(220,38,38,.15); }
+    .preview-box { background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px; margin-top:10px; display:grid; gap:8px; }
+    .preview-box > div { display:flex; justify-content:space-between; gap:12px; font-size:13px; }
+    .preview-box span { color:#64748b; }
 
     .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
     .badge-active { background:#dcfce7; color:#166534; }
@@ -432,6 +499,7 @@ export class WalletsComponent implements OnInit {
   pendingCount = signal(0);
 
   showTopUpModal = signal(false);
+  showAdjustModal = signal(false);
   showTransferModal = signal(false);
   showPendingModal = signal(false);
   showApproveModal = signal(false);
@@ -441,6 +509,8 @@ export class WalletsComponent implements OnInit {
   activeTab: 'wallets' | 'ledger' | 'myWallet' = 'wallets';
 
   ledgerFilter: any = { type: '', fromDate: '', toDate: '' };
+  adjustReasonTouched = false;
+  adjustPreview = { before: 0, delta: 0, after: 0, reason: '' };
 
   topUpForm = {
     userId: '',
@@ -459,6 +529,7 @@ export class WalletsComponent implements OnInit {
   };
   transferForm = { fromUserId: '', toUserId: '', amount: 0, description: '' };
   approveForm = { bankStatementRef: '', accountingNotes: '', bankAccountId: '' };
+  adjustForm = { userId: '', amount: 0, direction: 'ADD' as 'ADD' | 'SUBTRACT', description: '', reason: '' };
 
   constructor(auth: AuthService) {
     this.auth = auth;
@@ -579,20 +650,148 @@ export class WalletsComponent implements OnInit {
     this.showTransferModal.set(true);
   }
 
+  adjustmentReason(entry: LedgerItem | null | undefined): string {
+    return String(entry?.adjustmentReason || '').trim();
+  }
+
   async submitTransfer(): Promise<void> {
     if (!this.canTransfer()) return;
-    const ok = await this.walletSvc.transfer(
-      this.transferForm.fromUserId,
-      this.transferForm.toUserId,
-      this.transferForm.amount,
-      this.transferForm.description,
-    );
-    if (ok) {
+    const fromUserId = String(this.transferForm.fromUserId || '').trim();
+    const toUserId = String(this.transferForm.toUserId || '').trim();
+    const amount = Number(this.transferForm.amount || 0);
+    const description = String(this.transferForm.description || '').trim();
+
+    if (!fromUserId || !toUserId) {
+      alert('Vui long nhap day du vi nguon va vi dich.');
+      return;
+    }
+    if (fromUserId === toUserId) {
+      alert('Khong the chuyen cho chinh minh');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 1000) {
+      alert('So tien chuyen toi thieu 1.000d.');
+      return;
+    }
+
+    try {
+      const ok = await this.walletSvc.transfer(
+        fromUserId,
+        toUserId,
+        amount,
+        description || undefined,
+      );
+      if (!ok) {
+        alert('Loi khi chuyen tien.');
+        return;
+      }
+
       this.showTransferModal.set(false);
-      this.loadWallets();
-      alert('Chuyển tiền thành công!');
-    } else {
-      alert('Lỗi khi chuyển tiền.');
+      await this.loadWallets();
+      alert('Chuyen tien thanh cong!');
+    } catch (error: any) {
+      alert(
+        String(
+          error?.error?.message
+          || error?.message
+          || 'Loi khi chuyen tien.',
+        ),
+      );
+    }
+  }
+
+  openAdjust(wallet?: WalletItem): void {
+    if (!this.canAdjust()) return;
+    this.adjustForm = {
+      userId: wallet?.userId?._id || '',
+      amount: 0,
+      direction: 'ADD',
+      description: '',
+      reason: '',
+    };
+    this.adjustReasonTouched = false;
+    this.syncAdjustPreview();
+    this.showAdjustModal.set(true);
+  }
+
+  closeAdjustModal(): void {
+    this.showAdjustModal.set(false);
+    this.adjustReasonTouched = false;
+  }
+
+  adjustTargetLabel(): string {
+    const wallet = this.wallets().find((w) => w.userId?._id === this.adjustForm.userId);
+    return wallet?.userId?.fullName || wallet?.userId?.email || '—';
+  }
+
+  syncAdjustPreview(): void {
+    const wallet = this.wallets().find((w) => w.userId?._id === this.adjustForm.userId);
+    const before = Number(wallet?.balance || 0);
+    const amount = Number(this.adjustForm.amount || 0);
+    const delta = this.adjustForm.direction === 'SUBTRACT' ? -Math.abs(amount) : Math.abs(amount);
+    this.adjustPreview = {
+      before,
+      delta,
+      after: before + delta,
+      reason: String(this.adjustForm.reason || '').trim(),
+    };
+  }
+
+  adjustReasonError(): string {
+    const reason = String(this.adjustForm.reason || '').trim();
+    if (!this.adjustReasonTouched && reason) return '';
+    if (!this.adjustReasonTouched && !reason) return '';
+    if (!reason) return 'Lý do điều chỉnh là bắt buộc.';
+    return '';
+  }
+
+  async submitAdjust(): Promise<void> {
+    if (!this.canAdjust()) return;
+    this.adjustReasonTouched = true;
+    this.syncAdjustPreview();
+
+    const userId = String(this.adjustForm.userId || '').trim();
+    const amount = Number(this.adjustForm.amount || 0);
+    const description = String(this.adjustForm.description || '').trim();
+    const reason = String(this.adjustForm.reason || '').trim();
+
+    if (!userId) {
+      alert('Vui long chon user can dieu chinh.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount < 1000) {
+      alert('So tien dieu chinh toi thieu 1.000d.');
+      return;
+    }
+    if (!reason) {
+      return;
+    }
+    if (!description) {
+      alert('Vui long nhap mo ta dieu chinh.');
+      return;
+    }
+
+    try {
+      const ok = await this.walletSvc.adjustWallet({
+        userId,
+        amount,
+        direction: this.adjustForm.direction,
+        description,
+        reason,
+        adjustmentType: 'MANUAL_ADJUST',
+      });
+      if (!ok) {
+        alert('Loi khi dieu chinh vi.');
+        return;
+      }
+
+      this.closeAdjustModal();
+      await this.loadWallets();
+      this.activeTab = 'ledger';
+      this.ledgerFilter.type = 'ADJUSTMENT';
+      await this.loadLedger();
+    } catch (error: any) {
+      alert(String(error?.error?.message || error?.message || 'Loi khi dieu chinh vi.'));
     }
   }
 
@@ -738,6 +937,10 @@ export class WalletsComponent implements OnInit {
     return (n || 0).toLocaleString('vi-VN') + ' ₫';
   }
 
+  abs(n: number): number {
+    return Math.abs(n || 0);
+  }
+
   resolveAssetUrl(url: string): string {
     if (!url) return '';
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:image/')) {
@@ -760,8 +963,24 @@ export class WalletsComponent implements OnInit {
     return map[type] || type;
   }
 
-  isCredit(type: string): boolean {
-    return ['TOP_UP', 'REFUND', 'TRANSFER_IN', 'ADJUSTMENT_CREDIT'].includes(type);
+  isCreditEntry(entry: Pick<LedgerItem, 'type' | 'balanceBefore' | 'balanceAfter'> | null | undefined): boolean {
+    if (!entry) return false;
+
+    if (['TOP_UP', 'REFUND', 'TRANSFER_IN', 'BONUS'].includes(entry.type)) {
+      return true;
+    }
+
+    if (['SESSION_DEDUCT', 'TEACHER_PAYOUT', 'TRANSFER_OUT'].includes(entry.type)) {
+      return false;
+    }
+
+    // Manual adjustments use the same transaction type for both add and subtract.
+    return Number(entry.balanceAfter || 0) >= Number(entry.balanceBefore || 0);
+  }
+
+  signedAmount(entry: Pick<LedgerItem, 'type' | 'amount' | 'balanceBefore' | 'balanceAfter'> | null | undefined): string {
+    const sign = this.isCreditEntry(entry) ? '+' : '-';
+    return `${sign}${this.formatCurrency(entry?.amount || 0)}`;
   }
 
   walletAdsTitle(wallet: WalletItem): string {
@@ -812,6 +1031,11 @@ export class WalletsComponent implements OnInit {
   }
 
   canTransfer(): boolean {
+    const r = this.auth.userSignal()?.role;
+    return r === 'DIRECTOR' || r === 'ACCOUNTING';
+  }
+
+  canAdjust(): boolean {
     const r = this.auth.userSignal()?.role;
     return r === 'DIRECTOR' || r === 'ACCOUNTING';
   }

@@ -1,0 +1,365 @@
+  <!-- ═══════════ LIST VIEW ═══════════ -->
+  <div *ngIf="!selectedTicket()" class="tickets-page" data-testid="tickets-page">
+    <header class="page-header">
+      <div>
+        <h2>Hỗ trợ &amp; Ticket</h2>
+        <p>Quản lý yêu cầu hỗ trợ, khiếu nại và theo dõi trạng thái xử lý.</p>
+      </div>
+      <button class="primary" (click)="openCreateModal()">+ Tạo Ticket</button>
+    </header>
+
+  <app-flow-guide featureKey="tickets"></app-flow-guide>
+
+    <!-- Stats -->
+    <div class="stats-bar" *ngIf="isOpsOrDirector() && serverStats()" data-testid="tickets-stats-bar">
+      <div class="stat-card" data-testid="tickets-stat-open">
+        <span class="stat-value">{{ getStatCount('OPEN') }}</span>
+        <span class="stat-label">Mới tạo</span>
+      </div>
+      <div class="stat-card warning" data-testid="tickets-stat-in-progress">
+        <span class="stat-value">{{ getStatCount('IN_PROGRESS') }}</span>
+        <span class="stat-label">Đang xử lý</span>
+      </div>
+      <div class="stat-card info" data-testid="tickets-stat-waiting-info">
+        <span class="stat-value">{{ getStatCount('WAITING_INFO') }}</span>
+        <span class="stat-label">Chờ thông tin</span>
+      </div>
+      <div class="stat-card success" data-testid="tickets-stat-resolved">
+        <span class="stat-value">{{ getStatCount('RESOLVED') + getStatCount('CLOSED') }}</span>
+        <span class="stat-label">Đã giải quyết</span>
+      </div>
+      <div class="stat-card danger" *ngIf="serverStats()!.overdueCount > 0" data-testid="tickets-stat-overdue">
+        <span class="stat-value">{{ serverStats()!.overdueCount }}</span>
+        <span class="stat-label">Quá hạn</span>
+      </div>
+    </div>
+
+    <!-- Tabs for OPS -->
+    <div class="tabs" *ngIf="isStaff()" data-testid="tickets-tabs">
+      <button [class.active]="activeTab === 'all'" (click)="switchTab('all')" data-testid="tickets-tab-all">Tất cả</button>
+      <button [class.active]="activeTab === 'assigned'" (click)="switchTab('assigned')" *ngIf="isOps()" data-testid="tickets-tab-assigned">Được giao cho tôi</button>
+      <button [class.active]="activeTab === 'my'" (click)="switchTab('my')" data-testid="tickets-tab-my">Tôi tạo</button>
+    </div>
+
+    <!-- Filters -->
+    <div class="filters" data-testid="tickets-filters">
+      <select [(ngModel)]="filter.status" (change)="load()" data-testid="tickets-filter-status">
+        <option value="">Mọi trạng thái</option>
+        <option *ngFor="let s of statusOptions" [value]="s.value">{{ s.label }}</option>
+      </select>
+      <select [(ngModel)]="filter.type" (change)="load()" data-testid="tickets-filter-type">
+        <option value="">Mọi loại</option>
+        <option *ngFor="let t of typeOptions" [value]="t.value">{{ t.label }}</option>
+      </select>
+      <select [(ngModel)]="filter.priority" (change)="load()" *ngIf="isStaff()" data-testid="tickets-filter-priority">
+        <option value="">Mọi mức ưu tiên</option>
+        <option *ngFor="let p of priorityOptions" [value]="p.value">{{ p.label }}</option>
+      </select>
+      <input type="text" [ngModel]="searchKeyword()" (ngModelChange)="searchKeyword.set($event)" placeholder="Tìm mã ticket, tiêu đề..." class="search-input" data-testid="tickets-search-input" />
+      <span class="filter-chip danger" *ngIf="filter.overdue" data-testid="tickets-filter-overdue-chip">Đang lọc: quá hạn</span>
+    </div>
+
+    <!-- Ticket List -->
+    <div *ngIf="loading()" class="loading-bar">Đang tải...</div>
+    <div class="ticket-list" *ngIf="!loading() && filteredTickets().length; else emptyState" data-testid="tickets-list">
+      <div class="ticket-card" *ngFor="let t of filteredTickets()" (click)="viewTicket(t)" [class.overdue]="t.isOverdue" data-testid="ticket-card">
+        <div class="ticket-card-header">
+          <span class="ticket-code" data-testid="ticket-code">{{ t.ticketCode }}</span>
+          <span class="badge priority" [class]="'priority-' + t.priority.toLowerCase()">{{ priorityLabel(t.priority) }}</span>
+          <span class="badge status" [class]="'status-' + t.status.toLowerCase()">{{ statusLabel(t.status) }}</span>
+          <span class="overdue-tag" *ngIf="t.isOverdue" data-testid="ticket-overdue-tag">QUÁ HẠN</span>
+        </div>
+        <div class="ticket-card-body">
+          <h4 class="ticket-subject">{{ t.subject }}</h4>
+          <p class="ticket-meta">
+            <span class="type-tag">{{ typeLabel(t.type) }}</span>
+            <span class="separator">·</span>
+            <span>{{ t.createdBy.fullName || 'N/A' }}</span>
+            <span class="role-badge">{{ roleLabel(t.createdByRole) }}</span>
+            <span class="separator">·</span>
+            <span>{{ formatDate(t.createdAt) }}</span>
+          </p>
+          <p class="ticket-desc">{{ truncate(t.description, 120) }}</p>
+        </div>
+        <div class="ticket-card-footer">
+          <span *ngIf="t.assignedTo" class="assigned-to">
+            Xử lý: <strong>{{ t.assignedTo.fullName }}</strong>
+          </span>
+          <span *ngIf="!t.assignedTo && isStaff()" class="unassigned">Chưa phân công</span>
+          <span *ngIf="t.classId" class="ref-badge">{{ t.classId.code || t.classId.name }}</span>
+        </div>
+      </div>
+    </div>
+    <ng-template #emptyState>
+      <div class="empty-state" *ngIf="!loading()">
+        <p>Không có ticket nào{{ filter.status || filter.type ? ' phù hợp với bộ lọc' : '' }}.</p>
+        <button class="primary" (click)="openCreateModal()">Tạo ticket mới</button>
+      </div>
+    </ng-template>
+
+    <!-- Pagination -->
+    <div class="pagination" *ngIf="totalPages() > 1">
+      <button (click)="goPage(currentPage() - 1)" [disabled]="currentPage() <= 1">&laquo; Trước</button>
+      <span>Trang {{ currentPage() }} / {{ totalPages() }}</span>
+      <button (click)="goPage(currentPage() + 1)" [disabled]="currentPage() >= totalPages()">Sau &raquo;</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ DETAIL VIEW ═══════════ -->
+  <div *ngIf="selectedTicket()" class="ticket-detail-page">
+    <button class="back-btn" (click)="closeDetail()">&larr; Quay lại danh sách</button>
+
+    <div class="detail-layout">
+      <!-- Left: Ticket Info + Conversation -->
+      <div class="detail-main">
+        <!-- Header -->
+        <div class="detail-header">
+          <div class="detail-header-top">
+            <span class="ticket-code">{{ selectedTicket()!.ticketCode }}</span>
+            <span class="badge priority" [class]="'priority-' + selectedTicket()!.priority.toLowerCase()">{{ priorityLabel(selectedTicket()!.priority) }}</span>
+            <span class="badge status" [class]="'status-' + selectedTicket()!.status.toLowerCase()">{{ statusLabel(selectedTicket()!.status) }}</span>
+            <span class="overdue-tag" *ngIf="selectedTicket()!.isOverdue">QUÁ HẠN</span>
+          </div>
+          <h2 class="detail-subject">{{ selectedTicket()!.subject }}</h2>
+          <div class="detail-meta">
+            <span class="type-tag">{{ typeLabel(selectedTicket()!.type) }}</span>
+            <span class="separator">·</span>
+            <span>Tạo bởi: <strong>{{ selectedTicket()!.createdBy.fullName }}</strong> ({{ roleLabel(selectedTicket()!.createdByRole) }})</span>
+            <span class="separator">·</span>
+            <span>{{ formatDateTime(selectedTicket()!.createdAt) }}</span>
+          </div>
+          <div class="resolution-warning" *ngIf="requiresRefundLedgerBeforeClose()">
+            Chua lien ket giao dich hoan tien tren vi. Ke toan can tao LedgerEntry truoc khi dong ticket.
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="detail-description">
+          <h4>Mô tả</h4>
+          <p>{{ selectedTicket()!.description }}</p>
+          <div *ngIf="selectedTicket()!.attachments?.length" class="attachments">
+            <span *ngFor="let a of selectedTicket()!.attachments" class="attachment-link">📎 {{ getFileName(a) }}</span>
+          </div>
+        </div>
+
+        <!-- References -->
+        <div class="detail-refs" *ngIf="hasReferences()">
+          <h4>Thông tin liên quan</h4>
+          <div class="ref-grid">
+            <div *ngIf="selectedTicket()!.classId" class="ref-item">
+              <span class="ref-label">Lớp học:</span>
+              <span>{{ selectedTicket()!.classId.code }} - {{ selectedTicket()!.classId.name }}</span>
+            </div>
+            <div *ngIf="selectedTicket()!.studentId" class="ref-item">
+              <span class="ref-label">Học sinh:</span>
+              <span>{{ selectedTicket()!.studentId.fullName }} ({{ selectedTicket()!.studentId.studentCode }})</span>
+            </div>
+            <div *ngIf="selectedTicket()!.teacherId" class="ref-item">
+              <span class="ref-label">Giáo viên:</span>
+              <span>{{ selectedTicket()!.teacherId.fullName }}</span>
+            </div>
+            <div *ngIf="selectedTicket()!.sessionId" class="ref-item">
+              <span class="ref-label">Buổi học:</span>
+              <span>{{ formatDate(selectedTicket()!.sessionId.scheduledDate) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Resolution -->
+        <div class="detail-resolution" *ngIf="selectedTicket()!.resolution">
+          <h4>Kết quả xử lý</h4>
+          <div class="resolution-card" [class]="'outcome-' + selectedTicket()!.resolution!.outcome.toLowerCase()">
+            <div class="resolution-outcome">
+              <span class="outcome-badge">{{ outcomeLabel(selectedTicket()!.resolution!.outcome) }}</span>
+              <span *ngIf="selectedTicket()!.resolution!.refundAmount" class="refund-amount">
+                Hoàn tiền: {{ formatCurrency(selectedTicket()!.resolution!.refundAmount) }}
+              </span>
+            </div>
+            <p>{{ selectedTicket()!.resolution!.summary }}</p>
+            <small>Xử lý bởi: {{ selectedTicket()!.resolution!.resolvedBy?.fullName }} · {{ formatDateTime(selectedTicket()!.resolution!.resolvedAt) }}</small>
+          </div>
+        </div>
+
+        <!-- Conversation -->
+        <div class="conversation">
+          <h4>Trao đổi ({{ comments().length }})</h4>
+          <div class="comments-list">
+            <div *ngFor="let c of comments()" class="comment" [class.internal]="c.isInternal" [class.own]="c.userId._id === currentUserId()">
+              <div class="comment-header">
+                <strong>{{ c.userId.fullName }}</strong>
+                <span class="comment-role">{{ roleLabel(c.userId.role) }}</span>
+                <span *ngIf="c.isInternal" class="internal-badge">Nội bộ</span>
+                <span class="comment-time">{{ formatDateTime(c.createdAt) }}</span>
+              </div>
+              <div class="comment-body">{{ c.content }}</div>
+              <div *ngIf="c.attachments?.length" class="comment-attachments">
+                <span *ngFor="let a of c.attachments" class="attachment-link">📎 {{ getFileName(a) }}</span>
+              </div>
+            </div>
+            <div *ngIf="comments().length === 0" class="no-comments">Chưa có trao đổi nào.</div>
+          </div>
+
+          <!-- Reply box -->
+          <div class="reply-box" *ngIf="canComment()">
+            <textarea [(ngModel)]="newComment" placeholder="Nhập nội dung trả lời..." rows="3"></textarea>
+            <div class="reply-actions">
+                <label *ngIf="isOpsOrDirector()" class="internal-check">
+                <input type="checkbox" [(ngModel)]="newCommentInternal" />
+                Ghi chú nội bộ (PH/GV không thấy)
+              </label>
+              <button class="primary" (click)="submitComment()" [disabled]="!newComment.trim() || submittingComment()">
+                {{ submittingComment() ? 'Đang gửi...' : 'Gửi trả lời' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Actions Sidebar -->
+      <div class="detail-sidebar">
+        <h4>Hành động</h4>
+
+        <!-- Workflow actions for OPS/DIRECTOR -->
+        <div class="action-group" *ngIf="isOpsOrDirector()">
+          <button class="action-btn start" (click)="doAction('start')"
+            *ngIf="['OPEN','WAITING_INFO'].includes(selectedTicket()!.status)">
+            ▶ Nhận xử lý
+          </button>
+          <button class="action-btn info" (click)="doAction('request-info')"
+            *ngIf="['OPEN','IN_PROGRESS'].includes(selectedTicket()!.status)">
+            ❓ Yêu cầu thông tin
+          </button>
+          <button class="action-btn resolve" (click)="openResolveModal()"
+            *ngIf="!['RESOLVED','CLOSED','CANCELLED'].includes(selectedTicket()!.status)">
+            ✅ Giải quyết
+          </button>
+          <button class="action-btn close-ticket" (click)="doAction('close')"
+            *ngIf="selectedTicket()!.status === 'RESOLVED'">
+            🔒 Đóng ticket
+          </button>
+          <button class="action-btn reopen" (click)="doAction('reopen')"
+            *ngIf="['RESOLVED','CLOSED'].includes(selectedTicket()!.status)">
+            🔄 Mở lại
+          </button>
+        </div>
+
+        <!-- Cancel for creator -->
+        <div class="action-group" *ngIf="isCreator() && !['RESOLVED','CLOSED','CANCELLED'].includes(selectedTicket()!.status)">
+          <button class="action-btn cancel" (click)="doAction('cancel')">
+            ✕ Hủy ticket
+          </button>
+        </div>
+
+        <!-- Assign / Priority for staff -->
+        <div class="action-group" *ngIf="isOpsOrDirector() && !['RESOLVED','CLOSED','CANCELLED'].includes(selectedTicket()!.status)">
+          <h5>Ưu tiên</h5>
+          <select [(ngModel)]="editPriority" (change)="updatePriority()">
+            <option *ngFor="let p of priorityOptions" [value]="p.value">{{ p.label }}</option>
+          </select>
+        </div>
+
+        <div class="action-group" *ngIf="canOpenSourceConversation()">
+          <h5>Chat hỗ trợ</h5>
+          <button class="action-btn chat-link" (click)="openSourceConversation()">
+            Mở hội thoại gốc
+          </button>
+        </div>
+
+        <!-- Info -->
+        <div class="sidebar-info">
+          <h5>Thông tin</h5>
+          <div class="info-row">
+            <span class="info-label">Trạng thái:</span>
+            <span class="badge status" [class]="'status-' + selectedTicket()!.status.toLowerCase()">{{ statusLabel(selectedTicket()!.status) }}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Mức ưu tiên:</span>
+            <span class="badge priority" [class]="'priority-' + selectedTicket()!.priority.toLowerCase()">{{ priorityLabel(selectedTicket()!.priority) }}</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Hạn xử lý:</span>
+            <span [class.overdue-text]="selectedTicket()!.isOverdue">{{ selectedTicket()!.dueDate ? formatDateTime(selectedTicket()!.dueDate!) : '—' }}</span>
+          </div>
+          <div class="info-row" *ngIf="selectedTicket()!.assignedTo">
+            <span class="info-label">Phụ trách:</span>
+            <span>{{ selectedTicket()!.assignedTo!.fullName }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ CREATE MODAL ═══════════ -->
+  <div class="modal-backdrop" *ngIf="showCreateModal()" (click)="closeCreateModal()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h3>Tạo Ticket mới</h3>
+        <button class="close-btn" (click)="closeCreateModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Loại yêu cầu *</label>
+          <select [(ngModel)]="createForm.type">
+            <option value="">-- Chọn loại --</option>
+            <option *ngFor="let t of typeOptions" [value]="t.value">{{ t.label }}</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tiêu đề *</label>
+          <input type="text" [(ngModel)]="createForm.subject" placeholder="Nhập tiêu đề ticket..." />
+        </div>
+        <div class="form-group">
+          <label>Mô tả chi tiết *</label>
+          <textarea [(ngModel)]="createForm.description" rows="5" placeholder="Mô tả vấn đề cần hỗ trợ..."></textarea>
+        </div>
+        <div class="form-group" *ngIf="isStaff()">
+          <label>Mức ưu tiên</label>
+          <select [(ngModel)]="createForm.priority">
+            <option *ngFor="let p of priorityOptions" [value]="p.value">{{ p.label }}</option>
+          </select>
+        </div>
+        <div class="form-error" *ngIf="createError()">{{ createError() }}</div>
+      </div>
+      <div class="modal-footer">
+        <button class="ghost" (click)="closeCreateModal()">Hủy</button>
+        <button class="primary" (click)="submitCreate()" [disabled]="creating()">
+          {{ creating() ? 'Đang tạo...' : 'Tạo Ticket' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ RESOLVE MODAL ═══════════ -->
+  <div class="modal-backdrop" *ngIf="showResolveModal()" (click)="closeResolveModal()">
+    <div class="modal" (click)="$event.stopPropagation()">
+      <div class="modal-header">
+        <h3>Giải quyết Ticket</h3>
+        <button class="close-btn" (click)="closeResolveModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Kết quả *</label>
+          <select [(ngModel)]="resolveForm.outcome">
+            <option value="APPROVED">Chấp thuận</option>
+            <option value="REJECTED">Từ chối</option>
+            <option value="PARTIAL">Chấp thuận một phần</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Tóm tắt kết quả *</label>
+          <textarea [(ngModel)]="resolveForm.summary" rows="4" placeholder="Mô tả kết quả xử lý..."></textarea>
+        </div>
+        <div class="form-group" *ngIf="resolveForm.outcome === 'APPROVED' || resolveForm.outcome === 'PARTIAL'">
+          <label>Số tiền hoàn (nếu có)</label>
+          <input type="number" [(ngModel)]="resolveForm.refundAmount" min="0" placeholder="0" />
+        </div>
+        <div class="form-error" *ngIf="resolveError()">{{ resolveError() }}</div>
+      </div>
+      <div class="modal-footer">
+        <button class="ghost" (click)="closeResolveModal()">Hủy</button>
+        <button class="primary" (click)="submitResolve()" [disabled]="resolving()">
+          {{ resolving() ? 'Đang xử lý...' : 'Xác nhận' }}
+        </button>
+      </div>
+    </div>
+  </div>

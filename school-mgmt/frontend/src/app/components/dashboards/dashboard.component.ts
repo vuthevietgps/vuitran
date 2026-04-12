@@ -45,18 +45,18 @@ const HANDBOOK_BANNERS: Record<string, HandbookBanner> = {
   template: `
     <app-flow-guide featureKey="dashboard"></app-flow-guide>
 
-    <section class="handbook-banner" *ngIf="handbookBanner">
+    <section class="handbook-banner" *ngIf="handbookBanner" data-testid="dashboard-handbook-banner">
       <div>
         <p class="eyebrow">Cam nang noi bo</p>
         <h3>{{ handbookBanner.title }}</h3>
         <p>{{ handbookBanner.summary }}</p>
       </div>
-      <a routerLink="/app/internal-handbook" class="handbook-link">Mo cam nang</a>
+      <a routerLink="/app/internal-handbook" class="handbook-link" data-testid="dashboard-handbook-link">Mo cam nang</a>
     </section>
 
     <app-daily-task-tabs *ngIf="role"></app-daily-task-tabs>
 
-    <section class="dashboard-loader" *ngIf="loading">
+    <section class="dashboard-loader" *ngIf="loading" data-testid="dashboard-loader">
       <div class="loader-top">
         <div class="loader-title shimmer"></div>
         <div class="loader-pill shimmer"></div>
@@ -70,13 +70,13 @@ const HANDBOOK_BANNERS: Record<string, HandbookBanner> = {
       <ng-container *ngComponentOutlet="activeDashboardComponent"></ng-container>
     </ng-container>
 
-    <section *ngIf="error" class="dashboard-error">
+    <section *ngIf="error" class="dashboard-error" data-testid="dashboard-error">
       <h3>Khong the tai dashboard</h3>
       <p>{{ error }}</p>
-      <button type="button" class="retry-btn" (click)="loadDashboardComponent()">Thu tai lai</button>
+      <button type="button" class="retry-btn" (click)="loadDashboardComponent()" data-testid="dashboard-retry">Thu tai lai</button>
     </section>
 
-    <div *ngIf="!role" class="no-role">
+    <div *ngIf="!role" class="no-role" data-testid="dashboard-no-role">
       <p>Khong xac dinh duoc vai tro. Vui long dang nhap lai.</p>
     </div>
   `,
@@ -238,6 +238,8 @@ export class DashboardComponent implements OnInit {
     this.error = '';
 
     try {
+      await this.applyTestDelayIfNeeded();
+      this.throwTestErrorIfNeeded();
       this.activeDashboardComponent = await this.resolveDashboardComponent(this.role);
     } catch (err) {
       this.activeDashboardComponent = null;
@@ -265,8 +267,28 @@ export class DashboardComponent implements OnInit {
         return (await import('../sale-dashboard.component')).SaleDashboardComponent;
       case Role.ADSMANAGER:
         return (await import('./ads-manager-dashboard.component')).AdsManagerDashboardComponent;
+      case Role.SHAREHOLDER:
+        return (await import('./investor-dashboard.component')).InvestorDashboardComponent;
       default:
         return null;
+    }
+  }
+
+  private async applyTestDelayIfNeeded(): Promise<void> {
+    const scope = globalThis as typeof globalThis & { __dashboardTestDelayMs?: unknown };
+    const delay = Number(scope.__dashboardTestDelayMs || 0);
+
+    if (!Number.isFinite(delay) || delay <= 0) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  private throwTestErrorIfNeeded(): void {
+    const scope = globalThis as typeof globalThis & { __dashboardTestForceError?: unknown };
+    if (scope.__dashboardTestForceError) {
+      throw new Error('Dashboard forced error for UI test.');
     }
   }
 }

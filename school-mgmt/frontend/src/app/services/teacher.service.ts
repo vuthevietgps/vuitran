@@ -209,6 +209,22 @@ export class TeacherService {
     );
   }
 
+  async activate(id: string): Promise<TeacherProfile> {
+    return firstValueFrom(
+      this.http.post<TeacherProfile>(`${this.base}/${id}/activate`, {}, { withCredentials: true }),
+    );
+  }
+
+  async suspend(id: string, reason?: string): Promise<TeacherProfile> {
+    return firstValueFrom(
+      this.http.post<TeacherProfile>(
+        `${this.base}/${id}/suspend`,
+        reason ? { reason } : {},
+        { withCredentials: true },
+      ),
+    );
+  }
+
   // ── Teaching Materials ──────────────────────────────────────
 
   /** Lấy danh sách tài liệu */

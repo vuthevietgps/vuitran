@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AttendanceService } from './attendance.service';
+import { AttendanceSessionBridgeService } from './attendance-session-bridge.service';
+import { AttendanceQueryService } from './attendance-query.service';
+import { AttendanceLinkService } from './attendance-link.service';
 import { AttendanceController, PublicAttendanceController } from './attendance.controller';
 import { Attendance, AttendanceSchema } from './schemas/attendance.schema';
 import { ClassesModule } from '../classes/classes.module';
@@ -10,6 +13,7 @@ import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
 import { TrialEnrollment, TrialEnrollmentSchema } from '../trial-enrollments/schemas/trial-enrollment.schema';
 import { Wallet, WalletSchema } from '../wallets/schemas/wallet.schema';
+import { StorageUrlService } from '../common/storage-url.service';
 
 @Module({
   imports: [
@@ -25,7 +29,13 @@ import { Wallet, WalletSchema } from '../wallets/schemas/wallet.schema';
     ThrottlerModule.forRoot([{ ttl: 60000, limit: 20 }]),
   ],
   controllers: [AttendanceController, PublicAttendanceController],
-  providers: [AttendanceService],
+  providers: [
+    AttendanceService,
+    AttendanceSessionBridgeService,
+    AttendanceQueryService,
+    AttendanceLinkService,
+    StorageUrlService,
+  ],
   exports: [AttendanceService, MongooseModule],
 })
 export class AttendanceModule {}

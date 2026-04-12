@@ -1,0 +1,774 @@
+<header class="page-header">
+  <div>
+    <h2>Quản lý buổi học</h2>
+    <p>Xem và quản lý các buổi học, theo dõi tiến trình dạy và thanh toán.</p>
+  </div>
+  <div class="page-header-actions">
+    <button
+      class="ghost"
+      data-testid="sessions-general-feedback-button"
+      (click)="openGeneralFeedback()"
+      [disabled]="!generalFeedbackTargets().length"
+      *ngIf="isParent()">
+      Gửi general-feedback
+    </button>
+    <button class="primary" data-testid="sessions-create-button" (click)="openCreate()" *ngIf="canCreate()">+ Tạo buổi học</button>
+  </div>
+</header>
+
+<app-flow-guide featureKey="sessions"></app-flow-guide>
+
+<div class="alert success" data-testid="sessions-success-alert" *ngIf="success()">{{ success() }}</div>
+<div class="alert error" data-testid="sessions-error-alert" *ngIf="error()">{{ error() }}</div>
+
+<div class="stats-bar" *ngIf="stats()">
+  <div class="stat-card">
+    <span class="stat-value">{{ stats()!.totalSessions }}</span>
+    <span class="stat-label">Tổng buổi</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{ formatCurrency(stats()!.totalRevenue) }}</span>
+    <span class="stat-label">Doanh thu</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{ formatTeacherCurrency(stats()!.totalTeacherCost) }}</span>
+    <span class="stat-label">Chi phí GV</span>
+  </div>
+  <div class="stat-card">
+    <span class="stat-value">{{ formatCurrency(stats()!.totalRevenue - stats()!.totalTeacherCost) }}</span>
+    <span class="stat-label">Lợi nhuận</span>
+  </div>
+</div>
+
+<div class="filters">
+  <select [(ngModel)]="filter.classId" (change)="load()">
+    <option value="">Tất cả lớp</option>
+    <option *ngFor="let c of classes()" [value]="c._id">{{ c.code }} - {{ c.name }}</option>
+  </select>
+
+  <select [(ngModel)]="filter.status" (change)="load()">
+    <option value="">Mọi trạng thái</option>
+    <option value="SCHEDULED">Đã lên lịch</option>
+    <option value="TEACHER_COMPLETED">GV hoàn thành</option>
+    <option value="PARENT_CONFIRMED">PH xác nhận</option>
+    <option value="FINALIZED">Đã chốt</option>
+    <option value="CANCELLED">Đã hủy</option>
+    <option value="NO_SHOW">Vắng</option>
+  </select>
+
+  <input type="date" [(ngModel)]="filter.fromDate" (change)="load()" placeholder="Từ ngày" />
+  <input type="date" [(ngModel)]="filter.toDate" (change)="load()" placeholder="Đến ngày" />
+</div>
+
+<table class="data" *ngIf="sessions().length; else empty">
+  <thead>
+    <tr>
+      <th>Lớp</th>
+      <th>Học sinh</th>
+      <th>Giáo viên</th>
+      <th>Ngày</th>
+      <th>{{ timeColumnLabel() }}</th>
+      <th *ngIf="showTuitionColumn()">Học phí</th>
+      <th>{{ payoutOrDurationColumnLabel() }}</th>
+      <th>Trạng thái</th>
+      <th>Hành động</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr *ngFor="let s of sessions()" [class]="'row-' + s.status.toLowerCase()" [attr.data-testid]="'session-row-' + s._id">
+      <td>{{ s.classId.code || '-' }}</td>
+      <td>
+        {{ s.studentId.fullName }}
+        <small *ngIf="s.studentId.studentCode">({{ s.studentId.studentCode }})</small>
+      </td>
+      <td>{{ s.teacherId.fullName }}</td>
+      <td>{{ s.scheduledDate | date:'dd/MM/yyyy' }}</td>
+      <td>{{ timeDisplay(s) }}</td>
+      <td *ngIf="showTuitionColumn()" [class.zero-finance]="s.status === 'NO_SHOW' || s.status === 'CANCELLED'">
+        {{ formatCurrency(s.amountCharged) }}
+        <span *ngIf="s.status === 'NO_SHOW'" class="zero-note" title="Vắng mặt - không thu phí">⊘</span>
+        <span *ngIf="s.status === 'CANCELLED'" class="zero-note" title="Đã hủy - không thu phí">⊘</span>
+      </td>
+      <td *ngIf="showTeacherPayoutColumn(); else durationColumn" [class.zero-finance]="s.status === 'NO_SHOW' || s.status === 'CANCELLED'">
+        {{ formatTeacherCurrency(s.teacherPayout) }}
+        <span *ngIf="s.status === 'NO_SHOW'" class="zero-note" title="Vắng mặt - không tính lương GV">⊘</span>
+        <span *ngIf="s.status === 'CANCELLED'" class="zero-note" title="Đã hủy - không tính lương GV">⊘</span>
+      </td>
+      <ng-template #durationColumn>
+        <td>{{ formatDuration(s) }}</td>
+      </ng-template>
+      <td>
+        <span class="badge" [class]="'badge-' + s.status.toLowerCase()">
+          {{ sessionStatusLabel(s) }}
+        </span>
+        <span
+          class="low-rating-flag"
+          data-testid="sessions-low-rating-flag"
+          *ngIf="shouldShowLowRatingFlag(s)">
+          PH đánh giá thấp: {{ lowRatingFlagLabel(s) }}
+        </span>
+      </td>
+      <td class="actions-cell">
+        <button class="ghost sm" data-testid="sessions-view-detail" (click)="viewDetail(s)" title="Chi tiết">Xem</button>
+
+        <ng-container *ngIf="s.status === 'SCHEDULED'">
+          <button class="ghost sm" data-testid="sessions-complete-button" (click)="completeSession(s)" *ngIf="isTeacher()">Hoàn thành</button>
+          <button class="ghost sm" data-testid="sessions-cancel-button" (click)="cancelSession(s)" *ngIf="canCreate()">Hủy</button>
+        </ng-container>
+
+        <button
+          class="ghost sm"
+          data-testid="sessions-parent-confirm-button"
+          (click)="confirmSession(s)"
+          *ngIf="canParentConfirmSession(s)">
+          Xác nhận
+        </button>
+
+        <button class="danger sm" data-testid="sessions-remove-button" (click)="remove(s)" *ngIf="s.status === 'SCHEDULED' && isDirector()">Xóa</button>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<ng-template #empty>
+  <p class="empty-msg">Không có buổi học nào.</p>
+</ng-template>
+
+<div class="pagination" *ngIf="totalPages() > 1">
+  <button data-testid="sessions-prev-page" (click)="goPage(currentPage() - 1)" [disabled]="currentPage() <= 1">&laquo;</button>
+  <span>Trang {{ currentPage() }} / {{ totalPages() }}</span>
+  <button data-testid="sessions-next-page" (click)="goPage(currentPage() + 1)" [disabled]="currentPage() >= totalPages()">&raquo;</button>
+</div>
+
+<div class="modal-backdrop" *ngIf="showCreateModal()">
+  <div class="modal">
+    <h3>Tạo buổi học</h3>
+
+    <div class="tab-bar">
+      <button data-testid="sessions-create-single" [class.active]="createMode === 'single'" (click)="createMode = 'single'">Tạo 1 buổi</button>
+      <button data-testid="sessions-create-bulk" [class.active]="createMode === 'bulk'" (click)="createMode = 'bulk'">Tạo hàng loạt</button>
+    </div>
+
+    <form (ngSubmit)="submitCreate()">
+      <label>
+        Lớp học
+        <select [(ngModel)]="createForm.classId" name="classId" required (change)="onCreateClassChange()">
+          <option value="" disabled>-- Chọn lớp --</option>
+          <option *ngFor="let c of classes()" [value]="c._id">{{ c.code }} - {{ c.name }}</option>
+        </select>
+      </label>
+
+      <div *ngIf="createMode === 'single'">
+        <label>
+          Học sinh
+          <select [(ngModel)]="createForm.studentId" name="studentId" required>
+            <option value="" disabled>-- Chọn HS --</option>
+            <option *ngFor="let st of selectedClassStudents()" [value]="st._id">{{ st.fullName }}</option>
+          </select>
+        </label>
+
+        <label>
+          Ngày học
+          <input type="date" [(ngModel)]="createForm.scheduledDate" name="scheduledDate" required />
+        </label>
+
+        <div class="row-2">
+          <label>
+            Giờ bắt đầu
+            <input type="time" [(ngModel)]="createForm.scheduledStartTime" name="startTime" required />
+          </label>
+
+          <label>
+            Giờ kết thúc
+            <input type="time" [(ngModel)]="createForm.scheduledEndTime" name="endTime" required />
+          </label>
+        </div>
+      </div>
+
+      <div *ngIf="createMode === 'bulk'">
+        <label>
+          Ngày học
+          <input type="date" [(ngModel)]="createForm.scheduledDate" name="bulkDate" required />
+        </label>
+
+        <div class="row-2">
+          <label>
+            Giờ bắt đầu
+            <input type="time" [(ngModel)]="createForm.scheduledStartTime" name="bulkStart" required />
+          </label>
+
+          <label>
+            Giờ kết thúc
+            <input type="time" [(ngModel)]="createForm.scheduledEndTime" name="bulkEnd" required />
+          </label>
+        </div>
+
+        <p class="hint">Sẽ tạo buổi cho tất cả học sinh trong lớp.</p>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="ghost" data-testid="sessions-create-cancel" (click)="showCreateModal.set(false)">Hủy</button>
+        <button type="submit" class="primary" data-testid="sessions-create-submit">Tạo</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showDetailModal()">
+  <div class="modal modal-lg">
+    <h3>Chi tiết buổi học</h3>
+
+    <p class="detail-loading" *ngIf="detailLoading()">Đang tải chi tiết mới nhất...</p>
+
+    <div
+      class="alert warning"
+      data-testid="sessions-wallet-deduct-warning"
+      *ngIf="selectedSession()?.walletDeductError">
+      {{ selectedSession()?.walletDeductError }}
+    </div>
+
+    <div class="detail-grid" *ngIf="selectedSession()">
+      <div class="detail-row">
+        <span>Lớp:</span>
+        <span>{{ selectedSession()?.classId?.name }} ({{ selectedSession()?.classId?.code }})</span>
+      </div>
+      <div class="detail-row">
+        <span>Học sinh:</span>
+        <span>{{ selectedSession()?.studentId?.fullName }}</span>
+      </div>
+      <div class="detail-row">
+        <span>Giáo viên:</span>
+        <span>{{ selectedSession()?.teacherId?.fullName }}</span>
+      </div>
+      <div class="detail-row">
+        <span>Ngày:</span>
+        <span>{{ selectedSession()?.scheduledDate | date:'dd/MM/yyyy' }}</span>
+      </div>
+      <div class="detail-row">
+        <span>{{ timeColumnLabel() }}:</span>
+        <span>{{ timeDisplay(selectedSession()) }}</span>
+      </div>
+      <div class="detail-row" *ngIf="showTuitionColumn()">
+        <span>Học phí:</span>
+        <span>{{ formatCurrency(selectedSession()?.amountCharged || 0) }}</span>
+      </div>
+      <div class="detail-row">
+        <span>Thời lượng:</span>
+        <span data-testid="sessions-detail-duration">{{ formatDuration(selectedSession()) }}</span>
+      </div>
+      <div class="detail-row" *ngIf="!isParent()">
+        <span>Lương GV:</span>
+        <span>{{ formatTeacherCurrency(selectedSession()?.teacherPayout || 0) }}</span>
+      </div>
+      <div class="detail-row">
+        <span>Trạng thái:</span>
+        <span class="badge" [class]="'badge-' + (selectedSession()?.status || '').toLowerCase()">
+          {{ sessionStatusLabel(selectedSession()) }}
+        </span>
+      </div>
+      <div class="detail-row" *ngIf="confirmationSourceLabel(selectedSession()) as confirmationSource">
+        <span>Nguá»“n xÃ¡c nháº­n:</span>
+        <span data-testid="sessions-confirmation-source">{{ confirmationSource }}</span>
+      </div>
+      <div class="detail-row" *ngIf="confirmationTimestamp(selectedSession()) as confirmationAt">
+        <span>Thá»i Ä‘iá»ƒm xÃ¡c nháº­n:</span>
+        <span data-testid="sessions-confirmation-at">{{ confirmationAt }}</span>
+      </div>
+      <div class="detail-row" *ngIf="cancellationSourceLabel(selectedSession()) as cancellationSource">
+        <span>Nguá»“n há»§y:</span>
+        <span data-testid="sessions-cancellation-source">{{ cancellationSource }}</span>
+      </div>
+      <div class="detail-row" *ngIf="cancellationTimestamp(selectedSession()) as cancellationAt">
+        <span>Thá»i Ä‘iá»ƒm há»§y:</span>
+        <span data-testid="sessions-cancellation-at">{{ cancellationAt }}</span>
+      </div>
+      <div class="detail-row" *ngIf="selectedSession()?.cancellation?.cancelReason">
+        <span>LÃ½ do há»§y:</span>
+        <span data-testid="sessions-cancellation-reason">{{ selectedSession()?.cancellation?.cancelReason }}</span>
+      </div>
+      <div class="detail-row" *ngIf="selectedSession()?.topicsCovered">
+        <span>Nội dung:</span>
+        <span>{{ selectedSession()?.topicsCovered }}</span>
+      </div>
+      <div class="detail-row" *ngIf="selectedSession()?.homework">
+        <span>BTVN:</span>
+        <span>{{ selectedSession()?.homework }}</span>
+      </div>
+      <div class="detail-row" *ngIf="selectedSession()?.teacherNotes">
+        <span>Ghi chú GV:</span>
+        <span>{{ selectedSession()?.teacherNotes }}</span>
+      </div>
+      <div class="detail-row" *ngIf="selectedSession()?.parentNotes">
+        <span>Ghi chú PH:</span>
+        <span>{{ selectedSession()?.parentNotes }}</span>
+      </div>
+      <div class="detail-row" *ngIf="selectedSession()?.parentRating">
+        <span>Đánh giá PH:</span>
+        <span>{{ '★'.repeat(selectedSession()?.parentRating || 0) }}</span>
+      </div>
+    </div>
+
+    <section class="report-card report-card-clean" *ngIf="selectedSession() as session">
+      <div class="report-head">
+        <h4>Báo cáo giảng dạy</h4>
+        <span
+          class="report-status"
+          [class.report-status-ok]="session.hasTeachingReport"
+          [class.report-status-missing]="!session.hasTeachingReport">
+          {{ session.hasTeachingReport ? 'Đã có báo cáo' : 'Chưa có báo cáo' }}
+        </span>
+      </div>
+
+      <div class="report-grid">
+        <div class="detail-row">
+          <span>Ngày nộp báo cáo:</span>
+          <span>{{ formatDateTime(session.teachingReport?.submittedAt, 'Chưa nộp') }}</span>
+        </div>
+        <div class="detail-row">
+          <span>Deadline báo cáo:</span>
+          <span>{{ formatDateTime(session.teachingReport?.deadline, 'Chưa có deadline') }}</span>
+        </div>
+        <div class="detail-row">
+          <span>Trạng thái nộp:</span>
+          <span [class.report-late]="session.teachingReport?.isLateSubmission">
+            {{ session.teachingReport?.isLateSubmission ? 'Nộp trễ' : (session.hasTeachingReport ? 'Đúng hạn / hợp lệ' : 'Chưa nộp') }}
+          </span>
+        </div>
+        <div class="detail-row">
+          <span>Link ghi hình:</span>
+          <span>
+            <a *ngIf="getRecordingUrl(session) as recordingUrl; else missingRecordingUrlClean"
+              [href]="recordingUrl"
+              class="report-link"
+              target="_blank"
+              rel="noopener noreferrer">
+              Mở link video
+            </a>
+            <ng-template #missingRecordingUrlClean>Chưa gắn link ghi hình</ng-template>
+          </span>
+        </div>
+        <div class="detail-row detail-row-block">
+          <span>Nội dung học:</span>
+          <span class="report-text">{{ formatOptionalText(session.teachingReport?.lessonContent, 'Chưa có nội dung báo cáo') }}</span>
+        </div>
+        <div class="detail-row detail-row-block">
+          <span>Thái độ học sinh:</span>
+          <span class="report-text">{{ formatOptionalText(session.teachingReport?.studentAttitude, 'Chưa có nhận xét thái độ học sinh') }}</span>
+        </div>
+        <div class="detail-row detail-row-block">
+          <span>Nhận xét chung:</span>
+          <span class="report-text">{{ formatOptionalText(session.teachingReport?.teacherComment, 'Chưa có nhận xét chung') }}</span>
+        </div>
+        <div class="detail-row detail-row-block">
+          <span>Bài tập về nhà:</span>
+          <span class="report-text">{{ formatOptionalText(session.teachingReport?.homework, 'Chưa giao bài tập về nhà') }}</span>
+        </div>
+        <div class="detail-row detail-row-block">
+          <span>Ghi chú thêm:</span>
+          <span class="report-text">{{ formatOptionalText(session.teachingReport?.additionalNotes, 'Không có ghi chú thêm') }}</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="request-card" *ngIf="selectedSession() as session" data-testid="sessions-reschedule-card">
+      <div class="request-head">
+        <div>
+          <h4>Doi lich buoi hoc</h4>
+          <p class="request-subtitle">OPS va Director co the doi lich buoi hoc SCHEDULED. Buoi cu se chuyen sang RESCHEDULED va he thong tao buoi moi.</p>
+        </div>
+        <button
+          *ngIf="canRescheduleSession(session)"
+          type="button"
+          class="ghost"
+          data-testid="sessions-reschedule-open"
+          (click)="openRescheduleForm()">
+          Doi lich
+        </button>
+      </div>
+
+      <form
+        class="request-form"
+        *ngIf="showRescheduleForm()"
+        data-testid="sessions-reschedule-form"
+        (ngSubmit)="submitReschedule()">
+        <div class="row-2">
+          <label>
+            Ngay hoc moi
+            <input
+              data-testid="sessions-reschedule-date"
+              type="date"
+              [(ngModel)]="rescheduleForm.newScheduledDate"
+              name="rescheduleScheduledDate"
+              required />
+          </label>
+
+          <label>
+            Ly do doi lich
+            <textarea
+              data-testid="sessions-reschedule-reason"
+              [(ngModel)]="rescheduleForm.reason"
+              name="rescheduleReason"
+              rows="2"></textarea>
+          </label>
+        </div>
+
+        <div class="row-2">
+          <label>
+            Gio bat dau moi
+            <input
+              data-testid="sessions-reschedule-start"
+              type="time"
+              [(ngModel)]="rescheduleForm.newStartTime"
+              name="rescheduleStartTime"
+              required />
+          </label>
+
+          <label>
+            Gio ket thuc moi
+            <input
+              data-testid="sessions-reschedule-end"
+              type="time"
+              [(ngModel)]="rescheduleForm.newEndTime"
+              name="rescheduleEndTime"
+              required />
+          </label>
+        </div>
+
+        <div class="modal-actions request-form-actions">
+          <button
+            type="button"
+            class="ghost"
+            data-testid="sessions-reschedule-cancel"
+            (click)="cancelRescheduleForm()">
+            Huy
+          </button>
+          <button
+            type="submit"
+            class="primary"
+            data-testid="sessions-reschedule-submit"
+            [disabled]="!canSubmitReschedule()">
+            {{ submittingReschedule() ? 'Dang doi lich...' : 'Luu lich moi' }}
+          </button>
+        </div>
+      </form>
+
+      <div
+        class="reschedule-summary"
+        data-testid="sessions-reschedule-summary"
+        *ngIf="selectedSession()?.status === 'RESCHEDULED'">
+        <div class="request-status-row">
+          <span class="badge badge-rescheduled">Da doi lich</span>
+        </div>
+        <p class="history-empty">Buoi hien tai da duoc chuyen sang trang thai RESCHEDULED.</p>
+        <div class="history-change" *ngIf="latestRescheduledSession() as nextSession">
+          <span class="history-label">Buoi moi:</span>
+          <span>
+            {{ nextSession.scheduledDate | date:'dd/MM/yyyy' }}
+            {{ nextSession.scheduledStartTime }} - {{ nextSession.scheduledEndTime }}
+            <strong>({{ sessionStatusLabel(nextSession) }})</strong>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section class="request-card" *ngIf="selectedSession() as session" data-testid="sessions-change-request-card">
+      <div class="request-head">
+        <div>
+          <h4>Yeu cau thay doi</h4>
+          <p class="request-subtitle">Sale co the gui de xuat doi gio hoc hoac doi giao vien khi session dang o trang thai SCHEDULED.</p>
+        </div>
+        <button
+          *ngIf="canRequestSessionChange(session)"
+          type="button"
+          class="ghost"
+          data-testid="sessions-change-request-open"
+          (click)="openChangeRequestForm()">
+          Yeu cau thay doi
+        </button>
+      </div>
+
+      <form
+        class="request-form"
+        *ngIf="showChangeRequestForm()"
+        data-testid="sessions-change-request-form"
+        (ngSubmit)="submitChangeRequest()">
+        <div class="row-2">
+          <label>
+            Ngay hoc moi
+            <input
+              data-testid="sessions-change-request-date"
+              type="date"
+              [(ngModel)]="changeRequestForm.requestedScheduledDate"
+              name="requestedScheduledDate" />
+          </label>
+
+          <label>
+            Giao vien de xuat
+            <select
+              data-testid="sessions-change-request-teacher"
+              [(ngModel)]="changeRequestForm.requestedTeacherId"
+              name="requestedTeacherId">
+              <option value="">-- Giu giao vien hien tai --</option>
+              <option *ngFor="let teacher of teacherOptions()" [value]="teacher.userId">{{ teacher.fullName }}</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          Gio hoc moi
+          <input
+            data-testid="sessions-change-request-time"
+            type="time"
+            [(ngModel)]="changeRequestForm.requestedStartTime"
+            name="requestedStartTime" />
+          <small class="hint">He thong se giu nguyen thoi luong hien tai va tu dong tinh gio ket thuc.</small>
+        </label>
+
+        <label>
+          Ly do thay doi
+          <textarea
+            data-testid="sessions-change-request-reason"
+            [(ngModel)]="changeRequestForm.reason"
+            name="changeRequestReason"
+            rows="3"
+            required></textarea>
+        </label>
+
+        <div class="modal-actions request-form-actions">
+          <button
+            type="button"
+            class="ghost"
+            data-testid="sessions-change-request-cancel"
+            (click)="cancelChangeRequestForm()">
+            Huy
+          </button>
+          <button
+            type="submit"
+            class="primary"
+            data-testid="sessions-change-request-submit"
+            [disabled]="!canSubmitChangeRequest()">
+            {{ submittingChangeRequest() ? 'Dang gui...' : 'Gui yeu cau' }}
+          </button>
+        </div>
+      </form>
+
+      <div class="request-history" data-testid="sessions-change-request-history">
+        <div class="history-head">
+          <h4>Lich su yeu cau</h4>
+          <span *ngIf="changeRequestHistory().length">{{ changeRequestHistory().length }} lan</span>
+        </div>
+
+        <p class="history-empty" *ngIf="changeRequestsLoading()">Dang tai lich su yeu cau...</p>
+        <p class="history-empty" *ngIf="!changeRequestsLoading() && !changeRequestHistory().length">
+          Chua co yeu cau thay doi nao.
+        </p>
+
+        <div class="history-list" *ngIf="!changeRequestsLoading() && changeRequestHistory().length">
+          <article
+            class="history-item request-history-item"
+            *ngFor="let request of changeRequestHistory()"
+            [attr.data-testid]="'sessions-change-request-history-item-' + request._id">
+            <div class="history-item-head">
+              <strong>{{ request.requestedBy?.fullName || 'Sale' }}</strong>
+              <span>{{ formatHistoryTimestamp(request.requestedAt) }}</span>
+            </div>
+            <div class="history-role" *ngIf="request.requestedBy?.role">
+              {{ roleLabel(request.requestedBy?.role) }}
+            </div>
+            <div class="request-status-row">
+              <span class="badge" [class]="'badge-' + (request.status || '').toLowerCase()">
+                {{ formatChangeRequestStatus(request.status) }}
+              </span>
+            </div>
+            <div class="history-change">
+              <span class="history-label">Lich hoc:</span>
+              <span>{{ changeRequestScheduleLabel(request) }}</span>
+            </div>
+            <div class="history-change">
+              <span class="history-label">Giao vien:</span>
+              <span>{{ changeRequestTeacherLabel(request) }}</span>
+            </div>
+            <div class="history-change">
+              <span class="history-label">Thoi luong:</span>
+              <span>{{ changeRequestDurationLabel(request) }}</span>
+            </div>
+            <div class="history-change">
+              <span class="history-label">Ly do:</span>
+              <span>{{ request.reason }}</span>
+            </div>
+            <div class="request-decision-note" *ngIf="changeRequestDecisionNote(request)">
+              {{ changeRequestDecisionNote(request) }}
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="history-card" *ngIf="selectedSession()">
+      <div class="history-head">
+        <h4>Lịch sử chỉnh sửa</h4>
+        <span *ngIf="selectedSession()?.editHistory?.length">{{ selectedSession()?.editHistory?.length }} lần</span>
+      </div>
+
+      <p class="history-empty" *ngIf="!selectedSession()?.editHistory?.length">
+        Chưa có lần chỉnh sửa nào.
+      </p>
+
+      <div class="history-list" *ngIf="selectedSession()?.editHistory?.length">
+        <article class="history-item" *ngFor="let entry of sessionEditHistory(selectedSession())">
+          <div class="history-item-head">
+            <strong>{{ entry.editedByName || 'Hệ thống' }}</strong>
+            <span>{{ formatHistoryTimestamp(entry.editedAt) }}</span>
+          </div>
+          <div class="history-role" *ngIf="entry.editedByRole">
+            {{ roleLabel(entry.editedByRole) }}
+          </div>
+
+          <div class="history-change" *ngFor="let change of entry.changes">
+            <span class="history-label">{{ change.label }}:</span>
+            <span>{{ change.beforeValue || 'Không có' }} -> {{ change.afterValue || 'Không có' }}</span>
+          </div>
+
+          <div class="history-snapshot" *ngIf="entry.durationSnapshot">
+            Sau khi đổi sang {{ entry.durationSnapshot.newDurationMinutes }} phút, còn
+            {{ formatSessionCount(entry.durationSnapshot.totalSessionsRemaining) }} buổi theo thời lượng mới
+            <span class="history-snapshot-breakdown">
+              (học phí: {{ formatSessionCount(entry.durationSnapshot.paidSessionsRemaining) }},
+              tặng: {{ formatSessionCount(entry.durationSnapshot.bonusSessionsRemaining) }})
+            </span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <div class="modal-actions detail-modal-actions-clean">
+      <button
+        class="primary"
+        type="button"
+        data-testid="sessions-finalize-from-detail"
+        (click)="confirmSalaryFromDetailClean()"
+        [disabled]="detailLoading()"
+        *ngIf="selectedSession() && canConfirmSalarySession(selectedSession()!)">
+        Xác nhận lương
+      </button>
+      <button class="ghost" data-testid="sessions-detail-close" (click)="closeDetailModal()">Đóng</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showCompleteModal()">
+  <div class="modal">
+    <h3>Hoàn thành buổi dạy</h3>
+
+    <form (ngSubmit)="submitComplete()">
+      <label>
+        Nội dung đã dạy
+        <textarea data-testid="sessions-complete-topics" [(ngModel)]="completeForm.topicsCovered" name="topicsCovered" rows="3" required (blur)="markCompleteFieldTouched('topicsCovered')"></textarea>
+        <small class="field-error" data-testid="sessions-complete-topics-error" *ngIf="completeError('topicsCovered')">{{ completeError('topicsCovered') }}</small>
+      </label>
+
+      <label>
+        Bài tập về nhà
+        <textarea data-testid="sessions-complete-homework" [(ngModel)]="completeForm.homework" name="homework" rows="2" required (blur)="markCompleteFieldTouched('homework')"></textarea>
+        <small class="field-error" data-testid="sessions-complete-homework-error" *ngIf="completeError('homework')">{{ completeError('homework') }}</small>
+      </label>
+
+      <label>
+        Ghi chú
+        <textarea data-testid="sessions-complete-notes" [(ngModel)]="completeForm.teacherNotes" name="teacherNotes" rows="2" required (blur)="markCompleteFieldTouched('teacherNotes')"></textarea>
+        <small class="field-error" data-testid="sessions-complete-notes-error" *ngIf="completeError('teacherNotes')">{{ completeError('teacherNotes') }}</small>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" class="ghost" data-testid="sessions-complete-cancel" (click)="showCompleteModal.set(false)">Hủy</button>
+        <button type="submit" class="primary" data-testid="sessions-complete-submit">Hoàn thành</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showConfirmModal()">
+  <div class="modal">
+    <h3>Xác nhận buổi học</h3>
+
+    <form (ngSubmit)="submitConfirm()">
+      <label>
+        Đánh giá (1-5 sao)
+        <input data-testid="sessions-confirm-rating" type="number" [(ngModel)]="confirmForm.rating" name="rating" min="1" max="5" />
+      </label>
+
+      <label>
+        Ghi chú
+        <textarea data-testid="sessions-confirm-notes" [(ngModel)]="confirmForm.parentNotes" name="parentNotes" rows="2"></textarea>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" class="ghost" data-testid="sessions-confirm-cancel" (click)="showConfirmModal.set(false)">Hủy</button>
+        <button type="submit" class="primary" data-testid="sessions-confirm-submit">Xác nhận</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal-backdrop" *ngIf="showGeneralFeedbackModal()">
+  <div class="modal">
+    <h3>Gửi đánh giá tổng quát</h3>
+    <p class="hint">Đánh giá này sẽ được lưu vào buổi đã chốt gần nhất của học sinh được chọn.</p>
+
+    <form (ngSubmit)="submitGeneralFeedback()">
+      <label>
+        Học sinh
+        <select
+          data-testid="sessions-general-feedback-student"
+          [(ngModel)]="generalFeedbackForm.studentId"
+          name="generalFeedbackStudentId"
+          (ngModelChange)="onGeneralFeedbackStudentChange($event)"
+          required>
+          <option *ngFor="let target of generalFeedbackTargets()" [value]="target.studentId">
+            {{ target.studentName }}
+          </option>
+        </select>
+      </label>
+
+      <p class="hint" data-testid="sessions-general-feedback-target-session" *ngIf="selectedGeneralFeedbackTargetLabel()">
+        Buổi mục tiêu: {{ selectedGeneralFeedbackTargetLabel() }}
+      </p>
+
+      <div class="row-2">
+        <label>
+          Tổng quan (1-5)
+          <input data-testid="sessions-general-feedback-overall" type="number" [(ngModel)]="generalFeedbackForm.overallRating" name="generalFeedbackOverall" min="1" max="5" required />
+        </label>
+
+        <label>
+          Teaching quality (1-5)
+          <input data-testid="sessions-general-feedback-teaching-quality" type="number" [(ngModel)]="generalFeedbackForm.teachingQuality" name="generalFeedbackTeachingQuality" min="1" max="5" required />
+        </label>
+      </div>
+
+      <div class="row-2">
+        <label>
+          Communication (1-5)
+          <input data-testid="sessions-general-feedback-communication" type="number" [(ngModel)]="generalFeedbackForm.communication" name="generalFeedbackCommunication" min="1" max="5" required />
+        </label>
+
+        <label>
+          Facility (1-5)
+          <input data-testid="sessions-general-feedback-facility" type="number" [(ngModel)]="generalFeedbackForm.facility" name="generalFeedbackFacility" min="1" max="5" required />
+        </label>
+      </div>
+
+      <label>
+        Nhận xét tổng quát
+        <textarea data-testid="sessions-general-feedback-comment" [(ngModel)]="generalFeedbackForm.comment" name="generalFeedbackComment" rows="3"></textarea>
+      </label>
+
+      <div class="modal-actions">
+        <button type="button" class="ghost" data-testid="sessions-general-feedback-cancel" (click)="closeGeneralFeedbackModal()">Hủy</button>
+        <button type="submit" class="primary" data-testid="sessions-general-feedback-submit" [disabled]="!canSubmitGeneralFeedback()">
+          {{ submittingGeneralFeedback() ? 'Đang gửi...' : 'Gửi đánh giá' }}
+        </button>
+      </div>
+    </form>
+  </div>
+</div>

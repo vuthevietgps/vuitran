@@ -111,16 +111,13 @@ Theo UI hiện tại, giáo viên nhìn thấy các nhóm chức năng sau:
 3. Nếu cần dời lịch hoặc có nguy cơ vắng mặt:
    - tạo `Xin nghỉ/Thay thế`
    - hoặc tạo `Ticket` hỗ trợ nếu cần OPS xử lý gấp
-4. Nếu muốn để học sinh tự check-in:
-   - vào `Điểm danh`
-   - chọn lớp và ngày
-   - tạo `link điểm danh` cho học sinh
+4. Vào `Điểm danh`, chọn lớp và ngày, tạo `link điểm danh` sẵn sàng để gửi cho học sinh.
 
 ### 4.3. Việc cần làm trong và ngay sau buổi dạy
 
 1. Vào `Điểm danh`, chọn lớp và ngày.
-2. Ghi nhận học sinh có mặt.
-3. Nếu dùng self check-in thì tạo link cho từng học sinh cần dùng.
+2. Tạo link và gửi cho học sinh để các em tự check-in (chụp ảnh/lấy vị trí).
+3. Theo dõi danh sách để đảm bảo học sinh đã submit thành công.
 4. Sau buổi dạy, vào `Buổi học` để:
    - mở chi tiết buổi
    - bấm `Hoàn thành`
@@ -262,10 +259,7 @@ Các bước thao tác chuẩn:
 2. Chọn `Lớp học`
 3. Chọn `Ngày điểm danh`
 4. Bấm `Tải danh sách`
-5. Với từng học sinh:
-   - bấm `Có mặt` nếu đi học
-   - để `Chưa điểm danh` nếu chưa xác nhận
-6. Bấm `Lưu điểm danh`
+5. Bấm `Tạo link` và copy URL gửi cho học sinh/phụ huynh.
 
 Tạo link điểm danh:
 
@@ -277,7 +271,7 @@ Tạo link điểm danh:
 Lưu ý vận hành:
 
 1. Đây là màn hình giáo viên nên chỉ nên thao tác trên lớp của mình.
-2. Nếu dùng link điểm danh, cần xác nhận đúng học sinh và đúng ngày.
+2. **Giáo viên không có quyền điểm danh trực tiếp.** Bắt buộc phải dùng tính năng Tạo link để học sinh tự submit (chống gian lận).
 3. Điểm danh có liên quan đến session bridge và có thể ảnh hưởng đến tính lương theo session/attendance.
 
 ### 5.6. Báo cáo Điểm danh
@@ -622,9 +616,8 @@ Các bước:
 
 1. Chọn lớp/ngày ở `Điểm danh`
 2. Tải danh sách học sinh
-3. Đánh dấu học sinh có mặt
-4. Tạo link điểm danh nếu cần
-5. Lưu điểm danh
+3. Bấm Tạo link điểm danh
+4. Gửi link cho học sinh và xác nhận học sinh đã submit
 
 ### Kịch bản 4. Hoàn thành buổi dạy
 

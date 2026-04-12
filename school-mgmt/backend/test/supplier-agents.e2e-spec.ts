@@ -7,6 +7,7 @@ import * as request from 'supertest';
 import * as cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { closeE2eResources } from './e2e-cleanup';
 
 /* ------------------------------------------------------------------ */
 /*  helpers                                                           */
@@ -29,6 +30,7 @@ function extractCookieValue(setCookies: string | string[] | undefined, name: str
 /* ================================================================== */
 describe('Supplier Quotes, Supplier Payments & Agents (e2e)', () => {
   let app: INestApplication;
+  let moduleRef: TestingModule;
   let mongod: MongoMemoryServer;
   let userModel: Model<any>;
   const sessionCache = new Map<string, SessionCookies>();
@@ -78,7 +80,7 @@ describe('Supplier Quotes, Supplier Payments & Agents (e2e)', () => {
     mongod = await MongoMemoryServer.create();
     process.env.MONGODB_URI = mongod.getUri('e2e-3features');
 
-    const moduleRef: TestingModule = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.use(cookieParser());
     app.use(require('express').json({ limit: '10mb' }));
@@ -91,8 +93,11 @@ describe('Supplier Quotes, Supplier Payments & Agents (e2e)', () => {
   }, 60000);
 
   afterAll(async () => {
-    await app?.close();
-    await mongod?.stop();
+    await closeE2eResources({
+      app,
+      moduleRef,
+      mongoServer: mongod,
+    });
   });
 
   /* ================================================================

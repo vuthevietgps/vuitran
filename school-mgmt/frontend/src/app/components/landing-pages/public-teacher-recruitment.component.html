@@ -1,0 +1,208 @@
+<div class="page-shell">
+  <section class="hero">
+    <div class="hero-copy">
+      <span class="eyebrow">Tuyển dụng giáo viên</span>
+      <h1>Dạy trong một hệ thống vận hành rõ ràng, có lớp, có lịch và có lộ trình phát triển</h1>
+      <p class="lead">
+        Chúng tôi tìm giáo viên có tác phong chuyên nghiệp, có thể dạy online,
+        offline hoặc kết hợp cả hai. Nếu bạn muốn làm việc trong môi trường có
+        quy trình nhận lớp, xếp lịch, chấm công và quản lý hồ sơ rõ ràng, hãy
+        để lại thông tin ngay hôm nay.
+      </p>
+
+      <div class="contact-card">
+        <div>
+          <div class="contact-label">Số điện thoại liên hệ</div>
+          <a class="contact-phone" href="tel:0363614511">0363614511</a>
+        </div>
+        <div class="contact-note">
+          Bộ phận vận hành sẽ liên hệ lại sau khi nhận được đăng ký.
+        </div>
+      </div>
+
+      <div class="benefits">
+        <article>
+          <strong>Lịch dạy linh hoạt</strong>
+          <span>Phù hợp với giáo viên dạy online, offline hoặc kết hợp.</span>
+        </article>
+        <article>
+          <strong>Hồ sơ được quản lý tập trung</strong>
+          <span>Thông tin ứng viên, phỏng vấn và hồ sơ giáo viên nằm trong cùng một hệ thống.</span>
+        </article>
+        <article>
+          <strong>Quy trình tiếp nhận rõ ràng</strong>
+          <span>Đăng ký, phỏng vấn, tạo tài khoản và kích hoạt hồ sơ theo từng bước.</span>
+        </article>
+      </div>
+    </div>
+
+    <div class="hero-visual">
+      <figure class="visual-main">
+        <button
+          type="button"
+          class="visual-trigger"
+          (click)="openImage('assets/teacher-docs/assets/11_teacher_dashboard.webp', 'Minh họa giao diện dashboard giáo viên', 'Dashboard giáo viên với lịch dạy, công việc và trạng thái vận hành.')"
+        >
+          <img
+            src="assets/teacher-docs/assets/11_teacher_dashboard.webp"
+            alt="Minh họa giao diện dashboard giáo viên"
+          />
+        </button>
+        <figcaption>Dashboard giáo viên với lịch dạy, công việc và trạng thái vận hành.</figcaption>
+      </figure>
+
+      <div class="visual-grid">
+        <figure>
+          <button
+            type="button"
+            class="visual-trigger"
+            (click)="openImage('assets/teacher-docs/assets/12_teacher_classes.webp', 'Minh họa màn hình quản lý lớp học của giáo viên', 'Quản lý lớp học')"
+          >
+            <img
+              src="assets/teacher-docs/assets/12_teacher_classes.webp"
+              alt="Minh họa màn hình quản lý lớp học của giáo viên"
+            />
+          </button>
+          <figcaption>Quản lý lớp học</figcaption>
+        </figure>
+        <figure>
+          <button
+            type="button"
+            class="visual-trigger"
+            (click)="openImage('assets/teacher-docs/assets/15_teacher_profile.webp', 'Minh họa màn hình hồ sơ giáo viên', 'Hồ sơ giáo viên')"
+          >
+            <img
+              src="assets/teacher-docs/assets/15_teacher_profile.webp"
+              alt="Minh họa màn hình hồ sơ giáo viên"
+            />
+          </button>
+          <figcaption>Hồ sơ giáo viên</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <div class="hero-form">
+      <div class="form-card" *ngIf="!submitSuccess(); else successState">
+        <div class="form-head">
+          <h2>Đăng ký phỏng vấn</h2>
+          <p>Thông tin này sẽ đi thẳng vào hệ thống quản lý giáo viên.</p>
+        </div>
+
+        <form (ngSubmit)="submit()" class="form-body">
+          <label>
+            Họ và tên
+            <input [(ngModel)]="form.fullName" name="fullName" required />
+          </label>
+
+          <label>
+            Số điện thoại
+            <input [(ngModel)]="form.phone" name="phone" required />
+          </label>
+
+          <label>
+            Email
+            <input [(ngModel)]="form.email" name="email" type="email" />
+          </label>
+
+          <div class="two-col">
+            <label>
+              Môn có thể dạy
+              <input [(ngModel)]="form.subjects" name="subjects" placeholder="Toán, Văn, Anh" />
+            </label>
+            <label>
+              Khối lớp
+              <input [(ngModel)]="form.grades" name="grades" placeholder="Lớp 3, Lớp 4" />
+            </label>
+          </div>
+
+          <div class="two-col">
+            <label>
+              Hình thức dạy
+              <select [(ngModel)]="form.teachingMode" name="teachingMode">
+                <option value="BOTH">Cả online và offline</option>
+                <option value="ONLINE">Chỉ online</option>
+                <option value="OFFLINE">Chỉ offline</option>
+              </select>
+            </label>
+            <label>
+              Số năm kinh nghiệm
+              <input [(ngModel)]="form.yearsOfExperience" name="yearsOfExperience" type="number" min="0" />
+            </label>
+          </div>
+
+          <label>
+            Khu vực có thể dạy
+            <input [(ngModel)]="form.locations" name="locations" placeholder="Thủ Đức, Bình Thạnh..." />
+          </label>
+
+          <label>
+            Giới thiệu bản thân
+            <textarea [(ngModel)]="form.bio" name="bio" rows="5" placeholder="Kinh nghiệm dạy, điểm mạnh, lịch rảnh, thành tích..."></textarea>
+          </label>
+
+          <div *ngIf="submitError()" class="error">{{ submitError() }}</div>
+
+          <button class="submit-btn" type="submit" [disabled]="submitting()">
+            {{ submitting() ? 'Đang gửi...' : 'Gửi đăng ký' }}
+          </button>
+        </form>
+      </div>
+
+      <ng-template #successState>
+        <div class="form-card success-card">
+          <span class="success-pill">Đã tiếp nhận</span>
+          <h2>Đăng ký đã vào hệ thống</h2>
+          <p>
+            Mã đăng ký của bạn là <strong>{{ applicationCode() }}</strong>.
+            Chúng tôi sẽ liên hệ qua số <strong>{{ form.phone }}</strong> hoặc
+            hotline <strong>0363614511</strong>.
+          </p>
+        </div>
+      </ng-template>
+    </div>
+  </section>
+
+  <section class="process">
+    <div class="section-head">
+      <span class="eyebrow">Quy trình</span>
+      <h2>Từ đăng ký đến hồ sơ giáo viên</h2>
+    </div>
+
+    <div class="steps">
+      <article>
+        <span>01</span>
+        <h3>Giáo viên đăng ký</h3>
+        <p>Form đăng ký tạo một bản ghi ứng viên trong hệ thống.</p>
+      </article>
+      <article>
+        <span>02</span>
+        <h3>Phỏng vấn và đánh giá</h3>
+        <p>Bộ phận vận hành cập nhật trạng thái, ghi chú và kết quả phỏng vấn.</p>
+      </article>
+      <article>
+        <span>03</span>
+        <h3>Tạo hồ sơ giáo viên</h3>
+        <p>Khi đạt, hệ thống chuyển ứng viên thành tài khoản và hồ sơ giáo viên.</p>
+      </article>
+    </div>
+  </section>
+
+  <div
+    class="image-lightbox"
+    *ngIf="selectedImage() as image"
+    (click)="closeImage()"
+  >
+    <div class="lightbox-dialog" (click)="$event.stopPropagation()">
+      <button
+        type="button"
+        class="lightbox-close"
+        (click)="closeImage()"
+        aria-label="Đóng ảnh minh họa"
+      >
+        ×
+      </button>
+      <img [src]="image.src" [alt]="image.alt" />
+      <p>{{ image.caption }}</p>
+    </div>
+  </div>
+</div>

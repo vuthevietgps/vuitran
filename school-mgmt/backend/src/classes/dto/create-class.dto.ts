@@ -1,6 +1,7 @@
 import {
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsMongoId,
   IsNotEmpty,
@@ -36,6 +37,32 @@ export class CurriculumItemDto {
   estimatedSessions?: number;
 }
 
+export class ClassCoTeacherDto {
+  @IsMongoId()
+  @IsNotEmpty()
+  teacherId!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  role!: string;
+
+  @IsBoolean()
+  @IsOptional()
+  canManageAttendance?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  canManageReports?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  canCreateLink?: boolean;
+
+  @IsString()
+  @IsOptional()
+  note?: string;
+}
+
 export class CreateClassDto {
   @IsString()
   @IsNotEmpty()
@@ -69,6 +96,12 @@ export class CreateClassDto {
   @IsMongoId()
   @IsOptional()
   productPackageId?: string;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ClassCoTeacherDto)
+  @IsOptional()
+  coTeachers?: ClassCoTeacherDto[];
 
   @IsArray()
   @IsMongoId({ each: true })

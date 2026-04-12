@@ -78,13 +78,8 @@ export class PendingApprovalsService {
   async getPendingInvoices() {
     return this.invoiceModel
       .find({ status: InvoiceStatus.PENDING_APPROVAL })
-      .select(
-        '_id invoiceNumber invoiceType classType sessions bonusSessions trialSessions amount paymentDate receiptImage description status createdAt createdBy studentId saleId classId',
-      )
-      .populate('studentId', 'fullName parentName parentPhone studentCode parentUserId')
+      .populate('studentId', 'fullName')
       .populate('createdBy', 'fullName email')
-      .populate('saleId', 'fullName email')
-      .populate('classId', 'name code')
       .sort({ createdAt: -1 })
       .lean();
   }

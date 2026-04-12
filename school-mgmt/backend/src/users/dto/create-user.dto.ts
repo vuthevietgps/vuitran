@@ -4,12 +4,18 @@ import {
   IsEnum,
   IsMongoId,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { Role } from '../../common/interfaces/role.enum';
+import { CreateUserSalaryConfigDto } from './create-user-salary-config.dto';
 
 export class CreateUserDto {
   @IsString()
@@ -56,4 +62,16 @@ export class CreateUserDto {
   @IsMongoId({ each: true })
   @IsOptional()
   managedSales?: string[];
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  ownershipPercentage?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateUserSalaryConfigDto)
+  salaryConfig?: CreateUserSalaryConfigDto;
 }

@@ -46,6 +46,9 @@ export class User {
   @Prop({ type: String, trim: true })
   address?: string;
 
+  @Prop({ type: Number, min: 0, max: 100 })
+  ownershipPercentage?: number;
+
   @Prop({ type: Boolean, default: false })
   enableEmailNotif?: boolean;
 

@@ -432,3 +432,19 @@ export function fitLogCurve(xValues: number[], yValues: number[]): { a: number; 
 
   return { a, b, rSquared: Math.max(0, rSquared) };
 }
+
+export async function fetchWithRetry(url: string, options: any = {}, retries = 3): Promise<any> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`HTTP ${response.status}: ${body}`);
+      }
+      return response.json();
+    } catch (err: any) {
+      if (i === retries - 1) throw err;
+      await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+    }
+  }
+}

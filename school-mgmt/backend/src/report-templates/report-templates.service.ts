@@ -18,9 +18,6 @@ export class ReportTemplatesService {
     private templateModel: Model<ReportTemplateDocument>,
   ) {}
 
-  /**
-   * Lấy danh sách template: template của GV + global templates
-   */
   async findByTeacher(teacherId: string): Promise<ReportTemplateDocument[]> {
     return this.templateModel
       .find({
@@ -29,13 +26,10 @@ export class ReportTemplatesService {
           { isGlobal: true },
         ],
       })
-      .sort({ isGlobal: -1, createdAt: -1 }) // Global trước, mới nhất trước
+      .sort({ isGlobal: -1, createdAt: -1 })
       .lean() as any;
   }
 
-  /**
-   * Tạo template mới cho GV
-   */
   async create(
     teacherId: string,
     dto: CreateReportTemplateDto,
@@ -45,21 +39,20 @@ export class ReportTemplatesService {
       classId: dto.classId ? new Types.ObjectId(dto.classId) : undefined,
       title: dto.title,
       templateContent: dto.templateContent,
-      isGlobal: false, // GV chỉ tạo được template cá nhân
+      version: dto.version ?? 1,
+      dynamicFields: dto.dynamicFields,
+      isGlobal: false,
     });
     return template.save();
   }
 
-  /**
-   * Xóa template (chỉ được xóa template của chính mình)
-   */
   async remove(templateId: string, teacherId: string): Promise<void> {
     const template = await this.templateModel.findById(templateId);
     if (!template) {
-      throw new NotFoundException('Template không tồn tại');
+      throw new NotFoundException('Template khong ton tai');
     }
     if (template.teacherId.toString() !== teacherId) {
-      throw new ForbiddenException('Bạn không có quyền xóa template này');
+      throw new ForbiddenException('Ban khong co quyen xoa template nay');
     }
     await template.deleteOne();
   }

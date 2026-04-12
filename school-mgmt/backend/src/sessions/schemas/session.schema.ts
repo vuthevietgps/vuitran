@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
+import {
+  ReportTemplateDynamicField,
+  ReportTemplateDynamicFieldSchema,
+} from '../../report-templates/schemas/report-template.schema';
 
 export type SessionDocument = HydratedDocument<Session>;
 
@@ -163,6 +167,9 @@ export class TeachingReport {
   @Prop({ type: String, trim: true })
   recordingUrl?: string;
 
+  @Prop({ type: String, trim: true })
+  recordingFileKey?: string;
+
   /** Nhận xét chung của GV về buổi học */
   @Prop({ type: String, trim: true })
   teacherComment?: string;
@@ -174,6 +181,21 @@ export class TeachingReport {
   /** Ghi chú thêm */
   @Prop({ type: String, trim: true })
   additionalNotes?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'ReportTemplate' })
+  templateId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  templateTitle?: string;
+
+  @Prop({ type: Number, min: 1 })
+  templateVersion?: number;
+
+  @Prop({ type: SchemaTypes.Mixed })
+  dynamicFieldValues?: Record<string, unknown>;
+
+  @Prop({ type: [ReportTemplateDynamicFieldSchema], default: undefined })
+  dynamicFieldSchemaSnapshot?: ReportTemplateDynamicField[];
 
   /** Thời điểm GV nộp báo cáo */
   @Prop({ type: Date, required: true })
@@ -215,6 +237,9 @@ export class ParentFeedback {
 
   @Prop({ type: Number, min: 1, max: 5 })
   communicationRating?: number; // Giao tiếp/tương tác (1-5)
+
+  @Prop({ type: Number, min: 1, max: 5 })
+  facilityRating?: number; // Cơ sở vật chất/trải nghiệm học tập (1-5)
 
   @Prop({ type: String, trim: true })
   parentNotes?: string; // Phản hồi của PH
@@ -504,6 +529,8 @@ SessionSchema.index(
   { unique: true, sparse: true },
 );
 SessionSchema.index({ teacherId: 1, scheduledDate: 1 });
+SessionSchema.index({ status: 1, scheduledDate: 1 });
+SessionSchema.index({ teacherId: 1, status: 1, scheduledDate: 1 });
 SessionSchema.index({ parentUserId: 1, status: 1 });
 SessionSchema.index({ parentUserId: 1, studentId: 1, status: 1, scheduledDate: -1 });
 SessionSchema.index({ studentId: 1, status: 1, scheduledDate: 1 });
@@ -511,5 +538,12 @@ SessionSchema.index({ classId: 1, status: 1, scheduledDate: -1 });
 SessionSchema.index({ status: 1, 'confirmation.teacherCompletedAt': 1 }); // For auto-confirm cron
 SessionSchema.index({ classId: 1, sessionNumber: 1 });
 SessionSchema.index({ teacherId: 1, hasTeachingReport: 1, status: 1 }); // Payroll + báo cáo giảng dạy
+SessionSchema.index({
+  status: 1,
+  isPaid: 1,
+  isBonusSession: 1,
+  invoiceConsumptionApplied: 1,
+  'confirmation.finalizedAt': 1,
+});
 SessionSchema.index({ adGroupId: 1, scheduledDate: 1 }); // Analytics lợi nhuận per ad group per ngày
 

@@ -18,7 +18,15 @@ import { PayrollTransactionModule } from '../payroll/payroll-transaction.module'
 import { TicketsModule } from '../tickets/tickets.module';
 import { MessagesModule } from '../messages/messages.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
+import { ReportTemplate, ReportTemplateSchema } from '../report-templates/schemas/report-template.schema';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { SessionSettlementService } from './session-settlement.service';
+import { SessionTrialService } from './session-trial.service';
+import { SessionWorkflowService } from './session-workflow.service';
+import { SessionCronService } from './session-cron.service';
+import { SessionPayrollService } from './session-payroll.service';
+import { SessionQueryService } from './session-query.service';
+import { StorageUrlService } from '../common/storage-url.service';
 
 @Module({
   imports: [
@@ -31,6 +39,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
       { name: TeacherProfile.name, schema: TeacherProfileSchema },
       { name: Attendance.name, schema: AttendanceSchema },
       { name: User.name, schema: UserSchema },
+      { name: ReportTemplate.name, schema: ReportTemplateSchema },
     ]),
     forwardRef(() => WalletsModule),
     PayrollTransactionModule,
@@ -39,7 +48,16 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     AuditLogModule,
   ],
   controllers: [SessionsController],
-  providers: [SessionsService],
-  exports: [SessionsService], // Export for Wallet/Payroll modules to use
+  providers: [
+    SessionsService,
+    SessionSettlementService,
+    SessionTrialService,
+    SessionWorkflowService,
+    SessionCronService,
+    SessionPayrollService,
+    SessionQueryService,
+    StorageUrlService,
+  ],
+  exports: [SessionsService, SessionCronService], // Export for Wallet/Payroll/dev modules to use
 })
 export class SessionsModule {}

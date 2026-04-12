@@ -1,125 +1,129 @@
-import { NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { SessionsService } from './sessions.service';
+import { SessionStatus } from './schemas/session.schema';
 
-describe('SessionsService.submitParentFeedback()', () => {
-  it('stores feedback on the explicitly requested session when sessionId is provided', async () => {
-    const parentUserId = new Types.ObjectId().toHexString();
-    const sessionId = new Types.ObjectId();
-    const sessionDoc = { _id: sessionId };
-    const findOne = jest.fn().mockResolvedValue(sessionDoc);
-    const updateOne = jest.fn().mockResolvedValue(undefined);
-    const context = { sessionModel: { findOne, updateOne } } as any;
+jest.mock('./session-payroll.service', () => ({
+  SessionPayrollService: class SessionPayrollService {},
+}));
+jest.mock('./session-query.service', () => ({
+  SessionQueryService: class SessionQueryService {},
+}));
+jest.mock('./session-workflow.service', () => ({
+  SessionWorkflowService: class SessionWorkflowService {},
+}));
 
-    const result = await SessionsService.prototype.submitParentFeedback.call(context, parentUserId, {
-      sessionId: sessionId.toHexString(),
+function buildService(overrides: Partial<{
+  sessionModel: any;
+  sessionChangeRequestModel: any;
+  classModel: any;
+  studentModel: any;
+  teacherProfileModel: any;
+  userModel: any;
+  studentSupportSnapshotService: any;
+  sessionTrialService: any;
+  sessionPayrollService: any;
+  sessionQueryService: any;
+  sessionWorkflowService: any;
+}> = {}) {
+  const sessionQueryService =
+    overrides.sessionQueryService ?? {
+      submitParentFeedback: jest.fn(),
+      buildRemainingSessionsAtNewDurationSnapshot: jest.fn(),
+      findAll: jest.fn(),
+      findById: jest.fn(),
+      getStats: jest.fn(),
+      getChildrenProgress: jest.fn(),
+      checkConflicts: jest.fn(),
+    };
+  const sessionPayrollService =
+    overrides.sessionPayrollService ?? {
+      countFinalizedForPayroll: jest.fn(),
+      claimTeacherPaid: jest.fn(),
+      markTeacherPaid: jest.fn(),
+      checkTeacherPaid: jest.fn(),
+      unmarkTeacherPaid: jest.fn(),
+      markPaid: jest.fn(),
+      resolveSessionFinancials: jest.fn(),
+      buildRemainingSessionsAtNewDurationSnapshot: jest.fn(),
+    };
+
+  return {
+    service: new SessionsService(
+      overrides.sessionModel ?? ({} as any),
+      overrides.sessionChangeRequestModel ?? ({} as any),
+      overrides.classModel ?? ({} as any),
+      overrides.studentModel ?? ({} as any),
+      overrides.teacherProfileModel ?? ({} as any),
+      overrides.userModel ?? ({} as any),
+      overrides.studentSupportSnapshotService ?? ({} as any),
+      overrides.sessionTrialService ?? ({} as any),
+      sessionPayrollService as any,
+      sessionQueryService as any,
+      overrides.sessionWorkflowService ?? ({} as any),
+    ),
+    sessionQueryService,
+    sessionPayrollService,
+  };
+}
+
+describe('SessionsService', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('delegates parent feedback submission to the query service', async () => {
+    const { service, sessionQueryService } = buildService();
+    sessionQueryService.submitParentFeedback.mockResolvedValue({
+      success: true,
+      message: 'Cam on ban da gui danh gia!',
+    });
+
+    const result = await service.submitParentFeedback('parent-1', {
       overallRating: 5,
       teachingQuality: 4,
       communication: 5,
-      comment: 'Rất tốt',
+      facility: 3,
+      comment: 'Tot',
+      sessionId: new Types.ObjectId().toHexString(),
     });
 
-    expect(findOne).toHaveBeenCalledTimes(1);
-    expect(findOne.mock.calls[0][0]._id.toString()).toBe(sessionId.toHexString());
-    expect(findOne.mock.calls[0][0].parentUserId.toString()).toBe(parentUserId);
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: sessionId },
-      {
-        $set: {
-          parentFeedback: {
-            overallRating: 5,
-            teachingQualityRating: 4,
-            communicationRating: 5,
-            parentNotes: 'Rất tốt',
-          },
-        },
-      },
-    );
-    expect(result).toEqual({ success: true, message: 'Cảm ơn bạn đã gửi đánh giá!' });
-  });
-
-  it('falls back to the latest finalized session only when sessionId is omitted', async () => {
-    const parentUserId = new Types.ObjectId().toHexString();
-    const sessionId = new Types.ObjectId();
-    const sort = jest.fn().mockResolvedValue({ _id: sessionId });
-    const findOne = jest.fn().mockReturnValue({ sort });
-    const updateOne = jest.fn().mockResolvedValue(undefined);
-    const context = { sessionModel: { findOne, updateOne } } as any;
-
-    await SessionsService.prototype.submitParentFeedback.call(context, parentUserId, {
-      overallRating: 4,
-      comment: 'Ổn',
+    expect(sessionQueryService.submitParentFeedback).toHaveBeenCalledWith('parent-1', {
+      overallRating: 5,
+      teachingQuality: 4,
+      communication: 5,
+      facility: 3,
+      comment: 'Tot',
+      sessionId: expect.any(String),
     });
-
-    expect(findOne).toHaveBeenCalledTimes(1);
-    expect(sort).toHaveBeenCalledWith({ scheduledDate: -1 });
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: sessionId },
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          parentFeedback: expect.objectContaining({ overallRating: 4, parentNotes: 'Ổn' }),
-        }),
-      }),
-    );
+    expect(result).toEqual({
+      success: true,
+      message: 'Cam on ban da gui danh gia!',
+    });
   });
 
-  it('does not fall back when an explicit sessionId does not belong to the parent', async () => {
-    const parentUserId = new Types.ObjectId().toHexString();
-    const findOne = jest.fn().mockResolvedValue(null);
-    const updateOne = jest.fn();
-    const context = { sessionModel: { findOne, updateOne } } as any;
+  it('delegates finalized session counting to the payroll service', async () => {
+    const { service, sessionPayrollService } = buildService();
+    sessionPayrollService.countFinalizedForPayroll.mockResolvedValue(12);
+    const cutoff = new Date('2026-04-09T00:00:00.000Z');
 
     await expect(
-      SessionsService.prototype.submitParentFeedback.call(context, parentUserId, {
-        sessionId: new Types.ObjectId().toHexString(),
-        overallRating: 3,
-      }),
-    ).rejects.toBeInstanceOf(NotFoundException);
+      service.countFinalizedForPayroll('teacher-1', cutoff, undefined),
+    ).resolves.toBe(12);
 
-    expect(updateOne).not.toHaveBeenCalled();
+    expect(sessionPayrollService.countFinalizedForPayroll).toHaveBeenCalledWith(
+      'teacher-1',
+      cutoff,
+      undefined,
+    );
   });
-});
 
-describe('SessionsService duration rounding', () => {
-  it('floors remaining sessions in duration snapshots when the new duration creates fractions', async () => {
-    const service = Object.create(SessionsService.prototype) as any;
-    const session = {
-      classId: new Types.ObjectId(),
-      studentId: new Types.ObjectId(),
-    };
+  it('delegates teacher-paid checks to the payroll service', async () => {
+    const { service, sessionPayrollService } = buildService();
+    sessionPayrollService.checkTeacherPaid.mockResolvedValue(['s-1', 's-2']);
 
-    service.classModel = {
-      findById: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({
-            pricingSnapshot: { referenceDuration: 70 },
-            baseDuration: 70,
-          }),
-        }),
-      }),
-    };
-    service.invoiceModel = {
-      find: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([
-            {
-              referenceDuration: 70,
-              sessionsRemaining: 2,
-              bonusSessionsRemaining: 1,
-              trialSessionsRemaining: 0,
-            },
-          ]),
-        }),
-      }),
-    };
+    const result = await service.checkTeacherPaid(['s-1', 's-2']);
 
-    const snapshot = await service.buildRemainingSessionsAtNewDurationSnapshot(session, 90);
-
-    expect(snapshot).toMatchObject({
-      newDurationMinutes: 90,
-      paidSessionsRemaining: 1,
-      bonusSessionsRemaining: 0,
-      totalSessionsRemaining: 2,
-    });
+    expect(sessionPayrollService.checkTeacherPaid).toHaveBeenCalledWith(['s-1', 's-2']);
+    expect(result).toEqual(['s-1', 's-2']);
   });
 });

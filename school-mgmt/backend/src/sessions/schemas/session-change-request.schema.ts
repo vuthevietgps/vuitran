@@ -63,8 +63,26 @@ export class SessionChangeRequest {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: true })
   currentTeacherId!: Types.ObjectId;
 
+  @Prop({ type: Date, required: true })
+  currentScheduledDate!: Date;
+
+  @Prop({ type: String, required: true, trim: true })
+  currentStartTime!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  currentEndTime!: string;
+
   @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
   requestedTeacherId?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  requestedScheduledDate?: Date;
+
+  @Prop({ type: String, trim: true })
+  requestedStartTime?: string;
+
+  @Prop({ type: String, trim: true })
+  requestedEndTime?: string;
 
   @Prop({ type: Number, min: 15, required: true })
   currentDurationMinutes!: number;

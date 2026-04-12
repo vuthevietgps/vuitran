@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, Min, IsMongoId } from 'class-validator';
+import { IsArray, IsInt, IsMongoId, IsNotEmpty, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
 
 export class CreateStudentDto {
   @IsString()
@@ -37,6 +37,11 @@ export class CreateStudentDto {
   @IsOptional()
   @IsMongoId()
   parentUserId?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  parentUserIds?: string[];
 
   @IsString()
   @IsNotEmpty()

@@ -13,6 +13,13 @@ import {
   TrackingPayload,
 } from '../../services/landing-page.service';
 
+type ImagePreview = {
+  src: string;
+  alt: string;
+  title: string;
+  description: string;
+};
+
 @Component({
   selector: 'app-public-landing-page',
   standalone: true,
@@ -28,6 +35,7 @@ export class PublicLandingPageComponent implements OnInit, OnDestroy {
   readonly submitError = signal('');
   readonly submitted = signal(false);
   readonly submitResult = signal<any | null>(null);
+  readonly imagePreview = signal<ImagePreview | null>(null);
 
   readonly form = {
     parentName: '',
@@ -39,6 +47,11 @@ export class PublicLandingPageComponent implements OnInit, OnDestroy {
   };
 
   private readonly injectedNodes: Node[] = [];
+  private readonly handleKeydown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && this.imagePreview()) {
+      this.closeImagePreview();
+    }
+  };
 
   constructor(
     private readonly route: ActivatedRoute,
@@ -46,9 +59,10 @@ export class PublicLandingPageComponent implements OnInit, OnDestroy {
   ) {}
 
   async ngOnInit() {
+    document.addEventListener('keydown', this.handleKeydown);
     const slug = this.route.snapshot.paramMap.get('slug') || '';
     if (!slug) {
-      this.error.set('Khong tim thay landing page.');
+      this.error.set('Không tìm thấy landing page.');
       this.loading.set(false);
       return;
     }
@@ -59,18 +73,57 @@ export class PublicLandingPageComponent implements OnInit, OnDestroy {
       document.title = page.name;
       this.installTrackingAssets(page);
     } catch (err: any) {
-      this.error.set(err?.error?.message || 'Khong tai duoc landing page.');
+      this.error.set(err?.error?.message || 'Không tải được landing page.');
     } finally {
       this.loading.set(false);
     }
   }
 
   ngOnDestroy() {
+    document.removeEventListener('keydown', this.handleKeydown);
     for (const node of this.injectedNodes) {
       if (node.parentNode) {
         node.parentNode.removeChild(node);
       }
     }
+  }
+
+  handleContentCardClick(event: MouseEvent) {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const image = target.closest('img');
+    if (!(image instanceof HTMLImageElement)) return;
+
+    event.preventDefault();
+
+    const src = String(image.currentSrc || image.src || '').trim();
+    if (!src) return;
+
+    const figure = image.closest('figure');
+    const figcaption = figure?.querySelector('figcaption');
+    const title = String(
+      figcaption?.querySelector('strong')?.textContent
+      || image.getAttribute('data-preview-title')
+      || image.alt
+      || '',
+    ).trim();
+    const description = String(
+      figcaption?.querySelector('span, p')?.textContent
+      || image.getAttribute('data-preview-description')
+      || '',
+    ).trim();
+
+    this.imagePreview.set({
+      src,
+      alt: String(image.alt || '').trim(),
+      title,
+      description,
+    });
+  }
+
+  closeImagePreview() {
+    this.imagePreview.set(null);
   }
 
   private appendHtml(target: HTMLElement, html?: string) {
@@ -313,6 +366,7 @@ export class PublicLandingPageComponent implements OnInit, OnDestroy {
   async submitForm() {
     const page = this.page();
     if (!page) return;
+    if (this.submitting()) return;
 
     this.submitting.set(true);
     this.submitError.set('');
@@ -336,7 +390,7 @@ export class PublicLandingPageComponent implements OnInit, OnDestroy {
       this.submitted.set(true);
       this.fireConversionEvents(page, tracking);
     } catch (err: any) {
-      this.submitError.set(err?.error?.message || 'Khong gui duoc form. Vui long thu lai.');
+      this.submitError.set(err?.error?.message || 'Không gửi được form. Vui lòng thử lại.');
     } finally {
       this.submitting.set(false);
     }

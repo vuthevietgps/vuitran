@@ -29,6 +29,7 @@ export interface TrialEnrollmentItem {
   _id: string;
   trialCode?: string;
   status: TrialEnrollmentStatus | string;
+  teacherPaidOnlyDecision?: boolean;
   studentName: string;
   studentPhone?: string;
   parentName?: string;
@@ -162,6 +163,24 @@ export class TrialEnrollmentService {
       return { ok: true, data: response };
     } catch (error: any) {
       return { ok: false, message: this.normalizeMessage(error, 'Khong the tu choi hoc thu') };
+    }
+  }
+
+  async teacherPaidOnly(id: string, decisionNotes?: string): Promise<TrialEnrollmentMutationResult> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post<TrialEnrollmentItem>(
+          `${this.base}/${id}/teacher-paid-only`,
+          decisionNotes ? { notes: decisionNotes, decisionNotes } : {},
+          { withCredentials: true },
+        ),
+      );
+      return { ok: true, data: response };
+    } catch (error: any) {
+      return {
+        ok: false,
+        message: this.normalizeMessage(error, 'Khong the chot tra luong giao vien'),
+      };
     }
   }
 

@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subject } from 'rxjs';
@@ -15,9 +15,19 @@ import {
 } from './shared/teaching-report-pending.component';
 import { TeachingReportCompletedComponent } from './shared/teaching-report-completed.component';
 import {
+  TeachingReportFormComponent,
   ReportFormValues,
   teachingReportDraftStorageKey,
 } from './shared/teaching-report-form.component';
+
+interface BulkPendingGroup {
+  key: string;
+  classId: string;
+  className: string;
+  classCode: string;
+  scheduledDate: string;
+  sessions: SessionItem[];
+}
 
 @Component({
   selector: 'app-teaching-report',
@@ -26,6 +36,7 @@ import {
     CommonModule,
     FormsModule,
     FlowGuideComponent,
+    TeachingReportFormComponent,
     TeachingReportPendingComponent,
     TeachingReportCompletedComponent,
   ],
@@ -39,11 +50,11 @@ import {
 
     <!-- Tab filter -->
     <div class="tabs">
-      <button [class.active]="activeTab === 'pending'" (click)="activeTab = 'pending'; loadPending()">
+      <button data-testid="report-tab-pending" [class.active]="activeTab === 'pending'" (click)="activeTab = 'pending'; loadPending()">
         Chưa có báo cáo
         <span class="tab-count" *ngIf="pendingCount() > 0">{{ pendingCount() }}</span>
       </button>
-      <button [class.active]="activeTab === 'completed'" (click)="activeTab = 'completed'; loadCompleted()">
+      <button data-testid="report-tab-completed" [class.active]="activeTab === 'completed'" (click)="activeTab = 'completed'; loadCompleted()">
         Đã có báo cáo
       </button>
     </div>
@@ -52,7 +63,7 @@ import {
       <div class="filter-row">
         <div class="filter-group">
           <label>Tháng</label>
-          <input type="month" [(ngModel)]="selectedMonth" (change)="onMonthChange()" />
+          <input data-testid="report-month-filter" type="month" [(ngModel)]="selectedMonth" (change)="onMonthChange()" />
         </div>
         <div class="filter-group">
           <label>Từ ngày</label>
@@ -62,7 +73,7 @@ import {
           <label>Đến ngày</label>
           <input type="date" [(ngModel)]="toDate" />
         </div>
-        <div class="filter-group" *ngIf="!isTeacher()">
+        <div class="filter-group" *ngIf="!isTeacher() && !isShareholder()">
           <label>Mã giáo viên</label>
           <input
             type="text"
@@ -80,11 +91,11 @@ import {
             </option>
           </datalist>
         </div>
-        <button class="btn-filter" type="button" (click)="applyFilters()" [disabled]="loading()">Lọc báo cáo</button>
-        <button class="btn-ghost" type="button" (click)="resetToCurrentMonth()" [disabled]="loading()">Tháng này</button>
+        <button class="btn-filter" data-testid="report-apply-filters" type="button" (click)="applyFilters()" [disabled]="loading()">Lọc báo cáo</button>
+        <button class="btn-ghost" data-testid="report-reset-month" type="button" (click)="resetToCurrentMonth()" [disabled]="loading()">Tháng này</button>
       </div>
 
-      <div class="salary-summary" *ngIf="payrollPreview()">
+      <div class="salary-summary" *ngIf="payrollPreview() && !isShareholder()">
         <article class="summary-card">
           <strong>{{ payrollPreview()!.summary.totalAttended }}</strong>
           <span>Buổi đã dạy trong kỳ</span>
@@ -103,7 +114,7 @@ import {
         </article>
       </div>
 
-      <ng-container *ngIf="payrollPreview()">
+      <ng-container *ngIf="payrollPreview() && !isShareholder()">
         <div class="accounting-note" *ngIf="accountingNotes().length; else emptyAccountingNote">
           <h3>Note kế toán</h3>
           <div class="note-item" *ngFor="let payroll of accountingNotes()">
@@ -124,11 +135,67 @@ import {
       </ng-container>
     </section>
 
+    <div class="shareholder-note" *ngIf="isShareholder()">
+      Dữ liệu chi tiết đã được ẩn danh cho vai trò cổ đông.
+    </div>
+
     <div *ngIf="loading()" class="loading">Đang tải...</div>
     <div *ngIf="error()" class="alert alert-error">❌ {{ error() }}</div>
     <div *ngIf="success()" class="alert alert-success">{{ success() }}</div>
 
     <!-- ═══ PENDING REPORT ═══ -->
+    <section
+      *ngIf="activeTab === 'pending' && canEditReports() && bulkPendingGroups().length > 0"
+      class="bulk-report-list">
+      <article
+        *ngFor="let group of bulkPendingGroups()"
+        class="bulk-report-card"
+        [attr.data-testid]="'bulk-report-card-' + group.key">
+        <div class="bulk-report-header">
+          <div class="bulk-report-summary">
+            <div class="bulk-report-meta">
+              <span class="badge bulk-badge">Bulk Offline</span>
+              <strong>{{ group.className }}</strong>
+              <span class="bulk-report-code">{{ group.classCode }}</span>
+            </div>
+            <p class="bulk-report-note">
+              1 lan nop cho {{ group.sessions.length }} hoc sinh ngay
+              {{ group.scheduledDate | date:'dd/MM/yyyy' }}.
+            </p>
+            <div class="bulk-report-students">
+              <span
+                *ngFor="let session of group.sessions"
+                class="bulk-student-chip">
+                {{ session.studentId.fullName }}
+              </span>
+            </div>
+          </div>
+          <button
+            class="btn secondary"
+            type="button"
+            [attr.data-testid]="'bulk-report-toggle-' + group.key"
+            (click)="toggleBulkGroup(group.key)">
+            {{ bulkEditingKey === group.key ? 'Thu gon' : 'Mo form hang loat' }}
+          </button>
+        </div>
+
+        <div
+          *ngIf="bulkEditingKey === group.key"
+          class="bulk-report-form-wrapper"
+          [attr.data-testid]="'bulk-report-form-' + group.key">
+          <app-teaching-report-form
+            [contextClassId]="group.classId"
+            [draftStorageKey]="bulkDraftStorageKey(group)"
+            [templates]="templates()"
+            [submitting]="submitting()"
+            submitLabel="Nop bao cao hang loat"
+            (formSubmit)="handleBulkSubmit(group, $event)"
+            (formCancel)="bulkEditingKey = ''">
+          </app-teaching-report-form>
+        </div>
+      </article>
+    </section>
+
     <div *ngIf="activeTab === 'pending' && !loading()">
       <app-teaching-report-pending
         [sessions]="pendingSessions()"
@@ -242,12 +309,87 @@ import {
       margin: 0; color: #334155; font-size: 13px; line-height: 1.5;
     }
     .empty-note p { color: #64748b; }
+    .shareholder-note {
+      margin-bottom: 16px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      font-size: 13px;
+      font-weight: 600;
+    }
     .loading { text-align: center; padding: 40px; color: #64748b; }
     
     /* Alert styles */
     .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; font-weight: 500; }
     .alert-error { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
     .alert-success { background: #f0fdf4; color: #16a34a; border: 1px solid #86efac; }
+    .bulk-report-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .bulk-report-card {
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .bulk-report-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      padding: 16px;
+    }
+    .bulk-report-summary {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .bulk-report-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: #1e3a8a;
+    }
+    .bulk-report-code {
+      color: #475569;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .bulk-badge {
+      background: #1d4ed8;
+      color: #fff;
+    }
+    .bulk-report-note {
+      margin: 0;
+      color: #334155;
+      font-size: 13px;
+    }
+    .bulk-report-students {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .bulk-student-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid #cbd5e1;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .bulk-report-form-wrapper {
+      padding: 0 16px 16px;
+      border-top: 1px solid #bfdbfe;
+    }
     
     .empty { text-align: center; padding: 40px; color: #94a3b8; font-size: 15px; }
 
@@ -347,6 +489,7 @@ import {
       .filter-group, .filter-group input, .btn-filter, .btn-ghost { width: 100%; }
       .session-header { flex-direction: column; align-items: flex-start; gap: 10px; }
       .btn-expand { width: 100%; }
+      .bulk-report-header { flex-direction: column; }
     }
   `]
 })
@@ -364,6 +507,47 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
   submitting = signal(false);
   error = signal('');
   success = signal('');
+  bulkPendingGroups = computed<BulkPendingGroup[]>(() => {
+    const groups = new Map<string, BulkPendingGroup>();
+
+    for (const session of this.pendingSessions()) {
+      const classId = session.classId?._id || '';
+      const classMode = session.classId?.classMode;
+      const scheduledDate = String(session.scheduledDate || '').slice(0, 10);
+      if (!classId || classMode !== 'OFFLINE' || !scheduledDate) {
+        continue;
+      }
+
+      const key = `${classId}-${scheduledDate}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.sessions.push(session);
+        continue;
+      }
+
+      groups.set(key, {
+        key,
+        classId,
+        className: session.classId?.name || 'N/A',
+        classCode: session.classId?.code || '',
+        scheduledDate,
+        sessions: [session],
+      });
+    }
+
+    return Array.from(groups.values())
+      .filter((group) => group.sessions.length > 1)
+      .map((group) => ({
+        ...group,
+        sessions: [...group.sessions].sort((left, right) =>
+          (left.studentId?.fullName || '').localeCompare(right.studentId?.fullName || ''),
+        ),
+      }))
+      .sort((left, right) =>
+        right.scheduledDate.localeCompare(left.scheduledDate)
+        || left.className.localeCompare(right.className),
+      );
+  });
 
   // ── State ──────────────────────────────────────────────────────────
   activeTab = 'pending';
@@ -374,6 +558,7 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
   toDate = '';
   teacherCodeSearch = '';
   selectedTeacherId = '';
+  bulkEditingKey = '';
 
   // ── Debounce: teacher code search (800ms) ─────────────────────────
   private teacherCode$ = new Subject<string>();
@@ -396,9 +581,9 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
       this.syncTeacherSelection();
     });
 
-    if (!this.isTeacher()) {
+    if (!this.isTeacher() && !this.isShareholder()) {
       this.loadTeacherOptions();
-    } else {
+    } else if (!this.isShareholder()) {
       // Teachers load their own templates on init
       this.loadTemplates();
     }
@@ -526,6 +711,35 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
 
   // ── Private data fetchers ─────────────────────────────────────────
 
+  async handleBulkSubmit(group: BulkPendingGroup, data: ReportFormValues) {
+    if (!this.canEditReports()) return;
+    this.submitting.set(true);
+    this.error.set('');
+    this.success.set('');
+    try {
+      const result = await this.sessionService.bulkSubmitTeachingReport({
+        classId: group.classId,
+        date: group.scheduledDate,
+        ...data,
+      });
+      this.bulkEditingKey = '';
+      const skipSuffix = result.skippedCount > 0
+        ? `, bo qua ${result.skippedCount} buoi bi khoa`
+        : '';
+      this.success.set(`Da nop bao cao hang loat cho ${result.updatedCount} buoi${skipSuffix}.`);
+      setTimeout(() => this.success.set(''), 4000);
+      await this.applyFilters(false);
+    } catch (e: any) {
+      const msg = e?.error?.message;
+      this.error.set(
+        Array.isArray(msg) ? msg.join('; ') : msg || e?.message || 'Loi nop bao cao hang loat.',
+      );
+      setTimeout(() => this.error.set(''), 5000);
+    } finally {
+      this.submitting.set(false);
+    }
+  }
+
   private async fetchPending() {
     const result = await this.sessionService.list({
       page: this.pendingPage,
@@ -560,6 +774,10 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
   }
 
   private async fetchPayrollPreview() {
+    if (this.isShareholder()) {
+      this.payrollPreview.set(null);
+      return;
+    }
     const teacherId = this.getSelectedTeacherId();
     if (!teacherId || !this.fromDate || !this.toDate) {
       this.payrollPreview.set(null);
@@ -624,6 +842,14 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
     }
   }
 
+  toggleBulkGroup(key: string) {
+    this.bulkEditingKey = this.bulkEditingKey === key ? '' : key;
+  }
+
+  bulkDraftStorageKey(group: BulkPendingGroup): string {
+    return `teaching-report-bulk-draft-${group.classId}-${group.scheduledDate}`;
+  }
+
   matchedTeacherByCode(): UserItem | null {
     if (!this.teacherCodeSearch.trim()) return null;
     return this.teachers().find(
@@ -634,11 +860,15 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
   }
 
   canEditReports(): boolean {
-    return this.isTeacher();
+    return this.isTeacher() && !this.isShareholder();
   }
 
   isTeacher() {
     return this.auth.userSignal()?.role === 'TEACHER';
+  }
+
+  isShareholder(): boolean {
+    return this.auth.userSignal()?.role === 'SHAREHOLDER';
   }
 
   formatCurrency(amount?: number): string {

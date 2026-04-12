@@ -1,8 +1,9 @@
 ﻿import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router } from '@angular/router';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import {
+  BankInfo,
   TeacherFullProfile,
   TeacherLinkedUser,
   TeacherProfile,
@@ -36,10 +37,14 @@ interface TeacherEditForm {
 @Component({
   selector: 'app-teacher-profiles',
   standalone: true,
-  imports: [CommonModule, FormsModule, FlowGuideComponent],
+  imports: [CommonModule, FormsModule, FlowGuideComponent, RouterLink],
   template: `
   <app-flow-guide featureKey="teacher-profiles"></app-flow-guide>
   <div class="profiles-page">
+    <div class="section-tabs" *ngIf="canViewRegistrations()">
+      <a routerLink="/app/teacher-profiles" class="tab-link active">Ho so giao vien</a>
+      <a routerLink="/app/teacher-registrations" class="tab-link">Giao vien dang ky</a>
+    </div>
     <section *ngIf="!selectedId">
       <div class="header">
         <div>
@@ -48,7 +53,7 @@ interface TeacherEditForm {
         </div>
         <div class="controls">
           <input class="search-input" [(ngModel)]="searchText" (input)="filterTeachers()" placeholder="Tim ten, ma TK, email, mon hoc" />
-          <select [(ngModel)]="statusFilter" (change)="filterTeachers()">
+          <select data-testid="teacher-status-filter" [(ngModel)]="statusFilter" (change)="filterTeachers()">
             <option value="ALL">Tat ca</option>
             <option value="ACTIVE">Dang hoat dong</option>
             <option value="APPROVED">Da duyet</option>
@@ -63,7 +68,11 @@ interface TeacherEditForm {
       <div *ngIf="error()" class="error">{{ error() }}</div>
 
       <div *ngIf="filteredList.length > 0" class="teachers-grid">
-        <article *ngFor="let teacher of filteredList" class="teacher-card" (click)="openProfile(teacher._id)">
+        <article
+          *ngFor="let teacher of filteredList"
+          class="teacher-card"
+          [attr.data-testid]="'teacher-card-' + teacher._id"
+          (click)="openProfile(teacher._id)">
           <div class="tc-header">
             <div class="tc-avatar">{{ getInitials(teacher) }}</div>
             <div class="tc-info">
@@ -71,7 +80,10 @@ interface TeacherEditForm {
               <div class="muted">{{ getUserCode(teacher) || 'Chua co ma TK' }}</div>
               <div class="muted">{{ getUserEmail(teacher) }}</div>
             </div>
-            <span class="badge" [attr.data-status]="teacher.status">{{ statusLabel(teacher.status) }}</span>
+            <span
+              class="badge"
+              data-testid="teacher-list-status-badge"
+              [attr.data-status]="teacher.status">{{ statusLabel(teacher.status) }}</span>
           </div>
 
           <div class="chips" *ngIf="teacher.subjects?.length">
@@ -102,6 +114,16 @@ interface TeacherEditForm {
         </div>
         <div class="detail-actions">
           <button *ngIf="canApproveSelected()" class="secondary-btn" (click)="approveSelected()">Duyet</button>
+          <button
+            *ngIf="canSuspendSelected()"
+            class="danger-btn"
+            data-testid="teacher-suspend-button"
+            (click)="suspendSelected()">Vo hieu hoa</button>
+          <button
+            *ngIf="canActivateSelected()"
+            class="secondary-btn"
+            data-testid="teacher-activate-button"
+            (click)="activateSelected()">Kich hoat lai</button>
           <button *ngIf="canEditSelected()" class="primary-btn" (click)="openEditModal()">Sua</button>
         </div>
       </div>
@@ -123,7 +145,7 @@ interface TeacherEditForm {
             <h3>Thong tin tai khoan</h3>
             <div class="info-grid">
               <div><label>Ma TK</label><span>{{ getProfileUserCode(profileData()) || 'Chua co' }}</span></div>
-              <div><label>Trang thai</label><span class="badge" [attr.data-status]="profileData()?.status">{{ statusLabel(profileData()?.status || '') }}</span></div>
+              <div><label>Trang thai</label><span class="badge" data-testid="teacher-detail-status-badge" [attr.data-status]="profileData()?.status">{{ statusLabel(profileData()?.status || '') }}</span></div>
               <div><label>Ho ten</label><span>{{ getProfileUserName(profileData()) }}</span></div>
               <div><label>Email</label><span>{{ getProfileUserEmail(profileData()) }}</span></div>
               <div><label>So dien thoai</label><span>{{ getProfileUserPhone(profileData()) || 'Chua cap nhat' }}</span></div>
@@ -316,6 +338,20 @@ interface TeacherEditForm {
   `,
   styles: [`
     .profiles-page { padding: 24px; max-width: 1280px; margin: 0 auto; }
+    .section-tabs { display: flex; gap: 10px; margin-bottom: 18px; }
+    .tab-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid #cbd5e1;
+      background: #fff;
+      color: #334155;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .tab-link.active { background: #0f766e; border-color: #0f766e; color: #fff; }
     .header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
     .header.compact { margin-bottom: 12px; }
     h2, h3, h4 { margin: 0; color: #1e293b; }
@@ -442,6 +478,7 @@ export class TeacherProfilesComponent implements OnInit {
   isDirector(): boolean { return this.auth.userSignal()?.role === 'DIRECTOR'; }
   isOps(): boolean { return this.auth.userSignal()?.role === 'OPS'; }
   isSale(): boolean { return this.auth.userSignal()?.role === 'SALE'; }
+  canViewRegistrations(): boolean { return this.isDirector() || this.isOps(); }
   showFinance(): boolean { return !this.isSale(); }
 
   canEditSelected(): boolean {
@@ -451,6 +488,15 @@ export class TeacherProfilesComponent implements OnInit {
 
   canApproveSelected(): boolean {
     return (this.isDirector() || this.isOps()) && this.profileData()?.status === 'PENDING';
+  }
+
+  canSuspendSelected(): boolean {
+    return (this.isDirector() || this.isOps()) && this.profileData()?.status === 'ACTIVE';
+  }
+
+  canActivateSelected(): boolean {
+    return (this.isDirector() || this.isOps())
+      && ['APPROVED', 'SUSPENDED', 'INACTIVE'].includes(this.profileData()?.status || '');
   }
 
   async loadTeachers() {
@@ -516,9 +562,35 @@ export class TeacherProfilesComponent implements OnInit {
     this.detailError.set('');
     try {
       await this.teacherService.approve(this.selectedId);
-      await Promise.all([this.loadTeachers(), this.loadFullProfile(this.selectedId)]);
+      await this.refreshSelectedProfile();
     } catch (e: any) {
       this.detailError.set(this.getErrorMessage(e, 'Khong the duyet giao vien'));
+    }
+  }
+
+  async suspendSelected() {
+    if (!this.selectedId || !this.canSuspendSelected()) return;
+    if (!confirm('Vo hieu hoa giao vien nay?')) return;
+
+    this.detailError.set('');
+    try {
+      await this.teacherService.suspend(this.selectedId);
+      await this.refreshSelectedProfile();
+    } catch (e: any) {
+      this.detailError.set(this.getErrorMessage(e, 'Khong the vo hieu hoa giao vien'));
+    }
+  }
+
+  async activateSelected() {
+    if (!this.selectedId || !this.canActivateSelected()) return;
+    if (!confirm('Kich hoat lai giao vien nay?')) return;
+
+    this.detailError.set('');
+    try {
+      await this.teacherService.activate(this.selectedId);
+      await this.refreshSelectedProfile();
+    } catch (e: any) {
+      this.detailError.set(this.getErrorMessage(e, 'Khong the kich hoat lai giao vien'));
     }
   }
 
@@ -584,9 +656,13 @@ export class TeacherProfilesComponent implements OnInit {
         password: this.editForm.password.trim(),
       };
     }
-    const bankInfo = this.buildBankInfoPayload();
-    if (bankInfo) {
-      payload.bankInfo = bankInfo;
+    const bankInfoResult = this.buildBankInfoPayload();
+    if (bankInfoResult.error) {
+      this.formError.set(bankInfoResult.error);
+      return;
+    }
+    if (bankInfoResult.bankInfo) {
+      payload.bankInfo = bankInfoResult.bankInfo;
     }
     if (this.isDirector()) {
       payload.managedSales = Array.from(new Set(this.editForm.managedSales.map((saleId) => saleId.trim()).filter(Boolean)));
@@ -597,7 +673,7 @@ export class TeacherProfilesComponent implements OnInit {
     try {
       await this.teacherService.updateProfile(this.selectedId, payload);
       this.showEditModal.set(false);
-      await Promise.all([this.loadTeachers(), this.loadFullProfile(this.selectedId)]);
+      await this.refreshSelectedProfile();
     } catch (e: any) {
       this.formError.set(this.getErrorMessage(e, 'Khong the cap nhat ho so giao vien'));
     } finally {
@@ -607,22 +683,29 @@ export class TeacherProfilesComponent implements OnInit {
 
   profileData(): TeacherProfile | null { return this.fullProfile()?.profile || null; }
   parseCommaList(value: string): string[] { return value.split(',').map((item) => item.trim()).filter(Boolean); }
-  buildBankInfoPayload() {
+  buildBankInfoPayload(): { bankInfo?: BankInfo; error?: string } {
     if (!this.showFinance()) {
-      return undefined;
+      return {};
     }
     const bankName = this.editForm.bankName.trim();
     const accountNumber = this.editForm.accountNumber.trim();
     const accountHolderName = this.editForm.accountHolderName.trim();
     const branch = this.editForm.bankBranch.trim();
     if (!bankName && !accountNumber && !accountHolderName && !branch) {
-      return undefined;
+      return {};
+    }
+    if (!bankName || !accountNumber || !accountHolderName) {
+      return {
+        error: 'Vui long nhap day du ten ngan hang, so tai khoan va chu tai khoan.',
+      };
     }
     return {
-      bankName,
-      accountNumber,
-      accountHolderName,
-      branch: branch || undefined,
+      bankInfo: {
+        bankName,
+        accountNumber,
+        accountHolderName,
+        branch: branch || undefined,
+      },
     };
   }
   blankForm(): TeacherEditForm {
@@ -686,6 +769,13 @@ export class TeacherProfilesComponent implements OnInit {
     return this.normalizeErrorMessage(error?.error?.message)
       || this.normalizeErrorMessage(error?.message)
       || fallback;
+  }
+
+  private async refreshSelectedProfile() {
+    if (!this.selectedId) {
+      return;
+    }
+    await Promise.all([this.loadTeachers(), this.loadFullProfile(this.selectedId)]);
   }
 
   private normalizeErrorMessage(value: any): string | null {

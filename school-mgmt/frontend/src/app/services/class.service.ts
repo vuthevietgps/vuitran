@@ -111,6 +111,7 @@ export interface ClassItem {
   name: string;
   code: string;
   classMode?: 'ONLINE' | 'OFFLINE';
+  coTeachers?: ClassCoTeacherConfig[];
   productPackage?: {
     _id: string;
     name: string;
@@ -151,10 +152,33 @@ export interface ClassItem {
   editHistory?: ClassEditHistoryEntry[];
 }
 
+export type ClassCoTeacherRole = 'SUPPORT' | 'REPORT' | 'ATTENDANCE';
+
+export interface ClassCoTeacherConfig {
+  teacherId: ClassMember | string;
+  role: ClassCoTeacherRole;
+  canManageAttendance: boolean;
+  canManageReports: boolean;
+  canCreateLink: boolean;
+  note?: string;
+  assignedBy?: ClassMember | null;
+  assignedAt?: string;
+}
+
+export interface ClassCoTeacherPayload {
+  teacherId: string;
+  role: ClassCoTeacherRole;
+  canManageAttendance: boolean;
+  canManageReports: boolean;
+  canCreateLink: boolean;
+  note?: string;
+}
+
 export interface ClassPayload {
   name: string;
   code: string;
   teacherId: string;
+  coTeachers?: ClassCoTeacherPayload[];
   saleId?: string;
   invoiceId?: string;
   productPackageId?: string;

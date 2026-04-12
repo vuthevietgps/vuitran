@@ -72,6 +72,17 @@ export class ExportController {
     this.sendCsv(res, csv, 'diem-danh');
   }
 
+  @Get('investor-summary')
+  @Roles(Role.SHAREHOLDER)
+  async exportInvestorSummary(
+    @Query('monthCount') monthCount: string,
+    @Req() req: AuthenticatedRequest,
+    @Res() res: Response,
+  ) {
+    const csv = await this.exportService.exportInvestorSummaryCsv({ monthCount }, req.user);
+    this.sendCsv(res, csv, 'bao-cao-co-dong');
+  }
+
   @Get('ads-parent-profit')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   async exportAdsParentProfit(

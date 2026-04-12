@@ -3,6 +3,16 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { AdsController } from './ads.controller';
 import { AdsService } from './ads.service';
 import { AdsAnalyticsService } from './ads-analytics.service';
+import { AdsAnalyticsProfitService } from './ads-analytics-profit.service';
+import { AdsAnalyticsParentService } from './ads-analytics-parent.service';
+import { AdsAnalyticsCohortService } from './ads-analytics-cohort.service';
+import { AdsAnalyticsSuggestionsService } from './ads-analytics-suggestions.service';
+import { AdsAnalyticsActionsService } from './ads-analytics-actions.service';
+import { AdsTokenService } from './ads-token.service';
+import { AdsCrudService } from './ads-crud.service';
+import { AdsFacebookSyncService } from './ads-facebook-sync.service';
+import { AdsCostSyncService } from './ads-cost-sync.service';
+import { AdsDataService } from './ads-data.service';
 import { GoogleAdsProvider } from './platforms/google-ads.service';
 import { TikTokAdsProvider } from './platforms/tiktok-ads.service';
 import { AdAccount, AdAccountSchema } from './schemas/ad-account.schema';
@@ -40,7 +50,22 @@ import { MarketingAttributionModule } from '../marketing-attribution/marketing-a
     MarketingAttributionModule,
   ],
   controllers: [AdsController],
-  providers: [AdsService, AdsAnalyticsService, GoogleAdsProvider, TikTokAdsProvider],
+  providers: [
+    AdsService,
+    AdsAnalyticsService,
+    AdsAnalyticsProfitService,
+    AdsAnalyticsParentService,
+    AdsAnalyticsCohortService,
+    AdsAnalyticsSuggestionsService,
+    AdsAnalyticsActionsService,
+    AdsTokenService,
+    AdsCrudService,
+    AdsFacebookSyncService,
+    AdsCostSyncService,
+    AdsDataService,
+    GoogleAdsProvider,
+    TikTokAdsProvider,
+  ],
   exports: [AdsService, AdsAnalyticsService],
 })
 export class AdsModule {}

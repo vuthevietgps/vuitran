@@ -3,6 +3,12 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
+export interface AiSuggestionPreview {
+  content: string;
+  conversationId: string;
+  previewOnly: boolean;
+}
+
 @Injectable({ providedIn: 'root' })
 export class MessageService {
   private http = inject(HttpClient);
@@ -56,6 +62,16 @@ export class MessageService {
       this.http.post<any>(
         `${this.base}/conversations/${conversationId}/send`,
         { content },
+        { withCredentials: true },
+      ),
+    );
+  }
+
+  previewAiSuggestion(conversationId: string): Promise<AiSuggestionPreview> {
+    return firstValueFrom(
+      this.http.post<AiSuggestionPreview>(
+        `${this.base}/conversations/${conversationId}/ai-suggest`,
+        {},
         { withCredentials: true },
       ),
     );

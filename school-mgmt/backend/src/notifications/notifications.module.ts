@@ -1,10 +1,14 @@
-import { Module, Global } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { Notification, NotificationSchema } from './schemas/notification.schema';
-import { NotificationsService } from './notifications.service';
-import { ExternalNotificationService } from './external-notification.service';
-import { NotificationsController } from './notifications.controller';
-import { User, UserSchema } from '../users/schemas/user.schema';
+import { Module, Global } from "@nestjs/common";
+import { MongooseModule } from "@nestjs/mongoose";
+import {
+  Notification,
+  NotificationSchema,
+} from "./schemas/notification.schema";
+import { NotificationsService } from "./notifications.service";
+import { ExternalNotificationService } from "./external-notification.service";
+import { NotificationsListener } from "./notifications.listener";
+import { NotificationsController } from "./notifications.controller";
+import { User, UserSchema } from "../users/schemas/user.schema";
 
 @Global()
 @Module({
@@ -15,7 +19,11 @@ import { User, UserSchema } from '../users/schemas/user.schema';
     ]),
   ],
   controllers: [NotificationsController],
-  providers: [NotificationsService, ExternalNotificationService],
+  providers: [
+    NotificationsService,
+    ExternalNotificationService,
+    NotificationsListener,
+  ],
   exports: [NotificationsService, ExternalNotificationService],
 })
 export class NotificationsModule {}

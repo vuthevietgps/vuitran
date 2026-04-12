@@ -3,13 +3,14 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { DashboardService } from '../../services/dashboard.service';
+import { FinancialControlService } from '../../services/financial-control.service';
 
 @Component({
   selector: 'app-director-dashboard',
   standalone: true,
   imports: [CommonModule, FormsModule, RouterModule],
   template: `
-  <div class="dashboard">
+  <div class="dashboard" data-testid="director-dashboard-page">
     <div class="header">
       <h2>Dashboard Giám đốc — Tổng quan hệ thống</h2>
       <div class="date-range">
@@ -19,7 +20,7 @@ import { DashboardService } from '../../services/dashboard.service';
     </div>
 
     <!-- Tab navigation -->
-    <div class="tabs">
+    <div class="tabs" data-testid="director-dashboard-tabs">
       <button [class.active]="activeTab === 'overview'" (click)="activeTab = 'overview'">Tổng quan</button>
       <button [class.active]="activeTab === 'accounting'" (click)="activeTab = 'accounting'">Kế toán</button>
       <button [class.active]="activeTab === 'ops'" (click)="activeTab = 'ops'">Vận hành</button>
@@ -31,7 +32,7 @@ import { DashboardService } from '../../services/dashboard.service';
     <div *ngIf="error()" class="error">{{ error() }}</div>
 
     <!-- ======================== TAB: TỔNG QUAN ======================== -->
-    <div *ngIf="data() && activeTab === 'overview'" class="grid">
+    <div *ngIf="data() && activeTab === 'overview'" class="grid" data-testid="director-overview-grid">
       <!-- Overview cards -->
       <div class="card highlight blue">
         <h4>Doanh thu</h4>
@@ -51,6 +52,47 @@ import { DashboardService } from '../../services/dashboard.service';
         <h4>Ticket mở</h4>
         <div class="value">{{ data()!.director.tickets.openCount }}</div>
         <small>Quá hạn: {{ data()!.director.tickets.overdueCount }}</small>
+      </div>
+
+      <a
+        *ngIf="data()!.director.tickets.overdueCount > 0"
+        class="card full alert-card danger clickable-card"
+        [routerLink]="['/app/tickets']"
+        [queryParams]="{ tab: 'all', overdue: 'true' }"
+        data-testid="director-overdue-alert">
+        <div class="alert-card-header">
+          <div>
+            <h4>Overdue Tickets</h4>
+            <p>{{ data()!.director.tickets.overdueCount }} ticket qua han SLA con mo.</p>
+          </div>
+          <span class="alert-pill danger" data-testid="director-overdue-count">{{ data()!.director.tickets.overdueCount }}</span>
+        </div>
+        <div class="alert-card-body">
+          <span class="alert-copy">Mo danh sach ticket da loc qua han</span>
+          <span class="alert-link">Xem ticket qua han</span>
+        </div>
+      </a>
+
+      <div
+        *ngIf="criticalAlerts().length > 0"
+        class="card full alert-card danger"
+        data-testid="director-critical-alerts">
+        <div class="alert-card-header">
+          <div>
+            <h4>Critical Anomalies</h4>
+            <p>Canh bao nghiem trong tu kiem soat tai chinh.</p>
+          </div>
+          <a class="alert-link standalone-link" [routerLink]="['/app/financial-control']">Mo kiem soat tai chinh</a>
+        </div>
+        <div class="alert-list">
+          <div *ngFor="let alert of criticalAlerts()" class="alert-item" data-testid="director-critical-alert-item">
+            <span class="alert-pill" [attr.data-severity]="alert.severity">{{ alert.severity }}</span>
+            <div class="alert-item-copy">
+              <strong>{{ alert.title }}</strong>
+              <p>{{ alert.message }}</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Users -->
@@ -149,6 +191,30 @@ import { DashboardService } from '../../services/dashboard.service';
       <div class="card highlight orange">
         <h4>Payroll đã trả</h4>
         <div class="value">{{ data()!.accounting.payroll.totalPaidThisPeriod | number:'1.0-0' }}đ</div>
+      </div>
+
+      <div
+        *ngIf="expenseBreakdownEntries().length > 0"
+        class="card full"
+        data-testid="director-expense-breakdown">
+        <div class="section-header">
+          <div>
+            <h4>Expense Breakdown</h4>
+            <p class="section-copy">Chi phi da thanh toan theo tung danh muc.</p>
+          </div>
+          <a class="alert-link standalone-link" [routerLink]="['/app/expenses']">Mo danh sach chi phi</a>
+        </div>
+        <div class="expense-breakdown-list">
+          <div *ngFor="let item of expenseBreakdownEntries()" class="expense-row" data-testid="director-expense-row">
+            <div class="expense-row-head">
+              <span class="expense-label" data-testid="director-expense-label">{{ expenseCategoryLabel(item[0]) }}</span>
+              <span class="expense-value" data-testid="director-expense-value">{{ item[1].total | number:'1.0-0' }} VND</span>
+            </div>
+            <div class="expense-bar-track">
+              <div class="expense-bar-fill" [style.width.%]="expensePercent(item[1].total)"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Financial summary -->
@@ -475,23 +541,26 @@ import { DashboardService } from '../../services/dashboard.service';
   </div>
   `,
   styles: [`
-    .dashboard { padding: 24px; }
+    .dashboard { padding: 24px; min-width: 0; box-sizing: border-box; }
     .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:12px; }
     .header h2 { margin:0; color:#1e293b; font-size:20px; }
     .date-range { display:flex; gap:8px; }
     .date-range input { padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; }
-    .tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:2px solid #e2e8f0; padding-bottom:0; }
+    .tabs {
+      display:flex; gap:4px; margin-bottom:20px; border-bottom:2px solid #e2e8f0; padding-bottom:0;
+      overflow-x:auto; overscroll-behavior-x:contain; scrollbar-width:thin;
+    }
     .tabs button {
       padding:10px 20px; border:none; background:transparent; cursor:pointer;
       font-size:14px; font-weight:600; color:#64748b; border-bottom:3px solid transparent;
-      transition: all 0.2s;
+      transition: all 0.2s; flex:0 0 auto; white-space:nowrap;
     }
     .tabs button:hover { color:#1e293b; background:#f8fafc; }
     .tabs button.active { color:#2563eb; border-bottom-color:#2563eb; }
     .loading { text-align:center; padding:40px; color:#64748b; }
     .error { background:#fef2f2; color:#dc2626; padding:12px 16px; border-radius:8px; margin-bottom:16px; }
-    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap:16px; }
-    .card { background:#fff; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,0.08); }
+    .grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap:16px; min-width:0; }
+    .card { background:#fff; border-radius:12px; padding:20px; box-shadow:0 1px 3px rgba(0,0,0,0.08); min-width:0; overflow-wrap:anywhere; }
     .card h4 { margin:0 0 12px; color:#475569; font-size:14px; text-transform:uppercase; letter-spacing:0.5px; }
     .card.wide { grid-column: span 2; }
     .card.full { grid-column: 1 / -1; }
@@ -538,13 +607,67 @@ import { DashboardService } from '../../services/dashboard.service';
     select { padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; width:200px; background:#fff; }
     h5 { margin:0 0 8px; color:#64748b; font-size:13px; }
     p { margin:4px 0; color:#475569; font-size:14px; }
-    @media (max-width:768px) { .card.wide { grid-column: span 1; } .recent-grid { grid-template-columns:1fr; } }
+    .section-header { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:16px; }
+    .section-copy { margin:4px 0 0; color:#64748b; }
+    .alert-card { border:1px solid #fecaca; background:linear-gradient(135deg, #fff5f5 0%, #ffffff 100%); }
+    .alert-card.danger { border-left:4px solid #dc2626; }
+    .alert-card-header { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:12px; }
+    .alert-card-body { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .alert-copy { color:#7f1d1d; font-size:14px; }
+    .alert-link {
+      color:#b91c1c; font-size:13px; font-weight:700; text-decoration:none;
+    }
+    .standalone-link { white-space:nowrap; }
+    .clickable-card { color:inherit; text-decoration:none; }
+    .clickable-card:hover { box-shadow:0 10px 24px rgba(220,38,38,0.12); }
+    .alert-pill {
+      display:inline-flex; align-items:center; justify-content:center;
+      min-width:44px; padding:6px 12px; border-radius:999px; font-size:12px; font-weight:700;
+      background:#fee2e2; color:#b91c1c;
+    }
+    .alert-pill[data-severity="CRITICAL"] { background:#fecaca; color:#991b1b; }
+    .alert-pill[data-severity="WARNING"] { background:#fed7aa; color:#c2410c; }
+    .alert-list { display:flex; flex-direction:column; gap:12px; }
+    .alert-item { display:flex; gap:12px; align-items:flex-start; padding:12px 0; border-top:1px solid #fee2e2; }
+    .alert-item:first-child { border-top:none; padding-top:0; }
+    .alert-item-copy p { margin:4px 0 0; color:#7f1d1d; }
+    .expense-breakdown-list { display:flex; flex-direction:column; gap:14px; }
+    .expense-row { display:flex; flex-direction:column; gap:8px; }
+    .expense-row-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+    .expense-label { color:#334155; font-weight:600; }
+    .expense-value { color:#0f172a; font-weight:700; }
+    .expense-bar-track { height:10px; border-radius:999px; background:#e2e8f0; overflow:hidden; }
+    .expense-bar-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #ef4444 0%, #f97316 100%); min-width:8px; }
+    @media (max-width:768px) {
+      .dashboard { padding:16px; }
+      .card.wide { grid-column: span 1; }
+      .recent-grid { grid-template-columns:1fr; }
+      .date-range { width:100%; flex-wrap:wrap; }
+      .date-range input { flex:1 1 180px; min-width:0; }
+      .alert-card-header,
+      .alert-card-body,
+      .section-header,
+      .expense-row-head {
+        flex-direction:column;
+        align-items:flex-start;
+      }
+    }
+    @media (max-width:480px) {
+      .dashboard { padding:12px; }
+      .tabs button { padding:10px 14px; }
+      .card { padding:16px; }
+      .value { font-size:24px; }
+      .recent-item,
+      .status-item { gap:8px; align-items:flex-start; flex-direction:column; }
+    }
   `]
 })
 export class DirectorDashboardComponent implements OnInit {
   data = signal<any>(null);
   loading = signal(false);
   error = signal('');
+  financialAlerts = signal<any>(null);
+  expenseBreakdown = signal<Record<string, { total: number; count: number }>>({});
   fromDate = '';
   toDate = '';
   activeTab = 'overview';
@@ -558,20 +681,41 @@ export class DirectorDashboardComponent implements OnInit {
     { value: 10, label: 'Tháng 10' }, { value: 11, label: 'Tháng 11' }, { value: 12, label: 'Tháng 12' },
   ];
 
-  constructor(private dashboardService: DashboardService) {}
+  constructor(
+    private dashboardService: DashboardService,
+    private financialControlService: FinancialControlService,
+  ) {}
 
   ngOnInit() { this.load(); }
 
   async load() {
     this.loading.set(true);
     this.error.set('');
+    this.financialAlerts.set(null);
+    this.expenseBreakdown.set({});
     try {
       const result = await this.dashboardService.getDirectorComprehensive(this.fromDate || undefined, this.toDate || undefined);
       this.data.set(result);
+      await this.loadFinancialPanels();
     } catch (e: any) {
       this.error.set(e?.error?.message || 'Lỗi tải dữ liệu');
     } finally {
       this.loading.set(false);
+    }
+  }
+
+  private async loadFinancialPanels() {
+    const [alertsResult, profitAndLossResult] = await Promise.allSettled([
+      this.financialControlService.getAlerts(),
+      this.financialControlService.getProfitAndLoss(this.fromDate || undefined, this.toDate || undefined),
+    ]);
+
+    if (alertsResult.status === 'fulfilled') {
+      this.financialAlerts.set(alertsResult.value);
+    }
+
+    if (profitAndLossResult.status === 'fulfilled') {
+      this.expenseBreakdown.set(profitAndLossResult.value.costs?.expenseByCategory || {});
     }
   }
 
@@ -589,6 +733,40 @@ export class DirectorDashboardComponent implements OnInit {
 
   objectEntries(obj: any): [string, any][] {
     return obj ? Object.entries(obj) : [];
+  }
+
+  criticalAlerts(): any[] {
+    const alerts = this.financialAlerts()?.alerts || [];
+    return alerts
+      .filter((item: any) => item?.severity === 'CRITICAL' || item?.severity === 'WARNING')
+      .slice(0, 4);
+  }
+
+  expenseBreakdownEntries(): [string, { total: number; count: number }][] {
+    return this.objectEntries(this.expenseBreakdown()).sort((left, right) => {
+      const leftTotal = Number(left[1]?.total || 0);
+      const rightTotal = Number(right[1]?.total || 0);
+      return rightTotal - leftTotal;
+    });
+  }
+
+  expensePercent(total: number): number {
+    const overall = this.expenseBreakdownEntries().reduce((sum, item) => sum + Number(item[1]?.total || 0), 0);
+    if (overall <= 0) return 0;
+    return Math.max(6, Math.round((total / overall) * 100));
+  }
+
+  expenseCategoryLabel(category: string): string {
+    const map: Record<string, string> = {
+      RENT: 'RENT',
+      EQUIPMENT: 'EQUIPMENT',
+      SALARY: 'SALARY',
+      UTILITIES: 'UTILITIES',
+      MARKETING: 'MARKETING',
+      SOFTWARE: 'SOFTWARE',
+      OTHER: 'OTHER',
+    };
+    return map[category] || category;
   }
 
   sessionLabel(s: string): string {

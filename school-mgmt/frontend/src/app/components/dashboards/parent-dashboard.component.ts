@@ -259,6 +259,13 @@ export class ParentDashboardComponent implements OnInit {
     }
     return Array.from(result.values()).slice(0, 10);
   });
+  readonly showNoChildrenEmptyState = computed(() => {
+    const dashboard = this.data();
+    if (!dashboard) {
+      return false;
+    }
+    return Number(dashboard.children?.total || 0) === 0 && this.children().length === 0;
+  });
 
   constructor(private readonly dashboardService: DashboardService) {}
 

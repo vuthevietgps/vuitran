@@ -29,6 +29,34 @@
   <div *ngIf="error()" class="state-card error">{{ error() }}</div>
 
   <ng-container *ngIf="data() as dashboard">
+    <section *ngIf="showNoChildrenEmptyState()" class="dashboard-empty-state" data-testid="parent-dashboard-empty-state">
+      <div class="dashboard-empty-copy">
+        <p class="section-kicker">Can lien ket hoc sinh</p>
+        <h3>Tai khoan nay chua co hoc sinh nao duoc lien ket</h3>
+        <p class="section-text">
+          He thong dang hien dashboard o che do huong dan de tranh hien nham cac bang hoc ba rong hoac so 0d khong co y
+          nghia. Hay lien he trung tam de lien ket hoc sinh hoac kiem tra lai thong tin thanh toan, ticket va chatbot.
+        </p>
+      </div>
+      <div class="dashboard-empty-actions">
+        <a class="link-card" routerLink="/app/parent-chat" data-testid="parent-dashboard-empty-cta-chat">
+          <strong>Mo chatbot ho tro</strong>
+          <p>Hoi nhanh ve trang thai lien ket hoc sinh hoac nhan huong dan tiep theo.</p>
+          <span>Mo chatbot</span>
+        </a>
+        <a class="link-card" routerLink="/app/tickets" data-testid="parent-dashboard-empty-cta-ticket">
+          <strong>Tao ticket ho tro</strong>
+          <p>Mo ticket neu can trung tam xu ly chinh thuc viec lien ket ho so hoc sinh.</p>
+          <span>Mo ticket</span>
+        </a>
+        <a class="link-card" routerLink="/app/parent-invoices" data-testid="parent-dashboard-empty-cta-invoices">
+          <strong>Kiem tra hoa don</strong>
+          <p>Xac nhan thong tin thanh toan va tai khoan phu huynh truoc khi tiep tuc hoc tap.</p>
+          <span>Mo hoa don</span>
+        </a>
+      </div>
+    </section>
+
     <section class="dashboard-section" data-tone="finance">
       <div class="section-head">
         <div>
@@ -167,6 +195,7 @@
         </div>
       </div>
 
+      <ng-container *ngIf="!showNoChildrenEmptyState(); else learningEmptyState">
       <div class="stats-grid">
         <article class="stat-card">
           <span class="stat-label">Hoc sinh dang theo doi</span>
@@ -329,6 +358,31 @@
           </ng-template>
         </article>
       </div>
+      </ng-container>
+      <ng-template #learningEmptyState>
+        <article class="panel parent-learning-empty" data-testid="parent-dashboard-learning-empty-state">
+          <div class="panel-head">
+            <h4>Chua co hoc sinh de hien hoc ba</h4>
+            <span class="panel-note">Cho lien ket</span>
+          </div>
+          <p class="empty">
+            Sau khi ho so hoc sinh duoc lien ket, dashboard nay se hien chuong trinh hoc, lop hoc, giao vien va bao cao
+            giang day theo tung con.
+          </p>
+          <div class="link-grid">
+            <a class="link-card" routerLink="/app/parent-chat">
+              <strong>Hoi chatbot ve lien ket hoc sinh</strong>
+              <p>Mo kenh hoi dap nhanh de biet can bo sung gi khi tai khoan chua thay hoc sinh.</p>
+              <span>Mo chatbot</span>
+            </a>
+            <a class="link-card" routerLink="/app/tickets">
+              <strong>Tao ticket de trung tam ho tro</strong>
+              <p>Mo ticket neu can doi chieu thong tin phu huynh, hoc sinh hoac lich hoc.</p>
+              <span>Mo ticket</span>
+            </a>
+          </div>
+        </article>
+      </ng-template>
     </section>
 
     <section class="dashboard-section" data-tone="support">

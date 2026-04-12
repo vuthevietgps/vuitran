@@ -126,8 +126,10 @@ export class DashboardController {
   getCalendarOverview(
     @Query('month') month?: number,
     @Query('year') year?: number,
+    @Query('teacherId') teacherId?: string,
+    @Query('classId') classId?: string,
   ) {
-    return this.dashboardService.getCalendarOverview(month, year);
+    return this.dashboardService.getCalendarOverview(month, year, teacherId, classId);
   }
 
   // ── Revenue & Profit Report ────────────────────────────────────
@@ -142,7 +144,7 @@ export class DashboardController {
 
   // ── Student Retention ──────────────────────────────────────────
   @Get('director/retention')
-  @Roles(Role.DIRECTOR)
+  @Roles(Role.DIRECTOR, Role.SHAREHOLDER)
   getRetentionMetrics() {
     return this.dashboardService.getRetentionMetrics();
   }

@@ -1,6 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ClassesService } from './classes.service';
+import { ClassesCoreService } from './classes-core.service';
+import { ClassesDataService } from './classes-data.service';
 import { ClassesController } from './classes.controller';
 import { Classroom, ClassroomSchema } from './schemas/class.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
@@ -27,7 +29,7 @@ import { MessagesModule } from '../messages/messages.module';
     forwardRef(() => MessagesModule),
   ],
   controllers: [ClassesController],
-  providers: [ClassesService],
+  providers: [ClassesDataService, ClassesCoreService, ClassesService],
   exports: [ClassesService, MongooseModule],
 })
 export class ClassesModule {}

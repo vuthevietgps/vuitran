@@ -231,6 +231,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-height: 40px;
+  justify-content: flex-start;
 }
 
 .status-copy strong {

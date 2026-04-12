@@ -1,6 +1,6 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormsModule } from '@angular/forms';
+import { FormBuilder, FormControl, FormGroup, FormsModule, ReactiveFormsModule, Validators } from '@angular/forms';
 import { AuthService } from '../services/auth.service';
 import { UserService, UserItem } from '../services/user.service';
 import {
@@ -18,7 +18,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 @Component({
   selector: 'app-payroll',
   standalone: true,
-  imports: [CommonModule, FormsModule, FlowGuideComponent],
+  imports: [CommonModule, FormsModule, ReactiveFormsModule, FlowGuideComponent],
   template: `
   <app-flow-guide featureKey="payroll"></app-flow-guide>
   <div class="payroll-page">
@@ -102,6 +102,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             <div class="card-amount">{{ formatMoney(preview.amounts.totalPendingFinalize) }}</div>
           </div>
 
+          <div class="card card-rose" *ngIf="(preview.summary.heldCount || 0) > 0">
+            <div class="card-number">{{ preview.summary.heldCount || 0 }}</div>
+            <div class="card-label">HELD</div>
+            <div class="card-amount">{{ formatMoney(preview.amounts.totalHeldPayout || 0) }}</div>
+          </div>
+
           <div class="card card-gray">
             <div class="card-number">{{ preview.summary.cancelled }}</div>
             <div class="card-label">Đã hủy</div>
@@ -147,6 +153,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                  title="Chờ OPS xác nhận: {{ preview.summary.pendingFinalize }} buổi">
               {{ preview.summary.pendingFinalize }}
             </div>
+            <div class="bar-segment held"
+                 [style.flex]="preview.summary.heldCount || 0"
+                 *ngIf="(preview.summary.heldCount || 0) > 0"
+                 title="HELD: {{ preview.summary.heldCount || 0 }} buổi">
+              {{ preview.summary.heldCount || 0 }}
+            </div>
           </div>
           <div class="bar-legend">
             <span class="legend-item"><span class="dot paid"></span> Đã thanh toán</span>
@@ -154,6 +166,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             <span class="legend-item"><span class="dot blocked"></span> Thiếu báo cáo</span>
             <span class="legend-item"><span class="dot waiting"></span> Chờ PH</span>
             <span class="legend-item"><span class="dot finalize"></span> Chờ OPS xác nhận</span>
+            <span class="legend-item" *ngIf="(preview.summary.heldCount || 0) > 0"><span class="dot held"></span> HELD</span>
           </div>
         </div>
 
@@ -209,6 +222,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
           <button [class.active]="sessionFilter === 'WAITING_FINALIZE'" (click)="sessionFilter = 'WAITING_FINALIZE'">
             Chờ OPS xác nhận ({{ preview.summary.pendingFinalize }})
           </button>
+          <button *ngIf="(preview.summary.heldCount || 0) > 0" [class.active]="sessionFilter === 'HELD'" (click)="sessionFilter = 'HELD'">
+            HELD ({{ preview.summary.heldCount || 0 }})
+          </button>
+          <button [class.active]="sessionFilter === 'CANCELLED'" (click)="sessionFilter = 'CANCELLED'">
+            Hủy ({{ preview.summary.cancelled }})
+          </button>
         </div>
 
         <!-- ── Sessions Table ── -->
@@ -231,7 +250,19 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
               <td>{{ s.classId?.name || s.classId?.code || '---' }}</td>
               <td>{{ s.studentId?.fullName || '---' }}</td>
               <td>{{ s.durationMinutes }}p</td>
-              <td class="amount">{{ formatMoney(s.teacherPayout) }}</td>
+              <td class="amount">
+                <div class="amount-stack">
+                  <span class="gross-amount">{{ formatMoney(getPreviewGrossPayout(s)) }}</span>
+                  <small *ngIf="hasOfflineMinGuarantee(s)" class="offline-min-guarantee-amount">
+                    Bảo chứng tối thiểu: +{{ formatMoney(s.offlineMinGuaranteeAmount || 0) }}
+                  </small>
+                  <small *ngIf="hasOfflineMinGuarantee(s) && !hasLatePenalty(s)" class="guarantee-net-amount">
+                    Thực nhận: {{ formatMoney(getPreviewNetPayout(s)) }}
+                  </small>
+                  <small *ngIf="hasLatePenalty(s)" class="late-penalty-amount">Phạt: -{{ formatMoney(s.penaltyAmount || 0) }}</small>
+                  <small *ngIf="hasLatePenalty(s)" class="late-net-amount">Thực nhận: {{ formatMoney(getPreviewNetPayout(s)) }}</small>
+                </div>
+              </td>
               <td>
                 <span class="badge" [class]="'badge-' + s.payrollStatus.toLowerCase()">
                   {{ getPayrollStatusLabel(s.payrollStatus) }}
@@ -249,6 +280,18 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                 <span *ngIf="s.payrollStatus === 'WAITING_PARENT'" class="reason-text">Chờ phụ huynh xác nhận</span>
                 <span *ngIf="s.payrollStatus === 'WAITING_FINALIZE'" class="reason-text reason-blocked">
                   ✗ Buổi {{ formatDate(s.scheduledDate) }} chưa được OPS Duyệt chốt
+                </span>
+                <span *ngIf="s.payrollStatus === 'HELD'" class="reason-text reason-held">
+                  <span class="hold-reason-token">{{ s.holdReason || 'HELD' }}</span>
+                  <span class="hold-reason-label">{{ getPayrollHoldReasonLabel(s.holdReason) }}</span>
+                  <small *ngIf="s.holdDescription" class="hold-reason-detail">{{ s.holdDescription }}</small>
+                </span>
+                <span *ngIf="hasOfflineMinGuarantee(s) && (s.payrollStatus === 'PAID' || s.payrollStatus === 'ELIGIBLE')" class="reason-text reason-guarantee">
+                  <span class="guarantee-reason-token">OFFLINE_MIN_GUARANTEE</span>
+                  <span class="guarantee-reason-label">OFFLINE tối thiểu {{ formatMoney(s.offlineMinGuaranteeFloor || 0) }}</span>
+                  <small class="guarantee-reason-detail">
+                    Lương thực tế {{ formatMoney(getPreviewGrossPayout(s)) }}, bù {{ formatMoney(s.offlineMinGuaranteeAmount || 0) }} do sĩ số điểm danh thấp.
+                  </small>
                 </span>
                 <span *ngIf="s.payrollStatus === 'PAID'" class="reason-text paid-text">&#10003; Đã thanh toán</span>
                 <span *ngIf="s.payrollStatus === 'ELIGIBLE'" class="reason-text eligible-text">Sẵn sàng thanh toán</span>
@@ -348,9 +391,13 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
               <span class="badge" [class]="'badge-' + p.status.toLowerCase()">
                 {{ getPayrollStatusLabel(p.status) }}
               </span>
+              <span *ngIf="hasExcludedItems(p._id)" class="badge badge-item-excluded payroll-item-indicator">
+                EXCLUDED
+              </span>
             </td>
             <td *ngIf="!isTeacher" (click)="$event.stopPropagation()">
               <div class="action-buttons">
+                <button *ngIf="p.status === 'DRAFT'" class="btn-sm btn-secondary" (click)="openEditPayroll(p, $event)">Sửa</button>
                 <button *ngIf="p.status === 'DRAFT'" class="btn-sm btn-primary" (click)="submitPayroll(p._id)">Gửi duyệt</button>
                 <button *ngIf="p.status === 'PENDING_REVIEW' && isDirector" class="btn-sm btn-success" (click)="approvePayroll(p._id)">Duyệt</button>
                 <button *ngIf="p.status === 'PENDING_REVIEW' && isDirector" class="btn-sm btn-danger" (click)="rejectPayroll(p._id)">Từ chối</button>
@@ -362,6 +409,28 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
           </tr>
         </tbody>
       </table>
+      <div *ngIf="showEditPayrollModal" class="modal-overlay" (click)="closeEditPayroll()">
+        <div class="modal-content" (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3>Điều chỉnh bảng lương</h3>
+            <button class="close-btn" (click)="closeEditPayroll()" [disabled]="savingPayrollEdit">&times;</button>
+          </div>
+          <div class="modal-body">
+            <form class="exclude-payroll-form" [formGroup]="editPayrollForm" (ngSubmit)="submitEditPayroll()">
+              <label for="payrollBonusAmount">Thưởng thêm</label>
+              <input id="payrollBonusAmount" type="number" formControlName="bonusAmount" min="0" />
+              <label for="payrollDeductionAmount">Khấu trừ thêm</label>
+              <input id="payrollDeductionAmount" type="number" formControlName="deductionAmount" min="0" />
+              <label for="payrollNotes">Ghi chú</label>
+              <textarea id="payrollNotes" name="payrollNotes" formControlName="notes" rows="4" placeholder="Nhập ghi chú điều chỉnh lương"></textarea>
+              <div class="exclude-payroll-actions">
+                <button type="button" class="btn-secondary" (click)="closeEditPayroll()" [disabled]="savingPayrollEdit">Hủy</button>
+                <button type="submit" class="btn-primary" [disabled]="savingPayrollEdit">{{ savingPayrollEdit ? 'Đang lưu...' : 'Lưu' }}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
       <div *ngIf="payrolls.length === 0 && !loadingPayrolls" class="empty-state">
         Chưa có bảng lương nào.
       </div>
@@ -375,11 +444,11 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
       </div>
 
       <!-- ── Payroll Detail Modal ── -->
-      <div *ngIf="selectedPayroll" class="modal-overlay" (click)="selectedPayroll = null">
+      <div *ngIf="selectedPayroll" class="modal-overlay" (click)="closePayrollDetail()">
         <div class="modal-content large-modal" (click)="$event.stopPropagation()">
           <div class="modal-header">
             <h3>Chi tiết bảng lương: {{ selectedPayroll.payrollCode }}</h3>
-            <button class="close-btn" (click)="selectedPayroll = null">&times;</button>
+            <button class="close-btn" (click)="closePayrollDetail()">&times;</button>
           </div>
 
           <div class="modal-body">
@@ -410,10 +479,11 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                   <th>Lương TT</th>
                   <th>Trạng thái</th>
                   <th>Ghi chú</th>
+                  <th *ngIf="isDirector">Hành động</th>
                 </tr>
               </thead>
               <tbody>
-                <tr *ngFor="let item of payrollItems">
+                <tr *ngFor="let item of payrollItems" class="payroll-item-row">
                   <td>{{ formatDate(item.sessionDate) }}</td>
                   <td>{{ item.classId?.name || item.classId?.code || '---' }}</td>
                   <td>{{ item.studentId?.fullName || '---' }}</td>
@@ -421,9 +491,52 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
                   <td class="amount">{{ formatMoney(item.adjustedPayout) }}</td>
                   <td><span class="badge" [class]="'badge-item-' + item.status.toLowerCase()">{{ item.status }}</span></td>
                   <td>{{ item.adjustmentReason || '' }}</td>
+                  <td *ngIf="isDirector">
+                    <button
+                      *ngIf="item.status !== 'EXCLUDED'"
+                      type="button"
+                      class="btn-sm btn-secondary btn-exclude-payroll"
+                      aria-label="Exclude Payroll"
+                      (click)="openExcludePayroll(item, $event)">
+                      Loại trừ
+                    </button>
+                  </td>
                 </tr>
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <div *ngIf="showExcludeModal" class="modal-exclude-payroll" (click)="closeExcludePayroll()">
+          <div class="exclude-payroll-card" (click)="$event.stopPropagation()">
+            <div class="modal-header">
+              <h3>Loại trừ khỏi bảng lương</h3>
+              <button type="button" class="close-btn" (click)="closeExcludePayroll()">&times;</button>
+            </div>
+
+            <form class="exclude-payroll-form" [formGroup]="excludePayrollForm" (ngSubmit)="submitExcludePayroll()">
+              <label for="adjustmentReason">Lý do loại trừ</label>
+              <textarea
+                id="adjustmentReason"
+                name="adjustmentReason"
+                formControlName="adjustmentReason"
+                required
+                rows="4"
+                placeholder="Nhập lý do loại trừ lương"></textarea>
+
+              <p class="form-error" *ngIf="excludePayrollForm.controls.adjustmentReason.invalid && excludePayrollForm.controls.adjustmentReason.touched">
+                Vui lòng nhập lý do loại trừ.
+              </p>
+
+              <div class="exclude-payroll-actions">
+                <button type="button" class="btn-secondary" (click)="closeExcludePayroll()" [disabled]="excludingPayroll">
+                  Hủy
+                </button>
+                <button type="submit" class="btn-danger" [disabled]="excludePayrollForm.invalid || excludingPayroll">
+                  {{ excludingPayroll ? 'Đang lưu...' : 'Lưu' }}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       </div>
@@ -500,6 +613,9 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .card-orange { border-left: 4px solid #ea580c; }
     .card-orange .card-number { color: #ea580c; }
     .card-orange .card-amount { color: #c2410c; }
+    .card-rose { border-left: 4px solid #be185d; }
+    .card-rose .card-number { color: #be185d; }
+    .card-rose .card-amount { color: #9d174d; }
     .card-gray { border-left: 4px solid #94a3b8; }
     .card-gray .card-number { color: #94a3b8; }
 
@@ -519,6 +635,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .bar-segment.blocked { background: #dc2626; }
     .bar-segment.waiting { background: #d97706; }
     .bar-segment.finalize { background: #ea580c; }
+    .bar-segment.held { background: #be185d; }
 
     .bar-legend { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
     .legend-item { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #475569; }
@@ -528,6 +645,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .dot.blocked { background: #dc2626; }
     .dot.waiting { background: #d97706; }
     .dot.finalize { background: #ea580c; }
+    .dot.held { background: #be185d; }
 
     /* Action row */
     .action-row { margin-bottom: 20px; }
@@ -558,6 +676,33 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .data-table tbody tr:hover { background: #f8fafc; }
     .clickable-row { cursor: pointer; }
     .amount { font-family: 'SF Mono', 'Consolas', monospace; text-align: right; }
+    .amount-stack {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 2px;
+    }
+    .gross-amount { font-weight: 700; }
+    .offline-min-guarantee-amount {
+      color: #0f766e;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .guarantee-net-amount {
+      color: #166534;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .late-penalty-amount {
+      color: #b45309;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .late-net-amount {
+      color: #0f766e;
+      font-size: 11px;
+      font-weight: 700;
+    }
     .positive { color: #16a34a; }
     .negative { color: #dc2626; }
     .bold { font-weight: 700; }
@@ -565,6 +710,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     /* Row colors by status */
     .row-blocked_no_report { background: #fef2f2; }
     .row-waiting_parent { background: #fffbeb; }
+    .row-held { background: #fff1f2; }
     .row-paid { background: #f0fdfa; }
     .row-eligible { background: #f0fdf4; }
 
@@ -579,6 +725,54 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .reason-col { font-size: 12px; }
     .reason-text { color: #64748b; }
     .reason-blocked { color: #dc2626; font-weight: 500; }
+    .reason-held {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 4px;
+      color: #9f1239;
+      font-weight: 600;
+    }
+    .hold-reason-token {
+      display: inline-flex;
+      width: fit-content;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #ffe4e6;
+      color: #be185d;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .hold-reason-label { color: #9f1239; }
+    .hold-reason-detail {
+      color: #881337;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: normal;
+    }
+    .reason-guarantee {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .guarantee-reason-token {
+      display: inline-flex;
+      width: fit-content;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #ecfdf5;
+      color: #0f766e;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .guarantee-reason-label { color: #0f766e; }
+    .guarantee-reason-detail {
+      color: #166534;
+      font-size: 11px;
+      line-height: 1.4;
+      white-space: normal;
+    }
     .paid-text { color: #0d9488; font-weight: 600; }
     .eligible-text { color: #16a34a; font-weight: 600; }
 
@@ -592,6 +786,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .badge-blocked_no_report { background: #fee2e2; color: #dc2626; }
     .badge-waiting_parent { background: #fef3c7; color: #d97706; }
     .badge-waiting_finalize { background: #ffedd5; color: #ea580c; }
+    .badge-held { background: #ffe4e6; color: #be185d; }
     .badge-cancelled { background: #f1f5f9; color: #64748b; }
     .badge-no_show { background: #f1f5f9; color: #64748b; }
     .badge-other { background: #f1f5f9; color: #64748b; }
@@ -654,6 +849,34 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     }
     .full-width { grid-column: 1 / -1; }
     .big-amount { font-size: 20px; font-weight: 700; color: #16a34a; }
+    .modal-exclude-payroll {
+      position: fixed; inset: 0; background: rgba(15, 23, 42, 0.48); display: flex;
+      align-items: center; justify-content: center; z-index: 1100; padding: 16px;
+    }
+    .exclude-payroll-card {
+      width: 420px; max-width: 100%; background: #fff; border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24); overflow: hidden;
+    }
+    .exclude-payroll-form {
+      display: flex; flex-direction: column; gap: 12px; padding: 20px 24px 24px;
+    }
+    .exclude-payroll-form label {
+      font-size: 13px; font-weight: 600; color: #334155;
+    }
+    .exclude-payroll-form textarea {
+      width: 100%; resize: vertical; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 10px 12px; font: inherit; color: #1e293b; min-height: 112px;
+    }
+    .exclude-payroll-form textarea:focus {
+      outline: 2px solid rgba(37, 99, 235, 0.18); border-color: #2563eb;
+    }
+    .exclude-payroll-actions {
+      display: flex; justify-content: flex-end; gap: 8px;
+    }
+    .form-error {
+      margin: 0; color: #dc2626; font-size: 12px; font-weight: 600;
+    }
+    .payroll-item-indicator { margin-left: 6px; }
 
     /* Pagination */
     .pagination {
@@ -688,11 +911,30 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
   `]
 })
 export class PayrollComponent implements OnInit {
+  excludePayrollForm: FormGroup<{
+    adjustmentReason: FormControl<string>;
+  }>;
+  editPayrollForm: FormGroup<{
+    bonusAmount: FormControl<number>;
+    deductionAmount: FormControl<number>;
+    notes: FormControl<string>;
+  }>;
+
   constructor(
     private auth: AuthService,
     private userService: UserService,
     private payrollService: PayrollService,
-  ) {}
+    private formBuilder: FormBuilder,
+  ) {
+    this.excludePayrollForm = this.formBuilder.nonNullable.group({
+      adjustmentReason: ['', [Validators.required]],
+    });
+    this.editPayrollForm = this.formBuilder.nonNullable.group({
+      bonusAmount: [0],
+      deductionAmount: [0],
+      notes: [''],
+    });
+  }
 
   // ── State ─────────────────────────────────────────────────────
 
@@ -723,6 +965,13 @@ export class PayrollComponent implements OnInit {
   // Detail modal
   selectedPayroll: PayrollItem | null = null;
   payrollItems: PayrollItemDetail[] = [];
+  showExcludeModal = false;
+  excludingPayroll = false;
+  excludingPayrollItemId = '';
+  showEditPayrollModal = false;
+  savingPayrollEdit = false;
+  editingPayrollId = '';
+  payrollItemStatuses: Record<string, string[]> = {};
 
   // Notification
   notification = '';
@@ -740,6 +989,25 @@ export class PayrollComponent implements OnInit {
     if (!this.preview) return [];
     if (this.sessionFilter === 'all') return this.preview.sessions;
     return this.preview.sessions.filter(s => s.payrollStatus === this.sessionFilter);
+  }
+
+  hasLatePenalty(session: PayrollPreviewSession): boolean {
+    return (session.penaltyAmount || 0) > 0;
+  }
+
+  hasOfflineMinGuarantee(session: PayrollPreviewSession): boolean {
+    return !!session.offlineMinGuaranteeApplied && (session.offlineMinGuaranteeAmount || 0) > 0;
+  }
+
+  getPreviewGrossPayout(session: PayrollPreviewSession): number {
+    if (this.hasOfflineMinGuarantee(session)) {
+      return session.offlineBasePayout ?? 0;
+    }
+    return session.teacherPayout ?? 0;
+  }
+
+  getPreviewNetPayout(session: PayrollPreviewSession): number {
+    return session.finalPayout ?? session.teacherPayout ?? 0;
   }
 
   // ── Lifecycle ─────────────────────────────────────────────────
@@ -824,6 +1092,7 @@ export class PayrollComponent implements OnInit {
       }
       this.payrolls = result.data;
       this.payrollMeta = result.meta;
+      await this.loadPayrollItemStatuses(result.data);
     } catch {
       this.showNotification('Lỗi tải bảng lương', 'error');
     } finally {
@@ -834,6 +1103,117 @@ export class PayrollComponent implements OnInit {
   async selectPayroll(p: PayrollItem) {
     this.selectedPayroll = p;
     this.payrollItems = await this.payrollService.getItems(p._id);
+    this.payrollItemStatuses[p._id] = this.payrollItems.map((item) => item.status);
+  }
+
+  closePayrollDetail() {
+    this.selectedPayroll = null;
+    this.closeExcludePayroll();
+  }
+
+  openEditPayroll(payroll: PayrollItem, event?: Event) {
+    event?.stopPropagation();
+    this.editingPayrollId = payroll._id;
+    this.editPayrollForm.reset({
+      bonusAmount: payroll.bonusAmount || 0,
+      deductionAmount: payroll.deductionAmount || 0,
+      notes: payroll.notes || '',
+    });
+    this.showEditPayrollModal = true;
+  }
+
+  closeEditPayroll() {
+    if (this.savingPayrollEdit) return;
+    this.showEditPayrollModal = false;
+    this.editingPayrollId = '';
+    this.editPayrollForm.reset({
+      bonusAmount: 0,
+      deductionAmount: 0,
+      notes: '',
+    });
+  }
+
+  async submitEditPayroll() {
+    const editedPayrollId = this.editingPayrollId;
+    if (!editedPayrollId) return;
+
+    this.savingPayrollEdit = true;
+    const wasSelected = this.selectedPayroll?._id === editedPayrollId;
+    try {
+      await this.payrollService.update(editedPayrollId, {
+        bonusAmount: this.editPayrollForm.getRawValue().bonusAmount,
+        deductionAmount: this.editPayrollForm.getRawValue().deductionAmount,
+        notes: this.editPayrollForm.getRawValue().notes.trim(),
+      });
+      this.showNotification('Đã cập nhật bảng lương!');
+      this.showEditPayrollModal = false;
+      this.editingPayrollId = '';
+      this.editPayrollForm.reset({
+        bonusAmount: 0,
+        deductionAmount: 0,
+        notes: '',
+      });
+      await this.loadPayrolls();
+      if (wasSelected) {
+        const refreshed = this.payrolls.find((entry) => entry._id === editedPayrollId);
+        if (refreshed) this.selectedPayroll = refreshed;
+      }
+    } catch {
+      this.showNotification('Lỗi cập nhật bảng lương', 'error');
+    } finally {
+      this.savingPayrollEdit = false;
+    }
+  }
+
+  openExcludePayroll(item: PayrollItemDetail, event?: Event) {
+    event?.stopPropagation();
+    if (!this.isDirector) return;
+
+    this.excludingPayrollItemId = item._id;
+    this.excludePayrollForm.reset({
+      adjustmentReason: item.adjustmentReason || '',
+    });
+    this.excludePayrollForm.markAsPristine();
+    this.excludePayrollForm.markAsUntouched();
+    this.showExcludeModal = true;
+  }
+
+  closeExcludePayroll() {
+    this.showExcludeModal = false;
+    this.excludingPayroll = false;
+    this.excludingPayrollItemId = '';
+    this.excludePayrollForm.reset({ adjustmentReason: '' });
+  }
+
+  async submitExcludePayroll() {
+    if (this.excludePayrollForm.invalid) {
+      this.excludePayrollForm.markAllAsTouched();
+      this.showNotification('Vui lòng nhập lý do loại trừ.', 'error');
+      return;
+    }
+
+    if (!this.selectedPayroll || !this.excludingPayrollItemId) return;
+    const item = this.payrollItems.find((entry) => entry._id === this.excludingPayrollItemId);
+    if (!item) {
+      this.showNotification('Không tìm thấy buổi dạy cần loại trừ.', 'error');
+      return;
+    }
+
+    this.excludingPayroll = true;
+    try {
+      await this.payrollService.adjustItem(this.selectedPayroll._id, item._id, {
+        adjustedPayout: item.adjustedPayout ?? item.teacherPayout,
+        status: 'EXCLUDED',
+        adjustmentReason: this.excludePayrollForm.getRawValue().adjustmentReason.trim(),
+      });
+      await this.refreshSelectedPayroll();
+      this.showNotification('Đã loại trừ buổi dạy khỏi bảng lương.');
+      this.closeExcludePayroll();
+    } catch {
+      this.showNotification('Không thể loại trừ buổi dạy khỏi bảng lương.', 'error');
+    } finally {
+      this.excludingPayroll = false;
+    }
   }
 
   async submitPayroll(id: string) {
@@ -921,6 +1301,7 @@ export class PayrollComponent implements OnInit {
       BLOCKED_NO_REPORT: 'Thiếu báo cáo',
       WAITING_PARENT: 'Chờ PH xác nhận',
       WAITING_FINALIZE: 'Chờ OPS xác nhận',
+      HELD: 'HELD',
       CANCELLED: 'Đã hủy',
       NO_SHOW: 'Vắng mặt',
       OTHER: 'Khác',
@@ -932,12 +1313,58 @@ export class PayrollComponent implements OnInit {
     return map[status] || status;
   }
 
+  getPayrollHoldReasonLabel(reason?: string): string {
+    const map: Record<string, string> = {
+      PARENT_REJECTED: 'Phụ huynh từ chối xác nhận',
+      LATE_REPORT: 'Báo cáo trễ',
+      DISPUTE_PENDING: 'Khiếu nại đang xử lý',
+      QUALITY_ISSUE: 'Vấn đề chất lượng',
+      ADMIN_HOLD: 'Kế toán tạm giữ',
+      OTHER: 'Lý do khác',
+    };
+    return reason ? (map[reason] || reason) : 'Đang chờ xử lý';
+  }
+
   getPayrollField(p: any, field: string): string {
     return p?.[field] || '---';
   }
 
   getPayrollNumber(p: any, field: string): number {
     return p?.[field] || 0;
+  }
+
+  hasExcludedItems(payrollId: string): boolean {
+    return (this.payrollItemStatuses[payrollId] || []).includes('EXCLUDED');
+  }
+
+  private async refreshSelectedPayroll() {
+    if (!this.selectedPayroll) return;
+
+    const [items, payroll] = await Promise.all([
+      this.payrollService.getItems(this.selectedPayroll._id),
+      this.payrollService.getById(this.selectedPayroll._id),
+    ]);
+
+    this.payrollItems = items;
+    this.payrollItemStatuses[this.selectedPayroll._id] = items.map((item) => item.status);
+    if (payroll) {
+      this.selectedPayroll = payroll;
+      this.payrolls = this.payrolls.map((entry) => entry._id === payroll._id ? payroll : entry);
+    }
+  }
+
+  private async loadPayrollItemStatuses(payrolls: PayrollItem[]) {
+    const entries = await Promise.all(
+      payrolls.map(async (payroll) => {
+        try {
+          const items = await this.payrollService.getItems(payroll._id);
+          return [payroll._id, items.map((item) => item.status)] as const;
+        } catch {
+          return [payroll._id, []] as const;
+        }
+      }),
+    );
+    this.payrollItemStatuses = Object.fromEntries(entries);
   }
 
   private showNotification(msg: string, type: 'success' | 'error' = 'success') {

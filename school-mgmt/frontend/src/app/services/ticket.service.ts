@@ -80,6 +80,9 @@ export interface TicketItem {
     summary: string;
     outcome: string;
     refundAmount: number;
+    refundLedgerEntryId?: string | { _id: string };
+    refundPaidAt?: string;
+    refundPaidBy?: { _id: string; fullName: string };
     resolvedBy?: { _id: string; fullName: string };
     resolvedAt: string;
   };

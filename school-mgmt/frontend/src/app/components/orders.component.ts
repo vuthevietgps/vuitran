@@ -21,265 +21,36 @@ const TYPE_LABELS: Record<string, string> = { NEW_ENROLLMENT: 'Đăng ký mới'
 const SOURCE_LABELS: Record<string, string> = { FACEBOOK: 'Facebook', GOOGLE: 'Google', TIKTOK: 'TikTok', ZALO: 'Zalo', WEBSITE: 'Website', REFERRAL: 'Giới thiệu', WALK_IN: 'Đến trực tiếp', OTHER: 'Khác' };
 const PAYMENT_PLAN_LABELS: Record<string, string> = { FULL: 'Thanh toán 1 lần', INSTALLMENT_2: 'Chia 2 đợt', INSTALLMENT_3: 'Chia 3 đợt' };
 
+const PRODUCT_SUBJECT_LABELS: Record<string, string> = {
+  ENGLISH: 'Tiếng Anh',
+  MATH: 'Toán',
+  LITERATURE: 'Ngữ văn',
+  PHYSICS: 'Vật lý',
+  CHEMISTRY: 'Hóa học',
+  BIOLOGY: 'Sinh học',
+  HISTORY: 'Lịch sử',
+  GEOGRAPHY: 'Địa lý',
+  INFORMATICS: 'Tin học',
+  SCIENCE: 'Khoa học',
+  MULTI_SUBJECT: 'Liên môn',
+  OTHER: 'Khác',
+};
+
+const DISCOUNT_EXCEEDS_TOTAL_MESSAGE = 'Giam gia khong duoc lon hon Tong tien don hang.';
+
 @Component({
   selector: 'app-orders',
   standalone: true,
   imports: [CommonModule, FormsModule, FlowGuideComponent],
-  template: `
-  <header class="head">
-    <div><h2>Đơn đăng ký học</h2><p>Nhập nhanh tài khoản phụ huynh, học sinh, lớp và hóa đơn ngay trong order.</p></div>
-    <button class="primary" (click)="openCreate()">+ Tạo đơn</button>
-  </header>
-  <app-flow-guide featureKey="orders"></app-flow-guide>
-
-  <section class="pipeline" *ngIf="pipeline()">
-    <div class="pipe" *ngFor="let s of pipelineStatuses" [style.borderLeftColor]="statusColor(s)">
-      <strong>{{ getPipeCount(s) }}</strong><span>{{ statusLabel(s) }}</span><small>{{ getPipeValue(s) | number }}d</small>
-    </div>
-  </section>
-
-  <section class="filters">
-    <input [(ngModel)]="keyword" placeholder="Tìm mã đơn, học sinh, phụ huynh..." />
-    <select [(ngModel)]="filterStatus"><option value="">Tất cả trạng thái</option><option *ngFor="let s of allStatuses" [value]="s">{{ statusLabel(s) }}</option></select>
-    <select [(ngModel)]="filterType"><option value="">Tất cả loại</option><option *ngFor="let t of allTypes" [value]="t.value">{{ t.label }}</option></select>
-    <button (click)="reload()">Làm mới</button>
-  </section>
-
-  <table class="data" *ngIf="filtered().length; else empty">
-    <thead><tr><th>Mã đơn</th><th>Loại</th><th>Học sinh</th><th>Phụ huynh</th><th>Giá tiền khóa học</th><th>Số tiền hóa đơn</th><th>Trạng thái</th><th>Sale</th><th></th></tr></thead>
-    <tbody>
-      <tr *ngFor="let o of filtered()" (click)="openDetail(o)" class="click">
-        <td><code>{{ o.orderCode }}</code></td>
-        <td>{{ typeLabel(o.orderType) }}</td>
-        <td>{{ o.studentName }}<div class="muted" *ngIf="o.studentCode">{{ o.studentCode }}</div></td>
-        <td>{{ o.parentName }}<div class="muted">{{ o.parentPhone }}</div></td>
-        <td class="right">{{ orderCoursePrice(o) | number }}d</td>
-        <td class="right">{{ orderInvoiceAmount(o) | number }}d</td>
-        <td><span class="badge" [style.background]="statusColor(o.status)+'20'" [style.color]="statusColor(o.status)">{{ statusLabel(o.status) }}</span></td>
-        <td>{{ o.saleName || '-' }}</td>
-        <td (click)="$event.stopPropagation()">
-          <button class="btn-sm" *ngIf="canEdit(o)" (click)="openEdit(o)">Sửa</button>
-          <button class="btn-sm" *ngIf="canSubmit(o)" (click)="submitOrder(o)">Gửi</button>
-          <button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="openApproveOrderModal(o)">Duyệt</button>
-        </td>
-      </tr>
-    </tbody>
-  </table>
-  <ng-template #empty><p class="empty">Chưa có đơn nào.</p></ng-template>
-
-  <div class="backdrop" *ngIf="showModal()">
-    <div class="modal wide">
-      <h3>{{ editingId ? 'Cập nhật đơn' : 'Tạo đơn đăng ký' }}</h3>
-      <form (ngSubmit)="submitForm()">
-        <div class="grid">
-          <label>Loại đơn<select name="orderType" [(ngModel)]="form.orderType" required><option *ngFor="let t of allTypes" [value]="t.value">{{ t.label }}</option></select></label>
-          <label>Nguồn<select name="leadSource" [(ngModel)]="form.leadSource" (ngModelChange)="onLeadSourceChange()"><option value="">--</option><option *ngFor="let s of allSources" [value]="s.value">{{ s.label }}</option></select></label>
-          <label *ngIf="['FACEBOOK','GOOGLE','TIKTOK'].includes(form.leadSource)">Nhóm QC<select name="adGroupId" [(ngModel)]="form.adGroupId" (ngModelChange)="onAdGroupChange()" [disabled]="form.leadId && form.adGroupFromLead"><option value="">--</option><option *ngFor="let g of orderAdGroups()" [value]="g._id">{{ g.name }}</option></select></label>
-          <label *ngIf="!isSaleRole">Sale phụ trách<select name="saleId" [(ngModel)]="form.saleId"><option value="">-- Tự suy từ dữ liệu liên kết --</option><option *ngFor="let sale of sales()" [value]="sale._id">{{ sale.fullName }}</option></select></label>
-        </div>
-
-        <h4>Liên kết hệ thống</h4>
-        <div class="grid two">
-          <div class="stack-field">
-            <label>Phụ huynh đã có<input name="parentLookup" [(ngModel)]="parentLookup" placeholder="Tìm tên, SĐT, email..." /><select name="parentUserId" [ngModel]="form.parentUserId || ''" (ngModelChange)="onParentSelected($event)"><option value="">-- Không liên kết --</option><option *ngFor="let p of filteredParents()" [value]="p._id">{{ formatParentOption(p) }}</option></select></label>
-            <div class="inline-actions"><button type="button" class="btn-sm" (click)="startNewParent()">+ Tạo mới PH</button><span class="muted">Tài khoản PH mới mặc định mật khẩu 123456</span></div>
-          </div>
-          <div class="stack-field">
-            <label>Học sinh đã có<input name="studentLookup" [(ngModel)]="studentLookup" placeholder="Tìm mã HS, tên..." /><select name="existingStudentId" [ngModel]="form.existingStudentId || ''" (ngModelChange)="onExistingStudentSelected($event)"><option value="">-- Không liên kết --</option><option *ngFor="let s of filteredStudents()" [value]="s._id">{{ formatStudentOption(s) }}</option></select></label>
-            <div class="inline-actions"><button type="button" class="btn-sm" (click)="startNewStudent()">+ Tạo mới HS</button></div>
-          </div>
-        </div>
-
-        <h4>Thông tin phụ huynh</h4>
-        <div class="grid">
-          <label>Tên PH<input name="parentName" [(ngModel)]="form.parentName" (ngModelChange)="onParentFieldsChanged()" required /></label>
-          <label>SĐT<input name="parentPhone" [(ngModel)]="form.parentPhone" (ngModelChange)="onParentFieldsChanged()" required /></label>
-          <label>Email<input name="parentEmail" [(ngModel)]="form.parentEmail" (ngModelChange)="onParentFieldsChanged()" /></label>
-          <label>Mã tài khoản<input name="parentUserCode" [(ngModel)]="form.parentUserCode" (ngModelChange)="onParentFieldsChanged()" /></label>
-          <label>Địa chỉ<input name="parentAddress" [(ngModel)]="form.parentAddress" /></label>
-          <label>Facebook<input name="parentFacebookLink" [(ngModel)]="form.parentFacebookLink" /></label>
-        </div>
-        <p class="muted">Nếu không liên kết phụ huynh có sẵn, order sẽ tự tạo tài khoản PH mới với mật khẩu 123456 khi duyệt.</p>
-
-        <h4>Thông tin học sinh</h4>
-        <div class="grid">
-          <label>Mã HS<input name="studentCode" [(ngModel)]="form.studentCode" (ngModelChange)="onStudentFieldsChanged()" placeholder="Để trống để hệ thống tự sinh" /></label>
-          <label>Tên HS<input name="studentName" [(ngModel)]="form.studentName" (ngModelChange)="onStudentFieldsChanged()" required /></label>
-          <label>Tuổi<input type="number" name="studentAge" [(ngModel)]="form.studentAge" min="3" max="25" (ngModelChange)="onStudentFieldsChanged()" /></label>
-          <label>Level<input name="studentLevel" [(ngModel)]="form.studentLevel" (ngModelChange)="onStudentFieldsChanged()" placeholder="VD: Starter, Movers..." /></label>
-          <label>Ngày sinh<input type="date" name="studentDob" [(ngModel)]="form.studentDob" /></label>
-          <label>Tháng sinh HS<input type="number" name="studentBirthMonth" [(ngModel)]="form.studentBirthMonth" min="1" max="12" /></label>
-          <label>Tháng sinh PH<input type="number" name="parentBirthMonth" [(ngModel)]="form.parentBirthMonth" min="1" max="12" /></label>
-        </div>
-        <p class="muted">Nếu không nhập mã HS, hệ thống sẽ tự sinh khi duyệt order.</p>
-        <div class="upload"><input type="file" accept="image/*" (change)="uploadStudentFace($event)" /><span *ngIf="isUploadingStudentFace()">Đang tải ảnh HS...</span><span *ngIf="!isUploadingStudentFace() && form.studentFaceImage">Đã có ảnh HS</span><button type="button" class="btn-sm" *ngIf="form.studentFaceImage" (click)="form.studentFaceImage = ''">Xóa ảnh</button></div>
-
-        <h4>Sản phẩm</h4>
-        <div class="item" *ngFor="let item of form.items; let i = index">
-          <div class="grid">
-            <label>Gói học<select [(ngModel)]="item.productId" [name]="'productId_'+i" (ngModelChange)="onProductSelect(item, $event)" required><option value="">-- Chọn --</option><option *ngFor="let p of products()" [value]="p._id">{{ p.name }}</option></select></label>
-            <label>Môn học<input [(ngModel)]="item.subject" [name]="'subject_'+i" placeholder="VD: Toán, Tiếng Anh..." /></label>
-            <label>Số buổi KH<input type="number" [(ngModel)]="item.sessions" [name]="'sessions_'+i" min="1" /></label>
-            <label>Số tiền gói<input type="number" [value]="productSuggestedPrice(item)" disabled /></label>
-            <label>Thời lượng cơ sở<input type="number" [(ngModel)]="item.baseDuration" [name]="'baseDuration_'+i" min="15" (ngModelChange)="calcItemAmount(item)" /></label>
-            <label>Thời lượng<input type="number" [(ngModel)]="item.sessionDuration" [name]="'duration_'+i" min="15" (ngModelChange)="calcItemAmount(item)" /></label>
-            <label>Giá cơ sở/buổi<input type="number" [(ngModel)]="item.pricePerSession" [name]="'price_'+i" min="0" (ngModelChange)="calcItemAmount(item)" /></label>
-            <label>Hình thức<select [(ngModel)]="item.teachingMode" [name]="'mode_'+i"><option value="ONLINE">ONLINE</option><option value="OFFLINE">OFFLINE</option></select></label>
-            <label>Buổi tặng<input type="number" [(ngModel)]="item.bonusSessions" [name]="'bonus_'+i" min="0" /></label>
-            <label>Học thử<input type="number" [(ngModel)]="item.trialSessions" [name]="'trial_'+i" min="0" /></label>
-            <label>Trạng thái<select [(ngModel)]="item.courseStatus" [name]="'course_'+i"><option value="">-- Tự động --</option><option *ngFor="let s of allCourseStatuses" [value]="s.value">{{ s.label }}</option></select></label>
-            <label>Lớp dự kiến<select [(ngModel)]="item.selectedClassId" [name]="'class_'+i" (ngModelChange)="onSelectedClassChange(item, $event)"><option value="">-- Tạo lớp mới / để sau --</option><option *ngFor="let c of classOptionsForItem(item)" [value]="c._id">{{ formatClassOption(c) }}</option></select></label>
-            <label>Giáo viên dự kiến<select [(ngModel)]="item.preferredTeacherId" [name]="'teacher_'+i" [disabled]="!!item.selectedClassId"><option value="">--</option><option *ngFor="let t of teachers()" [value]="t._id">{{ t.fullName }}</option></select></label>
-            <label *ngIf="item.teachingMode === 'ONLINE'">Lương GV/buổi<input type="number" [(ngModel)]="item.teacherPayPerSession" [name]="'teacherPaySession_'+i" min="0" /></label>
-            <label *ngIf="item.teachingMode === 'OFFLINE'">Lương GV/HS/buổi<input type="number" [(ngModel)]="item.teacherPayPerStudent" [name]="'teacherPayStudent_'+i" min="0" /></label>
-            <label>Sĩ số tối đa<input type="number" [(ngModel)]="item.maxStudents" [name]="'maxStudents_'+i" min="1" placeholder="Bỏ trống = không giới hạn" /></label>
-            <label>Lịch mong muốn<input [(ngModel)]="item.preferredSchedule" [name]="'schedule_'+i" /></label>
-            <label>Ghi chú<input [(ngModel)]="item.notes" [name]="'notes_'+i" /></label>
-            <label class="full-span">Mục tiêu học<textarea [(ngModel)]="item.learningGoals" [name]="'learningGoals_'+i" rows="2" placeholder="Mục tiêu học / yêu cầu lớp"></textarea></label>
-            <label class="full-span">Mô tả hóa đơn<textarea [(ngModel)]="item.invoiceDescription" [name]="'invoiceDescription_'+i" rows="2" placeholder="Nội dung hiển thị trên hóa đơn nếu cần"></textarea></label>
-          </div>
-          <button type="button" class="btn-sm" *ngIf="form.items.length > 1" (click)="removeItem(i)">Xóa item</button>
-        </div>
-        <button type="button" class="btn-sm" (click)="addItem()">+ Thêm sản phẩm</button>
-
-        <h4>Hóa đơn chờ duyệt</h4>
-        <div class="grid">
-          <label>Kế hoạch<select name="paymentPlan" [(ngModel)]="form.paymentPlan"><option *ngFor="let p of allPaymentPlans" [value]="p.value">{{ p.label }}</option></select></label>
-          <label>Ngày thanh toán<input type="date" name="paymentDate" [(ngModel)]="form.paymentDate" /></label>
-          <label>Hoa hồng sale<input type="number" name="saleCommission" [(ngModel)]="form.saleCommission" min="0" /></label>
-        </div>
-        <p class="muted section-note">Mỗi sản phẩm sẽ tạo một hóa đơn chờ duyệt. Số buổi HĐ, số hóa đơn và số tiền được nhập tại đây.</p>
-        <div class="invoice-list">
-          <div class="invoice-card" *ngFor="let item of form.items; let i = index">
-            <div class="invoice-card-head">
-              <div>
-                <strong>Hóa đơn {{ i + 1 }}</strong>
-                <div class="muted invoice-subtitle">{{ invoiceItemLabel(item, i) }}</div>
-              </div>
-              <button type="button" class="btn-sm" (click)="resetInvoiceAmount(item)">Tính lại tiền</button>
-            </div>
-            <div class="grid">
-              <label>Tiền hóa đơn<input type="number" [(ngModel)]="item.amount" [name]="'invoiceAmount_'+i" min="0" (ngModelChange)="markInvoiceAmountEdited(item)" (blur)="normalizeInvoiceAmount(item)" /></label>
-              <label>Số buổi HĐ<input type="number" [(ngModel)]="item.invoiceSessions" [name]="'invoiceSessions_'+i" min="0" (ngModelChange)="calcItemAmount(item)" (blur)="normalizeInvoiceSessions(item)" /></label>
-              <label>Số hóa đơn<input [(ngModel)]="item.invoiceNumber" [name]="'invoiceNumber_'+i" placeholder="VD: HD20260001" /></label>
-              <label>Lần TT<input type="number" [(ngModel)]="item.paymentRound" [name]="'paymentRound_'+i" min="1" placeholder="Để trống để tự động" /></label>
-            </div>
-          </div>
-        </div>
-        <div class="upload"><input type="file" accept="image/*" (change)="uploadReceipt($event)" /><span *ngIf="isUploadingReceipt()">Đang tải chứng từ...</span><span *ngIf="!isUploadingReceipt() && form.receiptImage">Đã có chứng từ</span><button type="button" class="btn-sm" *ngIf="form.receiptImage" (click)="form.receiptImage = ''">Xóa chứng từ</button></div>
-
-        <h4>Tổng kết</h4>
-        <div class="grid"><label>Tổng tiền<input type="number" [value]="calcTotal()" disabled /></label><label>Giảm giá<input type="number" name="discountAmount" [(ngModel)]="form.discountAmount" min="0" /></label><label>Lý do giảm<input name="discountReason" [(ngModel)]="form.discountReason" /></label><label>Thành tiền cuối<input type="number" [value]="calcFinal()" disabled /></label></div>
-        <label>Ghi chú tư vấn<textarea name="consultationNotes" [(ngModel)]="form.consultationNotes" rows="3"></textarea></label>
-        <div class="actions"><button type="submit" class="primary">{{ editingId ? 'Cập nhật' : 'Tạo đơn nháp' }}</button><button type="button" (click)="closeModal()">Hủy</button></div>
-        <p class="error" *ngIf="error()">{{ error() }}</p>
-      </form>
-    </div>
-  </div>
-
-  <div class="backdrop" *ngIf="detailOrder() as o">
-    <div class="modal wide">
-      <div class="detail-head"><h3>{{ o.orderCode }}</h3><span class="badge" [style.background]="statusColor(o.status)+'20'" [style.color]="statusColor(o.status)">{{ statusLabel(o.status) }}</span></div>
-      <div class="grid two">
-        <div><strong>Phụ huynh:</strong> {{ o.parentName }} - {{ o.parentPhone }}</div><div><strong>Mã PH:</strong> {{ o.parentUserCode || '-' }}</div>
-        <div><strong>Học sinh:</strong> {{ o.studentName }}</div><div><strong>Mã HS:</strong> {{ o.studentCode || '-' }}</div>
-        <div><strong>Level:</strong> {{ o.studentLevel || '-' }}</div><div><strong>Tuổi:</strong> {{ o.studentAge || '-' }}</div>
-        <div><strong>Ngày TT:</strong> {{ o.paymentDate ? (o.paymentDate | date:'yyyy-MM-dd') : '-' }}</div><div><strong>Kế hoạch TT:</strong> {{ paymentPlanLabel(o.paymentPlan) }}</div>
-        <div><strong>Giá tiền khóa học:</strong> {{ orderCoursePrice(o) | number }}d</div><div><strong>Số tiền hóa đơn:</strong> {{ orderInvoiceAmount(o) | number }}d</div>
-        <div><strong>Chứng từ:</strong>
-          <span *ngIf="o.receiptImage"><img [src]="getImageUrl(o.receiptImage)" alt="Chứng từ" class="receipt-thumb" (click)="showImageModal(getImageUrl(o.receiptImage))" /> HD sale</span>
-          <span *ngIf="!o.receiptImage">Chưa có</span>
-          <span *ngIf="o.approvalImage" style="margin-left:8px"><img [src]="getImageUrl(o.approvalImage)" alt="HD đối ứng" class="receipt-thumb" (click)="showImageModal(getImageUrl(o.approvalImage))" /> HD đối ứng</span>
-        </div><div><strong>PH tạo mới:</strong> mật khẩu 123456</div>
-      </div>
-      <div class="detail-items" *ngIf="o.items?.length">
-        <div class="item" *ngFor="let item of o.items; let i = index">
-          <div class="grid">
-            <div><strong>Item {{ i + 1 }}:</strong> {{ item.productName || item.productId }}</div>
-            <div><strong>Môn học:</strong> {{ item.subject || '-' }}</div>
-            <div><strong>Lớp dự kiến:</strong> {{ classLabel(item.selectedClassId) }}</div>
-            <div><strong>Giáo viên dự kiến:</strong> {{ teacherLabel(item.preferredTeacherId) }}</div>
-            <div><strong>Số hóa đơn:</strong> {{ item.invoiceNumber || 'Tự động' }}</div>
-            <div><strong>Lần TT:</strong> {{ item.paymentRound || 'Tự động' }}</div>
-            <div><strong>Trạng thái khóa học:</strong> {{ courseStatusLabel(item.courseStatus) }}</div>
-            <div><strong>Số buổi KH:</strong> {{ item.sessions || 0 }}</div>
-            <div><strong>Số buổi HĐ:</strong> {{ displayInvoiceSessions(item) }} + {{ item.bonusSessions || 0 }} tặng + {{ item.trialSessions || 0 }} học thử</div>
-            <div><strong>Số tiền gói:</strong> {{ productSuggestedPrice(item) | number }}d</div>
-            <div><strong>Hình thức:</strong> {{ item.teachingMode || '-' }}</div>
-            <div><strong>Thời lượng:</strong> {{ item.baseDuration || item.sessionDuration || '-' }} / {{ item.sessionDuration || '-' }} phút</div>
-            <div><strong>Giá cơ sở:</strong> {{ (item.pricePerSession || 0) | number }}d</div>
-            <div><strong>Lương GV:</strong> {{ teacherPayLabelForItem(item) }}</div>
-            <div><strong>Sĩ số tối đa:</strong> {{ item.maxStudents || '-' }}</div>
-            <div><strong>Lịch:</strong> {{ item.preferredSchedule || '-' }}</div>
-            <div><strong>Ghi chú:</strong> {{ item.notes || '-' }}</div>
-            <div class="full-span"><strong>Mục tiêu học:</strong> {{ item.learningGoals || '-' }}</div>
-            <div class="full-span"><strong>Mô tả hóa đơn:</strong> {{ item.invoiceDescription || '-' }}</div>
-          </div>
-        </div>
-      </div>
-      <p class="muted" *ngIf="o.processedResults">Invoice: {{ o.processedResults.invoiceIds?.length || 0 }} | Lớp: {{ o.processedResults.classIds?.length || 0 }}</p>
-      <p class="muted" *ngIf="o.consultationNotes">{{ o.consultationNotes }}</p>
-      <div class="summary-box" *ngIf="communicationSummary() as summary"><pre *ngIf="summary.saleMessage">{{ summary.saleMessage }}</pre><pre *ngIf="summary.parentMessage">{{ summary.parentMessage }}</pre><pre *ngIf="summary.teacherMessage">{{ summary.teacherMessage }}</pre></div>
-      <div class="actions"><button class="btn-sm" *ngIf="canEdit(o)" (click)="openEdit(o)">Sửa</button><button class="btn-sm" *ngIf="canSubmit(o)" (click)="submitOrder(o)">Gửi duyệt</button><button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="openApproveOrderModal(o)">Duyệt</button><button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="requestMoreInfo(o)">Cần bổ sung</button><button class="btn-sm" *ngIf="canApproveOrder(o)" (click)="rejectOrder(o)">Từ chối</button><button class="btn-sm" *ngIf="canCancel(o)" (click)="cancelOrder(o)">Hủy đơn</button><button type="button" (click)="detailOrder.set(null)">Đóng</button></div>
-    </div>
-  </div>
-
-  <div class="backdrop" *ngIf="showApproveOrderModal()">
-    <div class="modal">
-      <h3>Xác nhận duyệt đơn</h3>
-      <p *ngIf="approvingOrder() as ao">Đơn <strong>{{ ao.orderCode }}</strong> - {{ ao.studentName }} - <strong>{{ ao.finalAmount | number }}d</strong></p>
-      <div *ngIf="approvingOrder() as ao">
-        <div class="proof-compare">
-          <div class="proof-panel">
-            <span class="proof-label">Hóa đơn sale upload</span>
-            <img *ngIf="ao.receiptImage" [src]="getImageUrl(ao.receiptImage)" alt="Hóa đơn sale" class="preview" (click)="showImageModal(getImageUrl(ao.receiptImage))" />
-            <p *ngIf="!ao.receiptImage && requiresApprovalProof(ao)" class="muted">Chưa có hóa đơn sale upload.</p>
-            <p *ngIf="!ao.receiptImage && !requiresApprovalProof(ao)" class="muted">Đơn học thử offline 0đ, không bắt buộc upload hóa đơn sale.</p>
-          </div>
-        </div>
-        <label>Hóa đơn đối ứng
-          <span class="muted" *ngIf="requiresApprovalProof(ao)">Hóa đơn đối ứng do người duyệt upload để đối chiếu.</span>
-          <span class="muted" *ngIf="!requiresApprovalProof(ao)">Đơn học thử offline 0đ, ảnh đối ứng không bắt buộc.</span>
-          <input type="file" accept="image/*" (change)="handleOrderApproveImageChange($event)" />
-        </label>
-        <div *ngIf="orderApproveUploading()">Đang tải ảnh...</div>
-        <div *ngIf="orderApproveError()" class="error">{{ orderApproveError() }}</div>
-        <img *ngIf="orderApproveImage && !orderApproveUploading()" [src]="getImageUrl(orderApproveImage)" alt="HD đối ứng" class="preview" />
-      </div>
-      <div class="actions">
-        <button class="primary" [disabled]="orderApproveUploading()" (click)="confirmApproveOrder()">Duyệt đơn</button>
-        <button type="button" (click)="closeApproveOrderModal()">Hủy</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="backdrop" *ngIf="modalImage()" (click)="closeImageModal()">
-    <div class="image-modal"><span class="close" (click)="closeImageModal()">&times;</span><img [src]="modalImage()" alt="Ảnh" /></div>
-  </div>
-  `,
-  styles: [`
-    .head,.actions,.detail-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.head{padding:16px}.head p,.muted,.pipe small{color:#64748b}
-    .pipeline{display:flex;gap:12px;padding:0 16px 16px;flex-wrap:wrap}.pipe{background:#fff;border-left:4px solid #e2e8f0;border-radius:8px;padding:12px;display:flex;flex-direction:column;min-width:120px}
-    .filters,.grid{display:grid;gap:10px}.filters{grid-template-columns:2fr 1fr 1fr auto;padding:0 16px 16px}.grid{grid-template-columns:repeat(4,minmax(0,1fr))}.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .data{width:calc(100% - 32px);margin:0 16px 16px;border-collapse:collapse;background:#fff}.data th,.data td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}.right{text-align:right}.click{cursor:pointer}
-    .badge{display:inline-flex;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:600}.primary,.btn-sm{border-radius:8px;cursor:pointer}.primary{background:#0f766e;color:#fff;border:none;padding:10px 14px}.btn-sm{border:1px solid #cbd5e1;background:#fff;padding:6px 10px}
-    .empty{padding:16px;color:#64748b}.backdrop{position:fixed;inset:0;background:rgba(15,23,42,.35);overflow:auto;padding:24px;z-index:10}.modal{background:#fff;border-radius:12px;padding:20px;margin:auto;max-width:1200px}.wide{width:min(1200px,100%)}
-    label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#334155}input,select,textarea{width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;font:inherit}textarea{resize:vertical}
-    h4{margin:16px 0 10px}.upload{display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap}.item,.invoice-card{border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:10px;background:#f8fafc}.summary-box pre{white-space:pre-wrap;font-family:Consolas,'Courier New',monospace;font-size:12px}
-    .stack-field{display:flex;flex-direction:column;gap:8px}.inline-actions,.invoice-card-head{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.invoice-card-head{justify-content:space-between;margin-bottom:10px}.invoice-subtitle{margin-top:4px}.section-note{margin:0 0 10px}.invoice-list{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.detail-items{margin:12px 0}.full-span{grid-column:1 / -1}
-    .error{color:#dc2626;margin-top:10px}
-    .receipt-thumb{width:48px;height:48px;object-fit:cover;border-radius:6px;cursor:pointer;border:1px solid #e2e8f0}
-    .preview{max-width:300px;max-height:200px;border-radius:8px;margin-top:8px;border:1px solid #e2e8f0}
-    .proof-compare{margin:12px 0}.proof-panel{margin-bottom:8px}.proof-label{font-weight:600;font-size:12px;color:#64748b;display:block;margin-bottom:4px}
-    .image-modal{text-align:center;padding:20px}.image-modal img{max-width:90vw;max-height:85vh;border-radius:8px}.close{position:absolute;top:10px;right:20px;font-size:28px;color:#fff;cursor:pointer}
-    @media (max-width:900px){.filters,.grid,.grid.two{grid-template-columns:1fr}}
-  `],
+  templateUrl: './orders.component.html',
+  styleUrls: ['./orders.component.css'],
 })
 export class OrdersComponent implements OnInit {
   items = signal<OrderData[]>([]);
   pipeline = signal<OrderPipeline | null>(null);
   products = signal<ProductItem[]>([]);
   classes = signal<ClassItem[]>([]);
+  saleOfflineClasses = signal<ClassItem[]>([]);
   sales = signal<UserItem[]>([]);
   teachers = signal<UserItem[]>([]);
   parents = signal<UserItem[]>([]);
@@ -295,6 +66,7 @@ export class OrdersComponent implements OnInit {
   orderApproveError = signal('');
   orderApproveImage = '';
   modalImage = signal<string | null>(null);
+  lookupsLoaded = signal(false);
   editingId: string | null = null;
   keyword = '';
   filterStatus = '';
@@ -375,9 +147,15 @@ export class OrdersComponent implements OnInit {
   getPipeCount(s: string) { return this.pipeline()?.[s]?.count || 0; }
   getPipeValue(s: string) { return this.pipeline()?.[s]?.totalValue || 0; }
   emptyForm() { return { orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '', parentUserId: '', parentUserCode: '', parentAddress: '', parentFacebookLink: '', studentName: '', studentCode: '', studentLevel: '', studentDob: '', studentAge: null, studentBirthMonth: null, parentBirthMonth: null, studentFaceImage: '', existingStudentId: '', leadSource: '', leadId: '', saleId: this.isSaleRole ? this.currentUserId : '', adGroupId: '', adGroupName: '', adGroupFromLead: false, paymentPlan: 'FULL', paymentDate: '', receiptImage: '', saleCommission: 0, items: [this.buildFormItem()], discountAmount: 0, discountReason: '', consultationNotes: '' }; }
-  emptyItem() { return { productId: '', productName: '', sessions: 24, invoiceSessions: 24, sessionDuration: 90, baseDuration: 90, pricePerSession: 0, amount: 0, bonusSessions: 0, trialSessions: 0, courseStatus: '', teachingMode: 'ONLINE', preferredSchedule: '', selectedClassId: '', preferredTeacherId: '', paymentRound: null, teacherPayPerSession: 0, teacherPayPerStudent: 0, subject: '', learningGoals: '', maxStudents: null, invoiceDescription: '', invoiceNumber: '', notes: '' }; }
+  emptyItem() { return { productId: '', productName: '', sessions: 24, invoiceSessions: 24, sessionDuration: 90, baseDuration: 90, pricePerSession: 0, amount: 0, bonusSessions: 0, trialSessions: 0, courseStatus: '', teachingMode: 'ONLINE', preferredSchedule: '', selectedClassId: '', createNewClassWhenApproved: false, preferredTeacherId: '', paymentRound: null, teacherPayPerSession: 0, teacherPayPerStudent: 0, subject: '', learningGoals: '', maxStudents: null, invoiceDescription: '', invoiceNumber: '', notes: '' }; }
   buildFormItem(source: any = {}) {
     const item = { ...this.emptyItem(), ...source };
+    if (item.selectedClassId) item.createNewClassWhenApproved = false;
+    else if (source?.createNewClassWhenApproved === undefined) item.createNewClassWhenApproved = true;
+    if (!this.normalizeOptionalText(item.subject)) {
+      const subjectFromProduct = this.productSubjectById(item.productId);
+      if (subjectFromProduct) item.subject = subjectFromProduct;
+    }
     const computedAmount = this.computeItemAmount(item);
     const hasExplicitAmount = source?.amount !== undefined && source?.amount !== null && source?.amount !== '';
     item.amount = hasExplicitAmount ? this.roundMoneyToThousand(item.amount || 0) : computedAmount;
@@ -386,6 +164,11 @@ export class OrdersComponent implements OnInit {
   }
   normalizePhone(v?: string) { return (v || '').replace(/\D/g, ''); }
   normalizeOptionalText(v: any) { const n = String(v ?? '').trim(); return n || undefined; }
+  normalizeOptionalImageReference(v: any) {
+    const normalized = this.normalizeOptionalText(v);
+    if (!normalized) return undefined;
+    return /^(https?:\/\/|\/uploads\/|data:image\/)/.test(normalized) ? normalized : undefined;
+  }
   normalizeOptionalId(v: any) { const n = String(v ?? '').trim(); return n || undefined; }
   normalizeOptionalNumber(v: any) { if (v === '' || v === null || v === undefined) return undefined; const n = Number(v); return Number.isFinite(n) ? n : undefined; }
   roundMoneyToThousand(v: any) { const n = Number(v || 0); return Number.isFinite(n) && n > 0 ? Math.round(n / 1000) * 1000 : 0; }
@@ -407,7 +190,11 @@ export class OrdersComponent implements OnInit {
     this.students.set(students);
     this.sales.set(sales);
     this.teachers.set(teachers);
-    this.classes.set(this.mergeClasses(classes, saleOfflineClasses));
+    this.classes.set(classes);
+    this.saleOfflineClasses.set(saleOfflineClasses);
+    this.lookupsLoaded.set(true);
+    this.normalizeClassCreationFallback();
+    this.syncMissingSubjectsFromProducts();
   }
 
   async reload() {
@@ -467,28 +254,70 @@ export class OrdersComponent implements OnInit {
       .slice(0, 50);
   }
 
-  mergeClasses(primary: ClassItem[], secondary: ClassItem[]) {
-    const merged = [...primary];
-    for (const classroom of secondary) {
-      if (!merged.some((item) => item._id === classroom._id)) {
-        merged.push(classroom);
-      }
-    }
-    return merged;
-  }
-
   findParentById(id?: string | null) { return id ? this.parents().find((p) => p._id === id) : undefined; }
+  findProductById(id?: string | null) { return id ? this.products().find((p) => p._id === id) : undefined; }
   findStudentById(id?: string | null) { return id ? this.students().find((s) => s._id === id) : undefined; }
   findClassById(id?: string | null) { return id ? this.classes().find((c) => c._id === id) : undefined; }
+  availableProductsForItem(item: any) {
+    const selectedProductId = this.normalizeOptionalId(item?.productId);
+    return this.products().filter((product) => product.isActive !== false || product._id === selectedProductId);
+  }
+  productSubjectLabel(category?: string | null) {
+    const normalized = String(category || '').trim();
+    return normalized ? (PRODUCT_SUBJECT_LABELS[normalized] || normalized) : '';
+  }
+  productSubjectById(productId?: string | null) {
+    return this.productSubjectLabel(this.findProductById(productId)?.category);
+  }
+  syncMissingSubjectsFromProducts() {
+    if (!Array.isArray(this.form?.items)) return;
+    this.form.items.forEach((item: any) => {
+      if (this.normalizeOptionalText(item?.subject)) return;
+      const subject = this.productSubjectById(item?.productId);
+      if (subject) item.subject = subject;
+    });
+  }
   formatParentOption(p: UserItem) { return `${p.fullName} - ${p.phone || p.email || 'Không có liên hệ'}`; }
   formatStudentOption(s: StudentItem) { return `${s.studentCode} - ${s.fullName} - ${s.parentPhone || 'Không có SĐT PH'}`; }
   formatClassOption(c: ClassItem) {
     const teacherName = c.teacher && typeof c.teacher !== 'string' ? (c.teacher.fullName || '') : '';
-    return `${c.code} - ${c.name}${teacherName ? ` - ${teacherName}` : ''}`;
+    const studentCount = Number(c.studentCount ?? c.students?.length ?? 0);
+    const capacity = Number(c.maxStudents || 0);
+    const occupancyLabel = capacity > 0 ? `${studentCount}/${capacity} HS` : `${studentCount} HS`;
+    return `${c.code} - ${c.name}${teacherName ? ` - ${teacherName}` : ''} - ${occupancyLabel}`;
   }
   classLabel(id?: string | null) {
     const classroom = this.findClassById(id);
     return classroom ? this.formatClassOption(classroom) : '-';
+  }
+  plannedClassLabel(item: any) {
+    if (item?.selectedClassId) return this.classLabel(item.selectedClassId);
+    if (item?.createNewClassWhenApproved) return 'Tạo lớp mới khi duyệt';
+    return 'Để xếp lớp sau';
+  }
+  classSelectionValue(item: any) {
+    if (item?.selectedClassId) return item.selectedClassId;
+    return item?.createNewClassWhenApproved ? '__CREATE_NEW__' : '';
+  }
+  classSelectionHint(item: any) {
+    if (item?.selectedClassId) {
+      return 'Hệ thống sẽ gắn học sinh vào lớp đã chọn ngay sau khi hóa đơn được duyệt.';
+    }
+    if (item?.createNewClassWhenApproved) {
+      return 'Hệ thống sẽ tự tạo lớp mới theo giáo viên dự kiến ngay sau khi duyệt đơn.';
+    }
+    return 'Đơn vẫn được duyệt, nhưng lớp sẽ được xếp sau.';
+  }
+  canCreateClassWhenApproved(item: any) {
+    return !!this.normalizeOptionalId(item?.preferredTeacherId) || this.teachers().length > 0;
+  }
+  normalizeClassCreationFallback() {
+    if (this.teachers().length > 0 || !Array.isArray(this.form?.items)) return;
+    for (const item of this.form.items) {
+      if (!item?.selectedClassId && item?.createNewClassWhenApproved && !this.normalizeOptionalId(item?.preferredTeacherId)) {
+        item.createNewClassWhenApproved = false;
+      }
+    }
   }
   teacherLabel(id?: string | null) { return this.teachers().find((t) => t._id === id)?.fullName || '-'; }
   teacherPayLabelForItem(item: any) {
@@ -513,10 +342,11 @@ export class OrdersComponent implements OnInit {
     return !(items.length > 0 && items.every((item: any) => this.isOfflineTrialZeroAmountItem(item)));
   }
   productSuggestedPriceById(productId?: string | null) {
-    const product = productId ? this.products().find((entry) => entry._id === productId) : undefined;
+    const product = this.findProductById(productId);
     return this.roundMoneyToThousand(product?.suggestedPrice || 0);
   }
   orderItemCoursePrice(item: any) {
+    if (this.isOfflineTrialZeroAmountItem(item)) return 0;
     const suggestedPrice = this.productSuggestedPriceById(item?.productId);
     if (suggestedPrice > 0) return suggestedPrice;
     return this.roundMoneyToThousand(this.floorSessionCount(item?.sessions || 0) * Number(item?.pricePerSession || 0));
@@ -538,6 +368,21 @@ export class OrdersComponent implements OnInit {
     }
     return this.roundMoneyToThousand((order?.items || []).reduce((sum: number, item: any) => sum + Number(item?.amount || 0), 0));
   }
+  orderRequiredPaymentAmount(order: any) {
+    const totalAmount = this.roundMoneyToThousand(order?.totalAmount || 0);
+    const discountAmount = this.roundMoneyToThousand(order?.discountAmount || 0);
+    return Math.max(0, totalAmount - discountAmount);
+  }
+  partialPaymentPaidAmount(order: any) {
+    return Math.min(this.orderInvoiceAmount(order), this.orderRequiredPaymentAmount(order));
+  }
+  partialPaymentRemainingAmount(order: any) {
+    return Math.max(0, this.orderRequiredPaymentAmount(order) - this.partialPaymentPaidAmount(order));
+  }
+  showPartialPaymentStatus(order: any) {
+    const status = String(order?.status || '').toUpperCase();
+    return ['APPROVED', 'COMPLETED'].includes(status) && this.partialPaymentRemainingAmount(order) > 0;
+  }
   invoiceItemLabel(item: any, index: number) {
     const productName = item?.productName || this.products().find((product) => product._id === item?.productId)?.name || `Sản phẩm ${index + 1}`;
     const subject = this.normalizeOptionalText(item?.subject);
@@ -546,13 +391,25 @@ export class OrdersComponent implements OnInit {
   classOptionsForItem(item: any) {
     const desiredMode = String(item?.teachingMode || 'ONLINE').toUpperCase();
     const desiredProductId = String(item?.productId || '');
-    return this.classes().filter((classroom) => {
+    const sourceClasses = desiredMode === 'OFFLINE' && this.isSaleRole
+      ? this.saleOfflineClasses()
+      : this.classes();
+    const filtered = sourceClasses.filter((classroom) => {
       const classMode = String(classroom.classMode || 'ONLINE').toUpperCase();
       if (classMode !== desiredMode) return false;
       const classProductId = classroom.productPackage?._id || '';
       if (desiredProductId && classProductId && classProductId !== desiredProductId) return false;
       return true;
     });
+    const selectedClass = this.findClassById(item?.selectedClassId);
+    if (
+      selectedClass
+      && !filtered.some((classroom) => classroom._id === selectedClass._id)
+      && String(selectedClass.classMode || 'ONLINE').toUpperCase() === desiredMode
+    ) {
+      filtered.unshift(selectedClass);
+    }
+    return filtered;
   }
 
   startNewParent() {
@@ -618,7 +475,7 @@ export class OrdersComponent implements OnInit {
     this.form.studentAge = student.age ?? this.form.studentAge;
     this.form.studentBirthMonth = student.studentBirthMonth ?? this.form.studentBirthMonth;
     this.form.parentBirthMonth = student.parentBirthMonth ?? this.form.parentBirthMonth;
-    this.form.studentFaceImage = student.faceImage || this.form.studentFaceImage;
+    this.form.studentFaceImage = this.normalizeOptionalImageReference(student.faceImage) || '';
     this.studentLookup = this.formatStudentOption(student);
     const parent = student.parentUserId ? this.findParentById(student.parentUserId) : undefined;
     if (parent) this.applyParentSelection(parent);
@@ -687,6 +544,7 @@ export class OrdersComponent implements OnInit {
 
   onSelectedClassChange(item: any, classId: string) {
     item.selectedClassId = classId || '';
+    item.createNewClassWhenApproved = false;
     const classroom = this.findClassById(classId);
     if (!classroom) return;
     if (classroom.classMode) item.teachingMode = classroom.classMode;
@@ -697,7 +555,7 @@ export class OrdersComponent implements OnInit {
     if (classroom.teacher && typeof classroom.teacher !== 'string') {
       item.preferredTeacherId = classroom.teacher._id;
     }
-    item.subject = classroom.subject || item.subject;
+    item.subject = classroom.subject || this.productSubjectById(item.productId) || item.subject;
     item.learningGoals = classroom.learningGoals || item.learningGoals;
     item.baseDuration = classroom.baseDuration || item.baseDuration;
     item.sessionDuration = classroom.sessionDuration || item.sessionDuration;
@@ -706,6 +564,32 @@ export class OrdersComponent implements OnInit {
     item.teacherPayPerStudent = classroom.teacherPayPerStudent || item.teacherPayPerStudent;
     item.maxStudents = classroom.maxStudents ?? item.maxStudents;
     this.calcItemAmount(item);
+  }
+  onClassSelectionChange(item: any, selection: string) {
+    if (selection === '__CREATE_NEW__') {
+      item.selectedClassId = '';
+      item.createNewClassWhenApproved = true;
+      return;
+    }
+    item.createNewClassWhenApproved = false;
+    if (!selection) {
+      item.selectedClassId = '';
+      item.preferredTeacherId = '';
+      return;
+    }
+    this.onSelectedClassChange(item, selection);
+  }
+  onTeachingModeChange(item: any, teachingMode: string) {
+    item.teachingMode = teachingMode === 'OFFLINE' ? 'OFFLINE' : 'ONLINE';
+    const selectedClass = this.findClassById(item.selectedClassId);
+    if (selectedClass && String(selectedClass.classMode || 'ONLINE').toUpperCase() !== item.teachingMode) {
+      item.selectedClassId = '';
+    }
+    if (item.selectedClassId) {
+      item.createNewClassWhenApproved = false;
+      return;
+    }
+    item.createNewClassWhenApproved = true;
   }
 
   buildPayload() {
@@ -725,7 +609,7 @@ export class OrdersComponent implements OnInit {
       ...(this.normalizeOptionalNumber(this.form.studentAge) !== undefined ? { studentAge: this.normalizeOptionalNumber(this.form.studentAge) } : {}),
       ...(this.normalizeOptionalNumber(this.form.studentBirthMonth) !== undefined ? { studentBirthMonth: this.normalizeOptionalNumber(this.form.studentBirthMonth) } : {}),
       ...(this.normalizeOptionalNumber(this.form.parentBirthMonth) !== undefined ? { parentBirthMonth: this.normalizeOptionalNumber(this.form.parentBirthMonth) } : {}),
-      ...(this.normalizeOptionalText(this.form.studentFaceImage) ? { studentFaceImage: this.normalizeOptionalText(this.form.studentFaceImage) } : {}),
+      ...(this.normalizeOptionalImageReference(this.form.studentFaceImage) ? { studentFaceImage: this.normalizeOptionalImageReference(this.form.studentFaceImage) } : {}),
       ...((this.editingId || this.normalizeOptionalId(this.form.existingStudentId)) ? { existingStudentId: this.normalizeOptionalId(this.form.existingStudentId) ?? '' } : {}),
       ...(this.normalizeOptionalText(this.form.leadSource) ? { leadSource: this.normalizeOptionalText(this.form.leadSource) } : {}),
       ...(this.normalizeOptionalId(this.form.leadId) ? { leadId: this.normalizeOptionalId(this.form.leadId) } : {}),
@@ -734,7 +618,7 @@ export class OrdersComponent implements OnInit {
       ...(this.normalizeOptionalText(this.form.adGroupName) ? { adGroupName: this.normalizeOptionalText(this.form.adGroupName) } : {}),
       ...(this.normalizeOptionalText(this.form.paymentPlan) ? { paymentPlan: this.normalizeOptionalText(this.form.paymentPlan) } : {}),
       ...(this.normalizeOptionalText(this.form.paymentDate) ? { paymentDate: this.normalizeOptionalText(this.form.paymentDate) } : {}),
-      ...(this.normalizeOptionalText(this.form.receiptImage) ? { receiptImage: this.normalizeOptionalText(this.form.receiptImage) } : {}),
+      ...(this.normalizeOptionalImageReference(this.form.receiptImage) ? { receiptImage: this.normalizeOptionalImageReference(this.form.receiptImage) } : {}),
       ...(this.normalizeOptionalNumber(this.form.saleCommission) !== undefined ? { saleCommission: this.normalizeOptionalNumber(this.form.saleCommission) } : {}),
       items: (this.form.items || []).map((item: any) => ({
         productId: item.productId,
@@ -751,6 +635,7 @@ export class OrdersComponent implements OnInit {
         teachingMode: item.teachingMode || 'ONLINE',
         ...(this.normalizeOptionalText(item.preferredSchedule) ? { preferredSchedule: this.normalizeOptionalText(item.preferredSchedule) } : {}),
         ...(this.normalizeOptionalId(item.selectedClassId) ? { selectedClassId: this.normalizeOptionalId(item.selectedClassId) } : {}),
+        ...(item.createNewClassWhenApproved ? { createNewClassWhenApproved: true } : {}),
         ...(this.normalizeOptionalId(item.preferredTeacherId) ? { preferredTeacherId: this.normalizeOptionalId(item.preferredTeacherId) } : {}),
         ...(this.normalizeOptionalNumber(item.paymentRound) !== undefined ? { paymentRound: this.normalizeOptionalNumber(item.paymentRound) } : {}),
         ...(this.normalizeOptionalNumber(item.teacherPayPerSession) !== undefined ? { teacherPayPerSession: this.roundMoneyDownToThousand(item.teacherPayPerSession) } : {}),
@@ -780,15 +665,20 @@ export class OrdersComponent implements OnInit {
   });
 
   onProductSelect(item: any, productId: string) {
-    const p = this.products().find((v) => v._id === productId);
-    if (!p) return;
+    const p = this.findProductById(productId);
+    if (!p) {
+      item.productName = '';
+      if (!item.selectedClassId) item.subject = '';
+      return;
+    }
     item.productName = p.name;
+    item.subject = this.productSubjectLabel(p.category) || item.subject;
     item.sessions = p.defaultSessions || 24;
     item.invoiceSessions = p.defaultSessions || 24;
     item.sessionDuration = p.defaultSessionDuration || 90;
     item.baseDuration = p.defaultSessionDuration || item.baseDuration || 90;
     item.pricePerSession = p.pricePerSession || 0;
-    item.teachingMode = p.teachingMode === 'OFFLINE' ? 'OFFLINE' : 'ONLINE';
+    this.onTeachingModeChange(item, p.teachingMode === 'OFFLINE' ? 'OFFLINE' : 'ONLINE');
     item.amountManuallyEdited = false;
     this.calcItemAmount(item, true);
   }
@@ -844,6 +734,20 @@ export class OrdersComponent implements OnInit {
   }
   calcTotal() { return this.roundMoneyToThousand((this.form.items || []).reduce((s: number, i: any) => s + Number(i.amount || 0), 0)); }
   calcFinal() { return Math.max(0, this.roundMoneyToThousand(this.calcTotal() - this.roundMoneyToThousand(this.form.discountAmount || 0))); }
+  hasInvalidDiscount() {
+    const total = this.calcTotal();
+    const discount = this.roundMoneyToThousand(this.form.discountAmount || 0);
+    return discount > total;
+  }
+  submitDisabled() {
+    return this.isUploadingStudentFace() || this.isUploadingReceipt() || this.hasInvalidDiscount();
+  }
+  discountExceedsTotalMessage() { return DISCOUNT_EXCEEDS_TOTAL_MESSAGE; }
+  onDiscountAmountChange() {
+    if (this.error() === DISCOUNT_EXCEEDS_TOTAL_MESSAGE && !this.hasInvalidDiscount()) {
+      this.error.set('');
+    }
+  }
   addItem() { this.form.items.push(this.buildFormItem()); }
   removeItem(i: number) { this.form.items.splice(i, 1); }
 
@@ -883,16 +787,36 @@ export class OrdersComponent implements OnInit {
     }
   }
 
-  openCreate() { this.editingId = null; this.form = this.emptyForm(); this.parentLookup = ''; this.studentLookup = ''; this.error.set(''); this.showModal.set(true); }
-  openEdit(o: OrderData) { this.editingId = o._id; this.form = { ...this.emptyForm(), ...o, parentUserId: o.parentUserId || '', existingStudentId: o.existingStudentId || '', items: (o.items || []).map((i: any) => this.buildFormItem(i)) }; this.error.set(''); this.parentLookup = ''; this.studentLookup = ''; this.showModal.set(true); this.detailOrder.set(null); }
+  openCreate() { this.editingId = null; this.form = this.emptyForm(); this.normalizeClassCreationFallback(); this.parentLookup = ''; this.studentLookup = ''; this.error.set(''); this.showModal.set(true); }
+  openEdit(o: OrderData) { this.editingId = o._id; this.form = { ...this.emptyForm(), ...o, parentUserId: o.parentUserId || '', existingStudentId: o.existingStudentId || '', items: (o.items || []).map((i: any) => this.buildFormItem(i)) }; this.syncMissingSubjectsFromProducts(); this.error.set(''); this.parentLookup = ''; this.studentLookup = ''; this.showModal.set(true); this.detailOrder.set(null); }
   openDetail(o: OrderData) { this.detailOrder.set(o); }
   closeModal() { this.showModal.set(false); this.editingId = null; this.parentLookup = ''; this.studentLookup = ''; }
   canEdit(o: OrderData) { return o.status === 'DRAFT' || o.status === 'NEEDS_INFO'; }
   canSubmit(o: OrderData) { return o.status === 'DRAFT' || o.status === 'NEEDS_INFO'; }
   canApproveOrder(o: OrderData) { return o.status === 'SUBMITTED' && this.canApprove; }
-  canCancel(o: OrderData) { return !['COMPLETED', 'CANCELLED'].includes(o.status); }
+  canCancel(o: OrderData) {
+    if (['COMPLETED', 'CANCELLED'].includes(o.status)) return false;
+    if (o.status === 'APPROVED') {
+      return this.auth.userSignal()?.role === Role.DIRECTOR;
+    }
+    return true;
+  }
 
   async submitForm() {
+    this.error.set('');
+    const missingTeacherForNewClass = (this.form.items || []).find(
+      (item: any) =>
+        item?.createNewClassWhenApproved
+        && !this.normalizeOptionalId(item?.preferredTeacherId),
+    );
+    if (missingTeacherForNewClass) {
+      this.error.set('Vui lòng chọn giáo viên dự kiến nếu muốn hệ thống tạo lớp mới khi duyệt.');
+      return;
+    }
+    if (this.hasInvalidDiscount()) {
+      this.error.set(DISCOUNT_EXCEEDS_TOTAL_MESSAGE);
+      return;
+    }
     const payload = this.buildPayload();
     const res = this.editingId
       ? await this.orderService.update(this.editingId, payload)
@@ -935,7 +859,7 @@ export class OrdersComponent implements OnInit {
   }
 
   getImageUrl(imagePath: string): string {
-    if (imagePath.startsWith('http')) return imagePath;
+    if (imagePath.startsWith('http') || imagePath.startsWith('data:image/')) return imagePath;
     return `${environment.apiBase}${imagePath}`;
   }
 

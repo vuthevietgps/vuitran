@@ -16,6 +16,7 @@ import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
 import { normalizeDate } from '../common/utils/date.utils';
 import { InlineUpdateDto } from './dto/inline-update.dto';
+import { StorageUrlService } from '../common/storage-url.service';
 
 @Injectable()
 export class ReportsService {
@@ -26,7 +27,70 @@ export class ReportsService {
     private readonly sessionModel: Model<SessionDocument>,
     @InjectModel(PayrollTransaction.name)
     private readonly payrollTxModel: Model<PayrollTransactionDocument>,
+    private readonly storageUrlService: StorageUrlService,
   ) {}
+
+  private objectIdToString(value: any): string | null {
+    if (!value) return null;
+    if (typeof value === 'string') return value;
+    if (value instanceof Types.ObjectId) return value.toString();
+    if (value?._id) return this.objectIdToString(value._id);
+    if (typeof value.toString === 'function') {
+      const str = value.toString();
+      return str && str !== '[object Object]' ? str : null;
+    }
+    return null;
+  }
+
+  private buildShareholderDisplayLabel(prefix: string, code: unknown, fallbackId: unknown): string {
+    const normalizedCode = typeof code === 'string' ? code.trim() : '';
+    if (normalizedCode) {
+      return normalizedCode;
+    }
+
+    const id = this.objectIdToString(fallbackId);
+    if (id) {
+      return `${prefix} #${id.slice(-6).toUpperCase()}`;
+    }
+
+    return `${prefix} #AN_DANH`;
+  }
+
+  private sanitizeTeachingReportRowForShareholder(row: any) {
+    const studentLabel = this.buildShareholderDisplayLabel(
+      'HS',
+      row?.studentId?.studentCode,
+      row?.studentId?._id,
+    );
+    const teacherLabel = this.buildShareholderDisplayLabel(
+      'GV',
+      row?.teacherId?.userCode,
+      row?.teacherId?._id,
+    );
+
+    return {
+      ...row,
+      imageUrl: undefined,
+      salaryAmount: null,
+      penaltyAmount: null,
+      bonusAmount: null,
+      studentId: row?.studentId
+        ? {
+            ...row.studentId,
+            fullName: studentLabel,
+            age: undefined,
+            faceImage: undefined,
+          }
+        : row?.studentId,
+      teacherId: row?.teacherId
+        ? {
+            ...row.teacherId,
+            fullName: teacherLabel,
+            email: undefined,
+          }
+        : row?.teacherId,
+    };
+  }
 
   // ──────────────────────────────────────────────────────────────────────
   // GET /reports/teaching
@@ -188,6 +252,7 @@ export class ReportsService {
                   _id: '$teacher._id',
                   fullName: '$teacher.fullName',
                   email: '$teacher.email',
+                  userCode: '$teacher.userCode',
                 },
               },
             },
@@ -196,11 +261,13 @@ export class ReportsService {
       },
     ]);
 
-    const fetchedData = result[0]?.data ?? [];
+    const fetchedData = actor?.role === Role.SHAREHOLDER
+      ? (result[0]?.data ?? []).map((row: any) => this.sanitizeTeachingReportRowForShareholder(row))
+      : (result[0]?.data ?? []);
     const total = result[0]?.metadata?.length > 0 ? result[0].metadata[0].total : 0;
 
     return {
-      data: fetchedData,
+      data: this.storageUrlService.transformSensitiveAssetUrls(fetchedData),
       meta: {
         total,
         page,

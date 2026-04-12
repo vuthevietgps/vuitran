@@ -68,4 +68,5 @@ export class Wallet {
 
 export const WalletSchema = SchemaFactory.createForClass(Wallet);
 WalletSchema.index({ status: 1 });
+WalletSchema.index({ status: 1, balance: -1 });
 

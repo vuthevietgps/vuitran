@@ -4,7 +4,9 @@ import { roleGuard } from './guards/role.guard';
 import { Role } from './models/role.enum';
 
 const ALL_ROLES = Object.values(Role) as Role[];
-const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE];
+const NON_SHAREHOLDER_ROLES = ALL_ROLES.filter((role) => role !== Role.SHAREHOLDER) as Role[];
+const INVESTOR_ROLES = [Role.DIRECTOR, Role.SHAREHOLDER];
+const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.SHAREHOLDER];
 
 export const routes: Routes = [
   {
@@ -23,9 +25,19 @@ export const routes: Routes = [
       import('./components/student-attendance.component').then((m) => m.StudentAttendanceComponent),
   },
   {
+    path: 'co-dong',
+    loadComponent: () =>
+      import('./components/landing-pages/shareholder-collaboration-landing.component').then((m) => m.ShareholderCollaborationLandingComponent),
+  },
+  {
     path: 'lp/:slug',
     loadComponent: () =>
       import('./components/landing-pages/public-landing-page.component').then((m) => m.PublicLandingPageComponent),
+  },
+  {
+    path: 'tuyen-dung-giao-vien',
+    loadComponent: () =>
+      import('./components/landing-pages/public-teacher-recruitment.component').then((m) => m.PublicTeacherRecruitmentComponent),
   },
   {
     path: 'app',
@@ -37,6 +49,12 @@ export const routes: Routes = [
         path: 'dashboard',
         loadComponent: () =>
           import('./components/dashboards/dashboard.component').then((m) => m.DashboardComponent),
+      },
+      {
+        path: 'investor-dashboard',
+        canActivate: [roleGuard(INVESTOR_ROLES)],
+        loadComponent: () =>
+          import('./components/dashboards/investor-dashboard.component').then((m) => m.InvestorDashboardComponent),
       },
       {
         path: 'users',
@@ -58,7 +76,7 @@ export const routes: Routes = [
       },
       {
         path: 'classes',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.SALE, Role.ACCOUNTING])],
         loadComponent: () =>
           import('./components/classes.component').then((m) => m.ClassesComponent),
       },
@@ -94,7 +112,7 @@ export const routes: Routes = [
       },
       {
         path: 'teaching-report',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.TEACHER, Role.ACCOUNTING])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING, Role.SHAREHOLDER])],
         loadComponent: () =>
           import('./components/teaching-report.component').then((m) => m.TeachingReportComponent),
       },
@@ -118,7 +136,7 @@ export const routes: Routes = [
       },
       {
         path: 'tickets',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.PARENT])],
+        canActivate: [roleGuard(NON_SHAREHOLDER_ROLES)],
         loadComponent: () =>
           import('./components/tickets.component').then((m) => m.TicketsComponent),
       },
@@ -130,7 +148,7 @@ export const routes: Routes = [
       },
       {
         path: 'teaching-materials',
-        canActivate: [roleGuard(ALL_ROLES)],
+        canActivate: [roleGuard(NON_SHAREHOLDER_ROLES)],
         loadComponent: () =>
           import('./components/teaching-materials.component').then((m) => m.TeachingMaterialsComponent),
       },
@@ -154,6 +172,7 @@ export const routes: Routes = [
       },
       {
         path: 'notifications',
+        canActivate: [roleGuard(NON_SHAREHOLDER_ROLES)],
         loadComponent: () =>
           import('./components/notifications.component').then((m) => m.NotificationsComponent),
       },
@@ -183,15 +202,27 @@ export const routes: Routes = [
       },
       {
         path: 'teacher-profiles',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SALE])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])],
         loadComponent: () =>
           import('./components/teacher-profiles.component').then((m) => m.TeacherProfilesComponent),
       },
       {
         path: 'teacher-profiles/:id',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SALE])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])],
         loadComponent: () =>
           import('./components/teacher-profiles.component').then((m) => m.TeacherProfilesComponent),
+      },
+      {
+        path: 'teacher-registrations',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])],
+        loadComponent: () =>
+          import('./components/teacher-registrations.component').then((m) => m.TeacherRegistrationsComponent),
+      },
+      {
+        path: 'teacher-registrations/:id',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])],
+        loadComponent: () =>
+          import('./components/teacher-registrations.component').then((m) => m.TeacherRegistrationsComponent),
       },
       {
         path: 'leads',
@@ -237,13 +268,13 @@ export const routes: Routes = [
       },
       {
         path: 'loans',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER])],
         loadComponent: () =>
           import('./components/loans.component').then((m) => m.LoansComponent),
       },
       {
         path: 'financial-control',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER])],
         loadComponent: () =>
           import('./components/financial-control.component').then((m) => m.FinancialControlComponent),
       },
@@ -255,7 +286,7 @@ export const routes: Routes = [
       },
       {
         path: 'ads-analytics',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER, Role.SHAREHOLDER])],
         loadComponent: () =>
           import('./components/ads-analytics.component').then((m) => m.AdsAnalyticsComponent),
       },
@@ -303,7 +334,7 @@ export const routes: Routes = [
       },
       {
         path: 'aging-report',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER])],
         loadComponent: () =>
           import('./components/aging-report.component').then((m) => m.AgingReportComponent),
       },
@@ -339,6 +370,7 @@ export const routes: Routes = [
       },
       {
         path: 'messages',
+        canActivate: [roleGuard(NON_SHAREHOLDER_ROLES)],
         loadComponent: () =>
           import('./components/messages.component').then((m) => m.MessagesComponent),
       },
@@ -350,6 +382,7 @@ export const routes: Routes = [
       },
       {
         path: 'internal-handbook',
+        canActivate: [roleGuard(NON_SHAREHOLDER_ROLES)],
         loadComponent: () =>
           import('./components/internal-handbook.component').then((m) => m.InternalHandbookComponent),
       },

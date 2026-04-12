@@ -1,4 +1,5 @@
-import { IsEmail, IsEnum, IsMongoId, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEmail, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Role } from '../../common/interfaces/role.enum';
 
 export class UpdateUserDto {
@@ -41,4 +42,11 @@ export class UpdateUserDto {
   @IsMongoId()
   @IsOptional()
   saleOwnerId?: string;
+
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  @Max(100)
+  @IsOptional()
+  ownershipPercentage?: number;
 }

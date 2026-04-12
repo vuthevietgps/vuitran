@@ -57,19 +57,19 @@ export class SessionsController {
 
   /** Danh sách sessions (filter, paginate, sort) */
   @Get()
-  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT, Role.SALE)
+  @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING, Role.TEACHER, Role.PARENT, Role.SALE, Role.SHAREHOLDER)
   findAll(@Query() query: QuerySessionDto, @Req() req: AuthenticatedRequest) {
     // Force ownership filter for PARENT and TEACHER to prevent data leaks
     if (req.user.role === Role.PARENT) {
-      return this.sessionsService.findAll({ ...query, parentUserId: req.user.sub });
+      return this.sessionsService.findAll({ ...query, parentUserId: req.user.sub }, req.user);
     }
     if (req.user.role === Role.TEACHER) {
-      return this.sessionsService.findAll({ ...query, teacherId: req.user.sub });
+      return this.sessionsService.findAll(query, req.user);
     }
     if (req.user.role === Role.SALE) {
       return (this.sessionsService as any).findAllBySale(req.user.sub, query);
     }
-    return this.sessionsService.findAll(query);
+    return this.sessionsService.findAll(query, req.user);
   }
 
   /** Thống kê tổng hợp */
@@ -88,7 +88,7 @@ export class SessionsController {
   @Get('my-sessions')
   @Roles(Role.TEACHER)
   getMyTeacherSessions(@Req() req: AuthenticatedRequest, @Query() query: QuerySessionDto) {
-    return this.sessionsService.findAll({ ...query, teacherId: req.user.sub });
+    return this.sessionsService.findAll(query, req.user);
   }
 
   /** Lấy sessions của PH đang đăng nhập */
@@ -121,9 +121,8 @@ export class SessionsController {
   getSessionsPendingReport(@Req() req: AuthenticatedRequest, @Query() query: QuerySessionDto) {
     return this.sessionsService.findAll({
       ...query,
-      teacherId: req.user.sub,
       hasReport: 'false',
-    } as any);
+    } as any, req.user);
   }
 
   /** GV lấy danh sách sessions đã có báo cáo (phân trang chuẩn theo server) */
@@ -132,9 +131,8 @@ export class SessionsController {
   getSessionsCompletedReport(@Req() req: AuthenticatedRequest, @Query() query: QuerySessionDto) {
     return this.sessionsService.findAll({
       ...query,
-      teacherId: req.user.sub,
       hasReport: 'true',
-    } as any);
+    } as any, req.user);
   }
 
   /** Sale tạo yêu cầu thay đổi buổi học */
@@ -176,6 +174,13 @@ export class SessionsController {
   // ── UPDATE ──────────────────────────────────────────────────────
 
   /** Sửa thông tin buổi học (chỉ SCHEDULED) */
+  /** Teacher bulk route must stay before @Patch(':id') to avoid matching as a dynamic id. */
+  @Patch('bulk-teaching-report')
+  @Roles(Role.TEACHER)
+  bulkSubmitTeachingReport(@Body() dto: BulkTeachingReportDto, @Req() req: AuthenticatedRequest) {
+    return this.sessionsService.bulkSubmitTeachingReport(dto.classId, dto.date, req.user.sub, dto);
+  }
+
   @Patch(':id')
   @Roles(Role.OPS, Role.DIRECTOR)
   update(
@@ -251,12 +256,6 @@ export class SessionsController {
   /** GV nộp báo cáo giảng dạy hàng loạt cho toàn bộ sessions của lớp OFFLINE trong 1 ngày.
    * Route này phải đặt TRƯỚC :id/teaching-report để tránh NestJS parse "bulk-teaching-report" thành MongoId.
    */
-  @Patch('bulk-teaching-report')
-  @Roles(Role.TEACHER)
-  bulkSubmitTeachingReport(@Body() dto: BulkTeachingReportDto, @Req() req: AuthenticatedRequest) {
-    return this.sessionsService.bulkSubmitTeachingReport(dto.classId, dto.date, req.user.sub, dto);
-  }
-
   /** GV nộp / cập nhật báo cáo giảng dạy.
    * Chỉ sessions có báo cáo mới được tính lương.
    */
@@ -281,13 +280,14 @@ export class SessionsController {
     return this.sessionsService.convertTrialSessions(body.studentId, body.classId);
   }
 
-  /** Học viên KHÔNG tiếp tục → GV không được tính lương từ HS này, không charge phụ huynh */
+  /** Học viên KHÔNG tiếp tục nhưng vẫn trả lương GV, không charge phụ huynh */
   @Post('trial/teacher-paid-only')
   @Roles(Role.OPS, Role.DIRECTOR, Role.ACCOUNTING)
   trialTeacherPaidOnly(
+    @Req() req: AuthenticatedRequest,
     @Body() body: { studentId: string; classId: string },
   ) {
-    return this.sessionsService.markTrialTeacherPaidOnly(body.studentId, body.classId);
+    return this.sessionsService.markTrialTeacherPaidOnly(body.studentId, body.classId, req.user.sub);
   }
 
   // ── DELETE ──────────────────────────────────────────────────────

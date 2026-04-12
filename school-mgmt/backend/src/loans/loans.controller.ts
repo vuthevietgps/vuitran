@@ -23,6 +23,7 @@ export class LoansController {
   }
 
   @Get('summary')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER)
   getSummary() {
     return this.loansService.getLoanSummary();
   }

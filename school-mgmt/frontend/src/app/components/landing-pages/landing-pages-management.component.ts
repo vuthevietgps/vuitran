@@ -189,6 +189,7 @@ export class LandingPagesManagementComponent implements OnInit {
 
   async savePage() {
     if (!this.canEdit()) return;
+    if (this.loading()) return;
     this.loading.set(true);
     this.error.set('');
 

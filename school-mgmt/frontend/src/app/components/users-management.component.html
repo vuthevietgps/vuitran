@@ -1,0 +1,450 @@
+<header class="page-header">
+  <div>
+    <h2>{{ parentMode() ? 'Quan ly tai khoan phu huynh' : 'Quan ly tai khoan' }}</h2>
+    <p>{{ parentMode() ? 'Tao moi, chinh sua va tim kiem tai khoan phu huynh theo dung pham vi quyen.' : 'Them moi, loc va tim kiem tai khoan trong he thong.' }}</p>
+  </div>
+  <button class="primary" data-testid="users-create-button" (click)="openModal()">{{ parentMode() ? '+ Them phu huynh' : '+ Them moi' }}</button>
+</header>
+
+<app-flow-guide featureKey="users"></app-flow-guide>
+
+<section class="scope-tabs" *ngIf="canViewAllAccounts()">
+  <button type="button" [class.active]="!parentMode()" (click)="showAllAccounts()">Tat ca tai khoan</button>
+  <button type="button" [class.active]="parentMode()" (click)="showParentAccounts()">Tai khoan phu huynh</button>
+</section>
+
+<section class="filters">
+  <input
+    placeholder="Tim theo ma, email hoac ho ten"
+    [(ngModel)]="search"
+    (ngModelChange)="onFilterChange()" />
+  <select *ngIf="canViewAllAccounts()" [(ngModel)]="roleFilter" (ngModelChange)="onFilterChange()">
+    <option value="">Tat ca role</option>
+    <option *ngFor="let r of roleOptions" [value]="r.value">{{ r.label }}</option>
+  </select>
+  <button (click)="reload()">Lam moi</button>
+</section>
+
+<section class="table-wrapper" *ngIf="filteredUsers.length; else empty">
+  <div class="table-scroll">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Ma TK</th>
+          <th>Email</th>
+          <th>Ho ten</th>
+          <th>Role</th>
+          <th *ngIf="!parentMode()">Ty le co phan</th>
+          <th *ngIf="parentMode()">Dia chi</th>
+          <th *ngIf="parentMode()">Link Facebook</th>
+          <th *ngIf="parentMode()">Sale phu trach</th>
+          <th *ngIf="parentMode()">Nhom quang cao</th>
+          <th>Trang thai</th>
+          <th>Hanh dong</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          *ngFor="let u of pagedUsers"
+          [attr.data-testid]="'users-row-' + u._id"
+          [class.selected]="parentMode() && selectedParentId === u._id"
+          (click)="selectParent(u)">
+          <td><strong>{{ u.userCode || '-' }}</strong></td>
+          <td>{{ u.email }}</td>
+          <td>{{ u.fullName }}</td>
+          <td>{{ translateRole(u.role) }}</td>
+          <td *ngIf="!parentMode()">{{ formatOwnershipPercentage(u) }}</td>
+          <td *ngIf="parentMode()">{{ u.address || '-' }}</td>
+          <td *ngIf="parentMode()">
+            <a
+              *ngIf="u.facebookLink; else noFacebookInRow"
+              [href]="u.facebookLink"
+              target="_blank"
+              rel="noopener noreferrer">
+              {{ u.facebookLink }}
+            </a>
+            <ng-template #noFacebookInRow>-</ng-template>
+          </td>
+          <td *ngIf="parentMode()">{{ currentParentOwnerLabel(u) }}</td>
+          <td *ngIf="parentMode()">
+            <span *ngIf="u.adGroupName || u.adGroupId; else noAdGroupInRow">
+              {{ u.adGroupName || u.adGroupId }}
+              <small *ngIf="u.adPlatform">({{ u.adPlatform }})</small>
+            </span>
+            <ng-template #noAdGroupInRow>-</ng-template>
+          </td>
+          <td>{{ u.status || 'N/A' }}</td>
+          <td class="actions-cell">
+            <button class="ghost" *ngIf="canEditUser(u)" [attr.data-testid]="'users-edit-' + u._id" (click)="onEdit(u, $event)">Sua</button>
+            <button class="danger" *ngIf="canDeleteUser(u)" [attr.data-testid]="'users-delete-' + u._id" (click)="onRemove(u, $event)">Xoa</button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="table-footer">
+    <label class="page-size-control">
+      So dong/trang
+      <select [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange($event)">
+        <option *ngFor="let size of pageSizeOptions" [ngValue]="size">{{ size }}</option>
+      </select>
+    </label>
+
+    <div class="pager">
+      <button type="button" (click)="goPrevPage()" [disabled]="safeCurrentPage <= 1">Truoc</button>
+      <span>Trang {{ safeCurrentPage }}/{{ totalPages }} ({{ pageStart }}-{{ pageEnd }} / {{ filteredUsers.length }})</span>
+      <button type="button" (click)="goNextPage()" [disabled]="safeCurrentPage >= totalPages">Sau</button>
+    </div>
+  </div>
+</section>
+
+<section class="parent-contact" *ngIf="parentMode() && selectedParentDetail as parentDetail">
+  <h4>Bang chi tiet phu huynh</h4>
+  <table class="detail-table">
+    <tbody>
+      <tr>
+        <th>Ma tai khoan</th>
+        <td>{{ parentDetail.userCode || '-' }}</td>
+        <th>Trang thai</th>
+        <td>{{ parentDetail.status || 'N/A' }}</td>
+      </tr>
+      <tr>
+        <th>Ho ten</th>
+        <td>{{ parentDetail.fullName }}</td>
+        <th>Email</th>
+        <td>{{ parentDetail.email }}</td>
+      </tr>
+      <tr>
+        <th>So dien thoai</th>
+        <td>{{ parentDetail.phone || '-' }}</td>
+        <th>Role</th>
+        <td>{{ translateRole(parentDetail.role) }}</td>
+      </tr>
+      <tr>
+        <th>Dia chi</th>
+        <td colspan="3">{{ parentDetail.address || '-' }}</td>
+      </tr>
+      <tr>
+        <th>Link Facebook</th>
+        <td colspan="3">
+          <a
+            *ngIf="parentDetail.facebookLink; else noFacebook"
+            [href]="parentDetail.facebookLink"
+            target="_blank"
+            rel="noopener noreferrer">
+            {{ parentDetail.facebookLink }}
+          </a>
+          <ng-template #noFacebook>-</ng-template>
+        </td>
+      </tr>
+      <tr>
+        <th>Sale phu trach</th>
+        <td colspan="3">{{ currentParentOwnerLabel(parentDetail) }}</td>
+      </tr>
+      <tr *ngIf="canManageParentAds()">
+        <th>Nhom quang cao</th>
+        <td colspan="3">{{ currentParentAdGroupLabel() }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="ads-attribution-card" *ngIf="canAssignParentOwner()">
+    <div class="ads-attribution-header">
+      <div>
+        <h5>Chuyen sale phu trach</h5>
+        <p>Giám đốc có thể đổi owner sale của phụ huynh. Hệ thống sẽ cập nhật sale phụ trách cho các học sinh đang gắn với phụ huynh này.</p>
+      </div>
+      <span class="ads-pill" [class.empty]="!selectedParentSaleOwnerId">
+        {{ currentParentOwnerLabel(parentDetail) }}
+      </span>
+    </div>
+
+    <p class="success" *ngIf="parentOwnerSuccess()">{{ parentOwnerSuccess() }}</p>
+    <p class="error" *ngIf="parentOwnerError()">{{ parentOwnerError() }}</p>
+
+    <div class="ads-form-grid">
+      <label>Sale phu trach moi
+        <select
+          [(ngModel)]="selectedParentSaleOwnerId"
+          name="selectedParentSaleOwnerId"
+          [disabled]="salesLoading() || parentOwnerSaving()">
+          <option value="">-- Chua chon sale --</option>
+          <option *ngFor="let sale of salesOptions()" [value]="sale._id">
+            {{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <p class="hint" *ngIf="salesLoading()">Dang tai danh sach sale...</p>
+
+    <div class="ads-actions">
+      <button
+        type="button"
+        class="primary"
+        (click)="saveParentOwnerAssignment()"
+        [disabled]="parentOwnerSaving() || !selectedParentId || !selectedParentSaleOwnerId || isParentOwnerSelectionUnchanged()">
+        {{ parentOwnerSaving() ? 'Dang luu...' : 'Luu sale phu trach' }}
+      </button>
+      <button
+        type="button"
+        class="ghost"
+        (click)="resetParentOwnerSelection()"
+        [disabled]="parentOwnerSaving()">
+        Dat lai
+      </button>
+    </div>
+  </div>
+
+  <div class="ads-attribution-card" *ngIf="canManageParentAds()">
+    <div class="ads-attribution-header">
+      <div>
+        <h5>Gan nhom quang cao</h5>
+        <p>Theo doi doanh thu theo ads group se uu tien attribution duoc gan tai day cho phu huynh dang chon.</p>
+      </div>
+      <span class="ads-pill" [class.empty]="!parentAdsAttribution()?.adGroupId">
+        {{ currentParentAdGroupLabel() }}
+      </span>
+    </div>
+
+    <div class="ads-attribution-summary">
+      <div class="ads-summary-item">
+        <span class="ads-summary-label">Nguon gan</span>
+        <strong>{{ parentAdsSourceLabel(parentAdsAttribution()?.sourceType) }}</strong>
+      </div>
+      <div class="ads-summary-item">
+        <span class="ads-summary-label">Cach match</span>
+        <strong>{{ parentAdsMatchLabel(parentAdsAttribution()?.matchedBy) }}</strong>
+      </div>
+      <div class="ads-summary-item">
+        <span class="ads-summary-label">Lan cap nhat cuoi</span>
+        <strong>{{ parentAdsAttribution()?.lastConfirmedAt ? (parentAdsAttribution()?.lastConfirmedAt | date:'dd/MM/yyyy HH:mm') : '-' }}</strong>
+      </div>
+    </div>
+
+    <p class="loading-text" *ngIf="parentAdsLoading()">Dang tai attribution ads cho {{ parentDetail.fullName }}...</p>
+    <p class="success" *ngIf="parentAdsSuccess()">{{ parentAdsSuccess() }}</p>
+    <p class="error" *ngIf="parentAdsError()">{{ parentAdsError() }}</p>
+
+    <div class="ads-form-grid">
+      <label>Tim nhom quang cao
+        <input
+          [(ngModel)]="adGroupSearch"
+          name="adGroupSearch"
+          placeholder="Tim theo ten nhom, ma nhom hoac nen tang" />
+      </label>
+      <label>Chon nhom quang cao
+        <select
+          [(ngModel)]="selectedParentAdGroupId"
+          name="selectedParentAdGroupId"
+          [disabled]="adGroupsLoading() || parentAdsSaving()">
+          <option value="">-- Chua gan --</option>
+          <option *ngFor="let group of filteredAdGroups" [value]="group._id">
+            {{ group.name }} ({{ group.platform }})
+          </option>
+        </select>
+      </label>
+    </div>
+
+    <p class="hint" *ngIf="adGroupsLoading()">Dang tai danh sach nhom quang cao...</p>
+    <p class="hint" *ngIf="!adGroupsLoading() && !filteredAdGroups.length">Khong tim thay nhom quang cao phu hop voi bo loc hien tai.</p>
+
+    <div class="ads-actions">
+      <button
+        type="button"
+        class="primary"
+        (click)="saveParentAdsAttribution()"
+        [disabled]="parentAdsSaving() || parentAdsLoading() || !selectedParentId || !selectedParentAdGroupId || isParentAdsSelectionUnchanged()">
+        {{ parentAdsSaving() ? 'Dang luu...' : 'Luu nhom ads' }}
+      </button>
+      <button
+        type="button"
+        class="ghost"
+        (click)="resetParentAdsSelection()"
+        [disabled]="parentAdsSaving() || parentAdsLoading()">
+        Dat lai
+      </button>
+      <button
+        type="button"
+        class="danger-outline"
+        (click)="clearParentAdsAttribution()"
+        [disabled]="parentAdsSaving() || parentAdsLoading() || !parentAdsAttribution()?.adGroupId">
+        Bo gan hien tai
+      </button>
+    </div>
+  </div>
+</section>
+
+<ng-template #empty><p>Khong co du lieu hoac khong trung bo loc.</p></ng-template>
+
+<div class="modal-backdrop" *ngIf="showModal()">
+  <div class="modal" data-testid="users-edit-modal">
+    <h3>{{ editingId ? 'Chinh sua tai khoan' : (parentMode() ? 'Them tai khoan phu huynh' : 'Them tai khoan moi') }}</h3>
+    <form (ngSubmit)="submit()">
+      <label>{{ getCodeLabel(form.role) }}
+        <input
+          [(ngModel)]="form.userCode"
+          name="userCode"
+          required
+          placeholder="{{ getCodeHint(form.role) }}" />
+      </label>
+      <label>Email<input [(ngModel)]="form.email" name="email" type="email" required /></label>
+      <label>So dien thoai
+        <input [(ngModel)]="form.phone" name="phone" placeholder="Nhap so dien thoai" />
+      </label>
+      <label>Mat khau
+        <input
+          [(ngModel)]="form.password"
+          name="password"
+          type="password"
+          [required]="!editingId"
+          minlength="8"
+          placeholder="{{ editingId ? 'De trong neu giu nguyen' : '' }}" />
+      </label>
+      <label>Ho ten<input [(ngModel)]="form.fullName" name="fullName" required /></label>
+      <label *ngIf="canChooseRole(); else fixedRoleBlock">Role
+        <select data-testid="users-role-select" [(ngModel)]="form.role" name="role" required [disabled]="isSelfEditing()" (ngModelChange)="onFormRoleChange($event)">
+          <option *ngFor="let r of availableRoleOptions()" [value]="r.value">{{ r.label }}</option>
+        </select>
+      </label>
+      <ng-template #fixedRoleBlock>
+        <label>Role
+          <input [value]="translateRole(form.role)" disabled />
+        </label>
+      </ng-template>
+      <label *ngIf="isShareholderRole(form.role)">Ty le co phan (%)
+        <input
+          [(ngModel)]="form.ownershipPercentage"
+          name="ownershipPercentage"
+          type="number"
+          min="0"
+          max="100"
+          step="0.01"
+          placeholder="VD: 12.5"
+          required />
+      </label>
+      <ng-container *ngIf="isParentRole(form.role)">
+        <label>Link Facebook
+          <input
+            [(ngModel)]="form.facebookLink"
+            name="facebookLink"
+            placeholder="https://facebook.com/..." />
+        </label>
+        <label>Dia chi
+          <input
+            [(ngModel)]="form.address"
+            name="address"
+            placeholder="Nhap dia chi phu huynh" />
+        </label>
+        <label *ngIf="canAssignParentOwner()">Sale phu trach
+          <select
+            [(ngModel)]="form.saleOwnerId"
+            name="saleOwnerId"
+            [disabled]="salesLoading()">
+            <option value="">-- Chua chon sale --</option>
+            <option *ngFor="let sale of salesOptions()" [value]="sale._id">
+              {{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}
+            </option>
+          </select>
+        </label>
+        <ng-container *ngIf="canManageParentAds()">
+          <label>Nhom quang cao
+            <select
+              [(ngModel)]="form.adGroupId"
+              name="adGroupId"
+              [disabled]="adGroupsLoading()">
+              <option value="">-- Chua gan --</option>
+              <option *ngFor="let group of adGroups()" [value]="group._id">
+                {{ group.name }} ({{ group.platform }})
+              </option>
+            </select>
+          </label>
+          <small class="hint" *ngIf="adGroupsLoading()">Dang tai danh sach nhom quang cao...</small>
+        </ng-container>
+      </ng-container>
+      <div *ngIf="!editingId && isTeacherRole(form.role)" class="sales-editor">
+        <div class="sales-editor-header">
+          <strong>Sale quan ly</strong>
+          <button type="button" class="ghost" (click)="addManagedSaleSlot()">+ Them sale</button>
+        </div>
+        <div *ngIf="!form.managedSales.length" class="hint">Co the bo trong va them sau trong Ho so giao vien.</div>
+        <div *ngFor="let saleId of form.managedSales; let idx = index" class="sale-row">
+          <label>
+            Sale quan ly {{ idx + 1 }}
+            <select
+              [ngModel]="saleId"
+              (ngModelChange)="updateManagedSaleSlot(idx, $event)"
+              [name]="'managedSale' + idx"
+              [attr.data-testid]="'teacher-managed-sale-' + idx">
+              <option value="">-- Chon sale --</option>
+              <option *ngFor="let sale of salesOptions()" [value]="sale._id">
+                {{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}
+              </option>
+            </select>
+          </label>
+          <button type="button" class="danger" (click)="removeManagedSaleSlot(idx)">Xoa</button>
+        </div>
+        <small class="hint" *ngIf="salesLoading()">Dang tai danh sach sale...</small>
+        <small class="hint" *ngIf="!salesLoading() && !salesOptions().length">Chua co sale nao de gan.</small>
+      </div>
+      <div
+        *ngIf="!editingId && isTeacherRole(form.role) && form.salaryConfig as salaryConfig"
+        class="teacher-onboarding-card"
+        data-testid="teacher-onboarding-salary-config">
+        <div class="sales-editor-header">
+          <strong>Salary config mac dinh cho giao vien</strong>
+          <span class="hint">Config nay duoc tao cung luc voi tai khoan giao vien.</span>
+        </div>
+        <div class="teacher-onboarding-grid">
+          <label>Luong cung (VND)
+            <input
+              [(ngModel)]="salaryConfig.baseSalary"
+              name="teacherBaseSalary"
+              data-testid="teacher-salary-base"
+              type="number"
+              min="0"
+              placeholder="VD: 12000000" />
+          </label>
+          <label>So gio chuan / thang
+            <input
+              [(ngModel)]="salaryConfig.standardHours"
+              name="teacherStandardHours"
+              data-testid="teacher-salary-standard-hours"
+              type="number"
+              min="1" />
+          </label>
+          <label>Gio vao ca
+            <input
+              [(ngModel)]="salaryConfig.scheduledStartTime"
+              name="teacherScheduledStartTime"
+              data-testid="teacher-salary-start-time"
+              type="time" />
+          </label>
+          <label>Phat di muon / lan (VND)
+            <input
+              [(ngModel)]="salaryConfig.latePenaltyAmount"
+              name="teacherLatePenaltyAmount"
+              data-testid="teacher-salary-late-penalty"
+              type="number"
+              min="0" />
+          </label>
+        </div>
+        <label>Ghi chu onboarding
+          <textarea
+            [(ngModel)]="salaryConfig.notes"
+            name="teacherSalaryNotes"
+            data-testid="teacher-salary-notes"
+            rows="2"
+            placeholder="Ghi chu noi bo cho salary config mac dinh"></textarea>
+        </label>
+      </div>
+      <small class="hint" *ngIf="isSelfEditing()">Khong the doi role cua tai khoan dang dang nhap.</small>
+      <div class="actions">
+        <button data-testid="users-submit" type="submit" class="primary">{{ editingId ? 'Cap nhat' : 'Luu' }}</button>
+        <button data-testid="users-cancel" type="button" (click)="closeModal()">Huy</button>
+      </div>
+      <p class="error" *ngIf="error()">{{ error() }}</p>
+    </form>
+  </div>
+</div>

@@ -7,6 +7,7 @@ import * as request from 'supertest';
 import * as cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { closeE2eResources } from './e2e-cleanup';
 
 type SessionCookies = {
   accessToken: string;
@@ -311,7 +312,7 @@ describe('Payroll module (e2e)', () => {
       status: 'FINALIZED',
       hasTeachingReport: true,
       teachingReport: {
-        lessonContent: 'Eligible A1',
+        lessonContent: 'Eligible A1 with full lesson summary.',
         submittedAt: toUtcDate(dA1, '11:00'),
       },
       confirmation: {
@@ -335,7 +336,7 @@ describe('Payroll module (e2e)', () => {
       status: 'FINALIZED',
       hasTeachingReport: true,
       teachingReport: {
-        lessonContent: 'Eligible A2',
+        lessonContent: 'Eligible A2 with full lesson summary.',
         submittedAt: toUtcDate(dA2, '11:00'),
       },
       confirmation: {
@@ -465,7 +466,7 @@ describe('Payroll module (e2e)', () => {
       status: 'FINALIZED',
       hasTeachingReport: true,
       teachingReport: {
-        lessonContent: 'Eligible B1',
+        lessonContent: 'Eligible B1 with full lesson summary.',
         submittedAt: toUtcDate(dB1, '11:00'),
       },
       confirmation: {
@@ -539,8 +540,7 @@ describe('Payroll module (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    await replSet.stop();
+    await closeE2eResources({ app, moduleRef, mongoReplSet: replSet });
   });
 
   it('returns teacher payroll preview with correct categorization and totals', async () => {

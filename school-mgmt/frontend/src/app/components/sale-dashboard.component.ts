@@ -1,5 +1,6 @@
 import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -59,6 +60,14 @@ interface RevenueByMonth {
   count: number;
 }
 
+interface EmptyStateAction {
+  label: string;
+  description: string;
+  route: string;
+  queryParams?: Record<string, string>;
+  testId: string;
+}
+
 const STATUS_LABELS: Record<string, string> = {
   NEW: 'Mới',
   CONTACTED: 'Đã liên hệ',
@@ -104,7 +113,7 @@ const FUNNEL_STATUSES = ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED', 'CONVER
 @Component({
   selector: 'app-sale-dashboard',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterLink],
   template: `
   <header class="page-header">
     <div>
@@ -117,7 +126,36 @@ const FUNNEL_STATUSES = ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED', 'CONVER
   <div *ngIf="loading()" class="loading-bar">Đang tải dữ liệu...</div>
 
   <ng-container *ngIf="data()">
-    <section class="kpi-grid">
+    <section *ngIf="showFreshStartState()" class="friendly-empty-state" data-testid="sale-dashboard-empty-state">
+      <div class="empty-copy">
+        <p class="empty-kicker">Khoi dong an toan</p>
+        <h3>Dashboard sale dang cho du lieu dau tien</h3>
+        <p class="empty-text">
+          Tai khoan nay chua co lead, don hang hay doanh thu nao, nen he thong chuyen sang che do huong dan thay vi
+          hien mot loat so 0d de tranh gay hieu nham la du lieu da bi loi.
+        </p>
+        <ul class="empty-checklist">
+          <li>Bat dau tu lead dau tien hoac mo danh sach phu huynh de khoi dong pipeline.</li>
+          <li>Lap hoa don va doi duyet hoac nap tien truoc khi chuyen sang tao lop.</li>
+          <li>Mo sale hub de xem dung thu tu thao tac cho sale moi.</li>
+        </ul>
+      </div>
+
+      <div class="empty-actions">
+        <a
+          *ngFor="let action of emptyStateActions"
+          class="empty-action-card"
+          [routerLink]="action.route"
+          [queryParams]="action.queryParams"
+          [attr.data-testid]="action.testId">
+          <strong>{{ action.label }}</strong>
+          <p>{{ action.description }}</p>
+        </a>
+      </div>
+    </section>
+
+    <ng-container *ngIf="!showFreshStartState()">
+    <section class="kpi-grid" data-testid="sale-dashboard-kpi-grid">
       <div class="kpi-card blue">
         <div class="kpi-value">{{ data()!.leads.conversionRate }}%</div>
         <div class="kpi-label">Tỷ lệ chuyển đổi</div>
@@ -287,6 +325,7 @@ const FUNNEL_STATUSES = ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED', 'CONVER
         </div>
       </div>
     </section>
+    </ng-container>
   </ng-container>
   `,
   styles: [`
@@ -295,6 +334,78 @@ const FUNNEL_STATUSES = ['NEW', 'CONTACTED', 'CONSULTING', 'INTERESTED', 'CONVER
     .page-header p { margin:4px 0 0; color:#64748b; font-size:13px; }
     .primary { background:#2563eb; color:#fff; border:none; padding:8px 14px; border-radius:4px; cursor:pointer; font-weight:600; }
     .loading-bar { padding:12px 16px; background:#eff6ff; color:#2563eb; font-size:13px; font-weight:600; margin:0 16px; border-radius:6px; }
+    .friendly-empty-state {
+      margin: 0 16px 16px;
+      padding: 22px;
+      border-radius: 20px;
+      border: 1px solid #bfdbfe;
+      background:
+        radial-gradient(circle at top right, rgba(59, 130, 246, 0.18), transparent 24%),
+        linear-gradient(135deg, #eff6ff 0%, #f8fafc 58%, #eef2ff 100%);
+      box-shadow: 0 16px 30px rgba(37, 99, 235, 0.08);
+      display: grid;
+      gap: 18px;
+    }
+    .empty-copy h3 {
+      margin: 0 0 10px;
+      color: #0f172a;
+      font-size: 24px;
+      letter-spacing: -0.03em;
+    }
+    .empty-kicker {
+      margin: 0 0 8px;
+      color: #2563eb;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+    .empty-text {
+      margin: 0;
+      color: #475569;
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    .empty-checklist {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      color: #334155;
+      display: grid;
+      gap: 8px;
+      font-size: 14px;
+    }
+    .empty-actions {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    .empty-action-card {
+      text-decoration: none;
+      border-radius: 18px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.95);
+      border: 1px solid #dbeafe;
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .empty-action-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 14px 24px rgba(37, 99, 235, 0.12);
+      border-color: #93c5fd;
+    }
+    .empty-action-card strong {
+      color: #0f172a;
+      font-size: 15px;
+    }
+    .empty-action-card p {
+      margin: 0;
+      color: #64748b;
+      font-size: 13px;
+      line-height: 1.6;
+    }
 
     .kpi-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; padding:0 16px 16px; }
     .kpi-card { background:#fff; padding:16px; border-radius:8px; border-left:4px solid #e2e8f0; }
@@ -346,6 +457,27 @@ export class SaleDashboardComponent implements OnInit {
   revenueSummary = signal<CommissionSummary | null>(null);
   revenueByMonth = signal<RevenueByMonth[]>([]);
   loading = signal(false);
+  readonly emptyStateActions: EmptyStateAction[] = [
+    {
+      label: 'Mo leads',
+      description: 'Bat dau tu lead dau tien de dashboard co pipeline can theo doi.',
+      route: '/app/leads',
+      testId: 'sale-dashboard-empty-cta-leads',
+    },
+    {
+      label: 'Mo danh sach phu huynh',
+      description: 'Tao ho so phu huynh truoc khi lap hoa don va tiep tuc flow sale.',
+      route: '/app/users',
+      queryParams: { role: 'PARENT' },
+      testId: 'sale-dashboard-empty-cta-parents',
+    },
+    {
+      label: 'Xem sale hub',
+      description: 'Mo hub huong dan 5 buoc chuan de onboarding sale moi nhanh hon.',
+      route: '/app/sale-hub',
+      testId: 'sale-dashboard-empty-cta-guide',
+    },
+  ];
 
   funnelStatuses = FUNNEL_STATUSES;
   orderStatuses = ['DRAFT', 'SUBMITTED', 'APPROVED', 'COMPLETED', 'REJECTED', 'CANCELLED'];
@@ -432,6 +564,21 @@ export class SaleDashboardComponent implements OnInit {
     const count = this.getLeadCount(status);
     const percent = Math.max((count / total) * 100, 15);
     return Math.min(percent, 100);
+  }
+
+  showFreshStartState(): boolean {
+    const dashboard = this.data();
+    if (!dashboard) {
+      return false;
+    }
+
+    const hasLeads = Number(dashboard.leads?.total || 0) > 0;
+    const hasOrders = Number(dashboard.orders?.total || 0) > 0;
+    const hasRevenue = Number(this.totalRevenue() || 0) > 0 || this.revenueByMonth().length > 0;
+    const hasFollowUps = Number(dashboard.leads?.followUpsOverdue || 0) > 0 || (dashboard.leads?.followUpsDueToday?.length || 0) > 0;
+    const hasRecentOrders = (dashboard.orders?.recentOrders?.length || 0) > 0;
+
+    return !(hasLeads || hasOrders || hasRevenue || hasFollowUps || hasRecentOrders);
   }
 
   private buildRevenueByMonth(details: CommissionDetail[]): RevenueByMonth[] {

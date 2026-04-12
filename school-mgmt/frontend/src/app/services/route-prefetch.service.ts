@@ -17,6 +17,7 @@ const PREFETCH_LOADERS: Partial<Record<Role, Loader[]>> = {
     () => import('../components/tickets.component'),
     () => import('../components/messages.component'),
     () => import('../components/students.component'),
+    () => import('../components/teacher-registrations.component'),
   ],
   [Role.ACCOUNTING]: [
     () => import('../components/invoices.component'),
@@ -27,6 +28,7 @@ const PREFETCH_LOADERS: Partial<Record<Role, Loader[]>> = {
     () => import('../components/students.component'),
     () => import('../components/classes.component'),
     () => import('../components/messages.component'),
+    () => import('../components/teacher-registrations.component'),
   ],
   [Role.TEACHER]: [
     () => import('../components/sessions.component'),

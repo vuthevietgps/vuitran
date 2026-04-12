@@ -13,6 +13,22 @@ export interface StudentItem {
   studentBirthMonth?: number;
   parentBirthMonth?: number;
   parentUserId?: string;
+  parentUserIds?: string[];
+  secondaryParentUserIds?: string[];
+  parentUsers?: Array<{
+    _id: string;
+    userCode?: string;
+    fullName: string;
+    phone?: string;
+    role?: string;
+  }>;
+  linkedParents?: Array<{
+    _id: string;
+    userCode?: string;
+    fullName: string;
+    phone?: string;
+    role?: string;
+  }>;
   parentName: string;
   parentPhone: string;
   saleId?: string;

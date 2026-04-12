@@ -28,8 +28,13 @@ export class WorkSessionsService {
    * Ghi nhận đăng nhập: tạo WorkSession mới.
    * Nếu có session ACTIVE cũ chưa logout → auto-close.
    * @param scheduledStartTime — giờ vào ca (VD: "08:00") để tính muộn
+   * @param scheduledEndTime — giờ kết thúc ca (VD: "17:00") để tính về sớm
    */
-  async recordLogin(userId: string, scheduledStartTime?: string): Promise<WorkSessionDocument> {
+  async recordLogin(
+    userId: string,
+    scheduledStartTime?: string,
+    scheduledEndTime?: string,
+  ): Promise<WorkSessionDocument> {
     const now = new Date();
 
     // Auto-close any active session for this user
@@ -56,8 +61,12 @@ export class WorkSessionsService {
       userId: new Types.ObjectId(userId),
       date,
       loginTime: now,
+      scheduledStartTime,
+      scheduledEndTime,
       isLate,
       lateMinutes,
+      isEarlyLeave: false,
+      earlyLeaveMinutes: 0,
       status: WorkSessionStatus.ACTIVE,
     });
 
@@ -86,6 +95,7 @@ export class WorkSessionsService {
     activeSession.totalMinutes = Math.floor(
       (now.getTime() - activeSession.loginTime.getTime()) / 60000,
     );
+    this.applyTimingFlags(activeSession);
     activeSession.status = WorkSessionStatus.COMPLETED;
     await activeSession.save();
 
@@ -109,6 +119,7 @@ export class WorkSessionsService {
       session.totalMinutes = Math.floor(
         (now.getTime() - session.loginTime.getTime()) / 60000,
       );
+      this.applyTimingFlags(session);
       session.status = WorkSessionStatus.AUTO_CLOSED;
       await session.save();
     }
@@ -176,6 +187,9 @@ export class WorkSessionsService {
     const totalMinutes = sessions.reduce((acc, s) => acc + (s.totalMinutes || 0), 0);
     const totalHours = Math.round((totalMinutes / 60) * 100) / 100;
     const lateDays = sessions.filter((s) => s.isLate).length;
+    const totalLateMinutes = sessions.reduce((acc, s) => acc + (s.lateMinutes || 0), 0);
+    const earlyLeaveDays = sessions.filter((s) => s.isEarlyLeave).length;
+    const totalEarlyLeaveMinutes = sessions.reduce((acc, s) => acc + (s.earlyLeaveMinutes || 0), 0);
     const totalSessions = sessions.length;
 
     return {
@@ -186,6 +200,9 @@ export class WorkSessionsService {
       totalMinutes,
       totalHours,
       lateDays,
+      totalLateMinutes,
+      earlyLeaveDays,
+      totalEarlyLeaveMinutes,
     };
   }
 
@@ -206,6 +223,9 @@ export class WorkSessionsService {
           totalMinutes: { $sum: '$totalMinutes' },
           totalSessions: { $sum: 1 },
           lateDays: { $sum: { $cond: ['$isLate', 1, 0] } },
+          totalLateMinutes: { $sum: '$lateMinutes' },
+          earlyLeaveDays: { $sum: { $cond: ['$isEarlyLeave', 1, 0] } },
+          totalEarlyLeaveMinutes: { $sum: '$earlyLeaveMinutes' },
         },
       },
       {
@@ -227,6 +247,9 @@ export class WorkSessionsService {
           totalHours: { $round: [{ $divide: ['$totalMinutes', 60] }, 2] },
           totalSessions: 1,
           lateDays: 1,
+          totalLateMinutes: 1,
+          earlyLeaveDays: 1,
+          totalEarlyLeaveMinutes: 1,
         },
       },
       { $sort: { fullName: 1 } },
@@ -256,7 +279,54 @@ export class WorkSessionsService {
       }
     }
     if (dto.notes !== undefined) session.notes = dto.notes;
+    this.applyTimingFlags(session);
 
     return session.save();
+  }
+
+  private applyTimingFlags(
+    session: Pick<
+      WorkSession,
+      | 'date'
+      | 'loginTime'
+      | 'logoutTime'
+      | 'scheduledStartTime'
+      | 'scheduledEndTime'
+      | 'isLate'
+      | 'lateMinutes'
+      | 'isEarlyLeave'
+      | 'earlyLeaveMinutes'
+    >,
+  ): void {
+    const scheduledStart = this.resolveScheduledTime(session.date, session.scheduledStartTime);
+    const scheduledEnd = this.resolveScheduledTime(session.date, session.scheduledEndTime);
+
+    session.isLate = false;
+    session.lateMinutes = 0;
+    session.isEarlyLeave = false;
+    session.earlyLeaveMinutes = 0;
+
+    if (scheduledStart && session.loginTime && session.loginTime.getTime() > scheduledStart.getTime()) {
+      session.isLate = true;
+      session.lateMinutes = Math.floor(
+        (session.loginTime.getTime() - scheduledStart.getTime()) / 60000,
+      );
+    }
+
+    if (scheduledEnd && session.logoutTime && session.logoutTime.getTime() < scheduledEnd.getTime()) {
+      session.isEarlyLeave = true;
+      session.earlyLeaveMinutes = Math.floor(
+        (scheduledEnd.getTime() - session.logoutTime.getTime()) / 60000,
+      );
+    }
+  }
+
+  private resolveScheduledTime(date: Date, hhmm?: string): Date | null {
+    if (!hhmm) return null;
+    const [hours, minutes] = hhmm.split(':').map(Number);
+    if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+    const scheduled = new Date(date);
+    scheduled.setHours(hours, minutes, 0, 0);
+    return scheduled;
   }
 }

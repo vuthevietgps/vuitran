@@ -5,6 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import {
   ParentAdsAttributionItem,
+  CreateUserSalaryConfigPayload,
   UserService,
   UserItem,
 } from '../services/user.service';
@@ -20,457 +21,36 @@ interface RoleOption {
   codeHint: string;
 }
 
+interface TeacherOnboardingSalaryConfigDraft {
+  baseSalary: number | null;
+  standardHours: number;
+  scheduledStartTime: string;
+  latePenaltyAmount: number | null;
+  notes: string;
+}
+
+interface UserManagementForm {
+  userCode: string;
+  email: string;
+  phone: string;
+  password: string;
+  fullName: string;
+  role: string;
+  ownershipPercentage: number | null;
+  facebookLink: string;
+  address: string;
+  saleOwnerId: string;
+  adGroupId: string;
+  managedSales: string[];
+  salaryConfig: TeacherOnboardingSalaryConfigDraft | null;
+}
+
 @Component({
   selector: 'app-users-management',
   standalone: true,
   imports: [CommonModule, FormsModule, FlowGuideComponent],
-  template: `
-  <header class="page-header">
-    <div>
-      <h2>{{ parentMode() ? 'Quan ly tai khoan phu huynh' : 'Quan ly tai khoan' }}</h2>
-      <p>{{ parentMode() ? 'Tao moi, chinh sua va tim kiem tai khoan phu huynh theo dung pham vi quyen.' : 'Them moi, loc va tim kiem tai khoan trong he thong.' }}</p>
-    </div>
-    <button class="primary" (click)="openModal()">{{ parentMode() ? '+ Them phu huynh' : '+ Them moi' }}</button>
-  </header>
-
-  <app-flow-guide featureKey="users"></app-flow-guide>
-
-  <section class="scope-tabs" *ngIf="canViewAllAccounts()">
-    <button type="button" [class.active]="!parentMode()" (click)="showAllAccounts()">Tat ca tai khoan</button>
-    <button type="button" [class.active]="parentMode()" (click)="showParentAccounts()">Tai khoan phu huynh</button>
-  </section>
-
-  <section class="filters">
-    <input
-      placeholder="Tim theo ma, email hoac ho ten"
-      [(ngModel)]="search"
-      (ngModelChange)="onFilterChange()" />
-    <select *ngIf="canViewAllAccounts()" [(ngModel)]="roleFilter" (ngModelChange)="onFilterChange()">
-      <option value="">Tat ca role</option>
-      <option *ngFor="let r of roleOptions" [value]="r.value">{{ r.label }}</option>
-    </select>
-    <button (click)="reload()">Lam moi</button>
-  </section>
-
-  <section class="table-wrapper" *ngIf="filteredUsers.length; else empty">
-    <div class="table-scroll">
-      <table class="data">
-        <thead>
-          <tr>
-            <th>Ma TK</th>
-            <th>Email</th>
-            <th>Ho ten</th>
-            <th>Role</th>
-            <th *ngIf="parentMode()">Dia chi</th>
-            <th *ngIf="parentMode()">Link Facebook</th>
-            <th *ngIf="parentMode()">Nhom quang cao</th>
-            <th>Trang thai</th>
-            <th>Hanh dong</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            *ngFor="let u of pagedUsers"
-            [class.selected]="parentMode() && selectedParentId === u._id"
-            (click)="selectParent(u)">
-            <td><strong>{{ u.userCode || '-' }}</strong></td>
-            <td>{{ u.email }}</td>
-            <td>{{ u.fullName }}</td>
-            <td>{{ translateRole(u.role) }}</td>
-            <td *ngIf="parentMode()">{{ u.address || '-' }}</td>
-            <td *ngIf="parentMode()">
-              <a
-                *ngIf="u.facebookLink; else noFacebookInRow"
-                [href]="u.facebookLink"
-                target="_blank"
-                rel="noopener noreferrer">
-                {{ u.facebookLink }}
-              </a>
-              <ng-template #noFacebookInRow>-</ng-template>
-            </td>
-            <td *ngIf="parentMode()">
-              <span *ngIf="u.adGroupName || u.adGroupId; else noAdGroupInRow">
-                {{ u.adGroupName || u.adGroupId }}
-                <small *ngIf="u.adPlatform">({{ u.adPlatform }})</small>
-              </span>
-              <ng-template #noAdGroupInRow>-</ng-template>
-            </td>
-            <td>{{ u.status || 'N/A' }}</td>
-            <td class="actions-cell">
-              <button class="ghost" *ngIf="canEditUser(u)" (click)="onEdit(u, $event)" [disabled]="isSelf(u)">Sua</button>
-              <button class="danger" *ngIf="canDeleteUser(u)" (click)="onRemove(u, $event)" [disabled]="isSelf(u)">Xoa</button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="table-footer">
-      <label class="page-size-control">
-        So dong/trang
-        <select [(ngModel)]="pageSize" (ngModelChange)="onPageSizeChange($event)">
-          <option *ngFor="let size of pageSizeOptions" [ngValue]="size">{{ size }}</option>
-        </select>
-      </label>
-
-      <div class="pager">
-        <button type="button" (click)="goPrevPage()" [disabled]="safeCurrentPage <= 1">Truoc</button>
-        <span>Trang {{ safeCurrentPage }}/{{ totalPages }} ({{ pageStart }}-{{ pageEnd }} / {{ filteredUsers.length }})</span>
-        <button type="button" (click)="goNextPage()" [disabled]="safeCurrentPage >= totalPages">Sau</button>
-      </div>
-    </div>
-  </section>
-
-  <section class="parent-contact" *ngIf="parentMode() && selectedParentDetail as parentDetail">
-    <h4>Bang chi tiet phu huynh</h4>
-    <table class="detail-table">
-      <tbody>
-        <tr>
-          <th>Ma tai khoan</th>
-          <td>{{ parentDetail.userCode || '-' }}</td>
-          <th>Trang thai</th>
-          <td>{{ parentDetail.status || 'N/A' }}</td>
-        </tr>
-        <tr>
-          <th>Ho ten</th>
-          <td>{{ parentDetail.fullName }}</td>
-          <th>Email</th>
-          <td>{{ parentDetail.email }}</td>
-        </tr>
-        <tr>
-          <th>So dien thoai</th>
-          <td>{{ parentDetail.phone || '-' }}</td>
-          <th>Role</th>
-          <td>{{ translateRole(parentDetail.role) }}</td>
-        </tr>
-        <tr>
-          <th>Dia chi</th>
-          <td colspan="3">{{ parentDetail.address || '-' }}</td>
-        </tr>
-        <tr>
-          <th>Link Facebook</th>
-          <td colspan="3">
-            <a
-              *ngIf="parentDetail.facebookLink; else noFacebook"
-              [href]="parentDetail.facebookLink"
-              target="_blank"
-              rel="noopener noreferrer">
-              {{ parentDetail.facebookLink }}
-            </a>
-            <ng-template #noFacebook>-</ng-template>
-          </td>
-        </tr>
-        <tr>
-          <th>Sale phu trach</th>
-          <td colspan="3">{{ currentParentOwnerLabel(parentDetail) }}</td>
-        </tr>
-        <tr *ngIf="canManageParentAds()">
-          <th>Nhom quang cao</th>
-          <td colspan="3">{{ currentParentAdGroupLabel() }}</td>
-        </tr>
-      </tbody>
-    </table>
-
-    <div class="ads-attribution-card" *ngIf="canAssignParentOwner()">
-      <div class="ads-attribution-header">
-        <div>
-          <h5>Chuyen sale phu trach</h5>
-          <p>Giám đốc có thể đổi owner sale của phụ huynh. Hệ thống sẽ cập nhật sale phụ trách cho các học sinh đang gắn với phụ huynh này.</p>
-        </div>
-        <span class="ads-pill" [class.empty]="!selectedParentSaleOwnerId">
-          {{ currentParentOwnerLabel(parentDetail) }}
-        </span>
-      </div>
-
-      <p class="success" *ngIf="parentOwnerSuccess()">{{ parentOwnerSuccess() }}</p>
-      <p class="error" *ngIf="parentOwnerError()">{{ parentOwnerError() }}</p>
-
-      <div class="ads-form-grid">
-        <label>Sale phu trach moi
-          <select
-            [(ngModel)]="selectedParentSaleOwnerId"
-            name="selectedParentSaleOwnerId"
-            [disabled]="salesLoading() || parentOwnerSaving()">
-            <option value="">-- Chua chon sale --</option>
-            <option *ngFor="let sale of salesOptions()" [value]="sale._id">
-              {{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}
-            </option>
-          </select>
-        </label>
-      </div>
-
-      <p class="hint" *ngIf="salesLoading()">Dang tai danh sach sale...</p>
-
-      <div class="ads-actions">
-        <button
-          type="button"
-          class="primary"
-          (click)="saveParentOwnerAssignment()"
-          [disabled]="parentOwnerSaving() || !selectedParentId || !selectedParentSaleOwnerId || isParentOwnerSelectionUnchanged()">
-          {{ parentOwnerSaving() ? 'Dang luu...' : 'Luu sale phu trach' }}
-        </button>
-        <button
-          type="button"
-          class="ghost"
-          (click)="resetParentOwnerSelection()"
-          [disabled]="parentOwnerSaving()">
-          Dat lai
-        </button>
-      </div>
-    </div>
-
-    <div class="ads-attribution-card" *ngIf="canManageParentAds()">
-      <div class="ads-attribution-header">
-        <div>
-          <h5>Gan nhom quang cao</h5>
-          <p>Theo doi doanh thu theo ads group se uu tien attribution duoc gan tai day cho phu huynh dang chon.</p>
-        </div>
-        <span class="ads-pill" [class.empty]="!parentAdsAttribution()?.adGroupId">
-          {{ currentParentAdGroupLabel() }}
-        </span>
-      </div>
-
-      <div class="ads-attribution-summary">
-        <div class="ads-summary-item">
-          <span class="ads-summary-label">Nguon gan</span>
-          <strong>{{ parentAdsSourceLabel(parentAdsAttribution()?.sourceType) }}</strong>
-        </div>
-        <div class="ads-summary-item">
-          <span class="ads-summary-label">Cach match</span>
-          <strong>{{ parentAdsMatchLabel(parentAdsAttribution()?.matchedBy) }}</strong>
-        </div>
-        <div class="ads-summary-item">
-          <span class="ads-summary-label">Lan cap nhat cuoi</span>
-          <strong>{{ parentAdsAttribution()?.lastConfirmedAt ? (parentAdsAttribution()?.lastConfirmedAt | date:'dd/MM/yyyy HH:mm') : '-' }}</strong>
-        </div>
-      </div>
-
-      <p class="loading-text" *ngIf="parentAdsLoading()">Dang tai attribution ads cho {{ parentDetail.fullName }}...</p>
-      <p class="success" *ngIf="parentAdsSuccess()">{{ parentAdsSuccess() }}</p>
-      <p class="error" *ngIf="parentAdsError()">{{ parentAdsError() }}</p>
-
-      <div class="ads-form-grid">
-        <label>Tim nhom quang cao
-          <input
-            [(ngModel)]="adGroupSearch"
-            name="adGroupSearch"
-            placeholder="Tim theo ten nhom, ma nhom hoac nen tang" />
-        </label>
-        <label>Chon nhom quang cao
-          <select
-            [(ngModel)]="selectedParentAdGroupId"
-            name="selectedParentAdGroupId"
-            [disabled]="adGroupsLoading() || parentAdsSaving()">
-            <option value="">-- Chua gan --</option>
-            <option *ngFor="let group of filteredAdGroups" [value]="group._id">
-              {{ group.name }} ({{ group.platform }})
-            </option>
-          </select>
-        </label>
-      </div>
-
-      <p class="hint" *ngIf="adGroupsLoading()">Dang tai danh sach nhom quang cao...</p>
-      <p class="hint" *ngIf="!adGroupsLoading() && !filteredAdGroups.length">Khong tim thay nhom quang cao phu hop voi bo loc hien tai.</p>
-
-      <div class="ads-actions">
-        <button
-          type="button"
-          class="primary"
-          (click)="saveParentAdsAttribution()"
-          [disabled]="parentAdsSaving() || parentAdsLoading() || !selectedParentId || !selectedParentAdGroupId || isParentAdsSelectionUnchanged()">
-          {{ parentAdsSaving() ? 'Dang luu...' : 'Luu nhom ads' }}
-        </button>
-        <button
-          type="button"
-          class="ghost"
-          (click)="resetParentAdsSelection()"
-          [disabled]="parentAdsSaving() || parentAdsLoading()">
-          Dat lai
-        </button>
-        <button
-          type="button"
-          class="danger-outline"
-          (click)="clearParentAdsAttribution()"
-          [disabled]="parentAdsSaving() || parentAdsLoading() || !parentAdsAttribution()?.adGroupId">
-          Bo gan hien tai
-        </button>
-      </div>
-    </div>
-  </section>
-
-  <ng-template #empty><p>Khong co du lieu hoac khong trung bo loc.</p></ng-template>
-
-  <div class="modal-backdrop" *ngIf="showModal()">
-    <div class="modal">
-      <h3>{{ editingId ? 'Chinh sua tai khoan' : (parentMode() ? 'Them tai khoan phu huynh' : 'Them tai khoan moi') }}</h3>
-      <form (ngSubmit)="submit()">
-        <label>{{ getCodeLabel(form.role) }}
-          <input
-            [(ngModel)]="form.userCode"
-            name="userCode"
-            required
-            placeholder="{{ getCodeHint(form.role) }}" />
-        </label>
-        <label>Email<input [(ngModel)]="form.email" name="email" type="email" required /></label>
-        <label>So dien thoai
-          <input [(ngModel)]="form.phone" name="phone" placeholder="Nhap so dien thoai" />
-        </label>
-        <label>Mat khau
-          <input
-            [(ngModel)]="form.password"
-            name="password"
-            type="password"
-            [required]="!editingId"
-            minlength="8"
-            placeholder="{{ editingId ? 'De trong neu giu nguyen' : '' }}" />
-        </label>
-        <label>Ho ten<input [(ngModel)]="form.fullName" name="fullName" required /></label>
-        <label *ngIf="canChooseRole(); else fixedRoleBlock">Role
-          <select [(ngModel)]="form.role" name="role" required [disabled]="isSelfEditing()" (ngModelChange)="onFormRoleChange($event)">
-            <option *ngFor="let r of availableRoleOptions()" [value]="r.value">{{ r.label }}</option>
-          </select>
-        </label>
-        <ng-template #fixedRoleBlock>
-          <label>Role
-            <input [value]="translateRole(form.role)" disabled />
-          </label>
-        </ng-template>
-        <ng-container *ngIf="isParentRole(form.role)">
-          <label>Link Facebook
-            <input
-              [(ngModel)]="form.facebookLink"
-              name="facebookLink"
-              placeholder="https://facebook.com/..." />
-          </label>
-          <label>Dia chi
-            <input
-              [(ngModel)]="form.address"
-              name="address"
-              placeholder="Nhap dia chi phu huynh" />
-          </label>
-          <label *ngIf="canAssignParentOwner()">Sale phu trach
-            <select
-              [(ngModel)]="form.saleOwnerId"
-              name="saleOwnerId"
-              [disabled]="salesLoading()">
-              <option value="">-- Chua chon sale --</option>
-              <option *ngFor="let sale of salesOptions()" [value]="sale._id">
-                {{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}
-              </option>
-            </select>
-          </label>
-          <ng-container *ngIf="canManageParentAds()">
-            <label>Nhom quang cao
-              <select
-                [(ngModel)]="form.adGroupId"
-                name="adGroupId"
-                [disabled]="adGroupsLoading()">
-                <option value="">-- Chua gan --</option>
-                <option *ngFor="let group of adGroups()" [value]="group._id">
-                  {{ group.name }} ({{ group.platform }})
-                </option>
-              </select>
-            </label>
-            <small class="hint" *ngIf="adGroupsLoading()">Dang tai danh sach nhom quang cao...</small>
-          </ng-container>
-        </ng-container>
-        <div *ngIf="!editingId && isTeacherRole(form.role)" class="sales-editor">
-          <div class="sales-editor-header">
-            <strong>Sale quan ly</strong>
-            <button type="button" class="ghost" (click)="addManagedSaleSlot()">+ Them sale</button>
-          </div>
-          <div *ngIf="!form.managedSales.length" class="hint">Co the bo trong va them sau trong Ho so giao vien.</div>
-          <div *ngFor="let saleId of form.managedSales; let idx = index" class="sale-row">
-            <label>
-              Sale quan ly {{ idx + 1 }}
-              <select [ngModel]="saleId" (ngModelChange)="updateManagedSaleSlot(idx, $event)" [name]="'managedSale' + idx">
-                <option value="">-- Chon sale --</option>
-                <option *ngFor="let sale of salesOptions()" [value]="sale._id">
-                  {{ sale.fullName }}{{ sale.userCode ? ' (' + sale.userCode + ')' : '' }}
-                </option>
-              </select>
-            </label>
-            <button type="button" class="danger" (click)="removeManagedSaleSlot(idx)">Xoa</button>
-          </div>
-          <small class="hint" *ngIf="salesLoading()">Dang tai danh sach sale...</small>
-          <small class="hint" *ngIf="!salesLoading() && !salesOptions().length">Chua co sale nao de gan.</small>
-        </div>
-        <small class="hint" *ngIf="isSelfEditing()">Khong the doi role cua tai khoan dang dang nhap.</small>
-        <div class="actions">
-          <button type="submit" class="primary">{{ editingId ? 'Cap nhat' : 'Luu' }}</button>
-          <button type="button" (click)="closeModal()">Huy</button>
-        </div>
-        <p class="error" *ngIf="error()">{{ error() }}</p>
-      </form>
-    </div>
-  </div>
-  `,
-  styles: [`
-    .page-header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:12px; }
-    .page-header h2 { margin:0 0 4px; }
-    .page-header p { margin:0; color:#475569; }
-    .scope-tabs { display:flex; gap:8px; margin-bottom:12px; }
-    .scope-tabs button { border:1px solid #cbd5e1; background:#fff; padding:6px 10px; border-radius:999px; cursor:pointer; font-weight:500; }
-    .scope-tabs button.active { border-color:#2563eb; color:#1d4ed8; background:#eff6ff; }
-    .filters { display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
-    input, select, textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; }
-    .table-wrapper { border:1px solid #e2e8f0; border-radius:8px; background:#fff; overflow:hidden; }
-    .table-scroll { max-height:calc(100vh - 320px); overflow:auto; }
-    .data { width:100%; border-collapse:separate; border-spacing:0; background:#fff; }
-    th, td { padding:8px; border-bottom:1px solid #e2e8f0; border-left:1px solid #e2e8f0; text-align:left; }
-    th:first-child, td:first-child { border-left:none; }
-    thead th { position:sticky; top:0; z-index:2; background:#f1f5f9; }
-    tbody tr:hover { background:#f8fafc; }
-    tbody tr.selected { background:#eff6ff; }
-    .table-footer { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 12px; border-top:1px solid #e2e8f0; flex-wrap:wrap; }
-    .page-size-control { display:flex; align-items:center; gap:8px; color:#334155; font-size:13px; }
-    .pager { display:flex; align-items:center; gap:8px; color:#334155; font-size:13px; }
-    .pager button { border:1px solid #cbd5e1; background:#fff; color:#0f172a; padding:4px 10px; border-radius:4px; cursor:pointer; }
-    .pager button:disabled { opacity:.5; cursor:not-allowed; }
-    .parent-contact { margin-top:12px; border:1px solid #e2e8f0; border-radius:8px; padding:12px; background:#fff; }
-    .parent-contact h4 { margin:0 0 10px; color:#1e293b; }
-    .detail-table { width:100%; border-collapse:collapse; }
-    .detail-table th, .detail-table td { padding:10px 12px; border:1px solid #e2e8f0; vertical-align:top; }
-    .detail-table th { width:18%; background:#f8fafc; color:#334155; font-size:13px; text-align:left; }
-    .detail-table td { color:#334155; }
-    .parent-contact a { color:#2563eb; word-break:break-all; text-decoration:none; }
-    .parent-contact p { margin:0; color:#334155; word-break:break-word; }
-    .ads-attribution-card { margin-top:16px; padding-top:16px; border-top:1px dashed #cbd5e1; display:flex; flex-direction:column; gap:12px; }
-    .ads-attribution-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
-    .ads-attribution-header h5 { margin:0 0 4px; color:#0f172a; font-size:16px; }
-    .ads-attribution-header p { margin:0; color:#475569; max-width:760px; }
-    .ads-attribution-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
-    .ads-summary-item { border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; background:#f8fafc; }
-    .ads-summary-label { display:block; font-size:12px; color:#64748b; margin-bottom:4px; text-transform:uppercase; letter-spacing:.04em; }
-    .ads-pill { display:inline-flex; align-items:center; gap:6px; padding:8px 12px; border-radius:999px; background:#dcfce7; color:#166534; font-weight:600; text-align:center; }
-    .ads-pill.empty { background:#f1f5f9; color:#475569; }
-    .ads-form-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
-    .ads-form-grid label { display:flex; flex-direction:column; gap:6px; color:#334155; }
-    .ads-actions { display:flex; gap:8px; flex-wrap:wrap; }
-    .danger-outline { border:1px solid #dc2626; background:#fff; color:#dc2626; padding:8px 12px; border-radius:4px; cursor:pointer; }
-    .danger-outline:disabled { opacity:.45; cursor:not-allowed; }
-    .loading-text { color:#334155; }
-    .success { color:#15803d; margin:0; }
-    .primary { background:#2563eb; color:#fff; border:none; padding:8px 12px; border-radius:4px; cursor:pointer; }
-    .ghost { border:1px solid #94a3b8; background:transparent; padding:4px 10px; border-radius:4px; cursor:pointer; margin-right:6px; }
-    .danger { border:1px solid #dc2626; background:#dc2626; color:#fff; padding:4px 10px; border-radius:4px; cursor:pointer; }
-    .ghost:disabled, .danger:disabled { opacity:.4; cursor:not-allowed; }
-    .actions-cell { white-space:nowrap; width:140px; }
-    .modal-backdrop { position:fixed; inset:0; background:rgba(15,23,42,.55); display:flex; align-items:center; justify-content:center; }
-    .modal { background:#fff; padding:20px; border-radius:8px; width:min(520px, calc(100vw - 24px)); box-shadow:0 12px 32px rgba(15,23,42,.2); }
-    .modal form { display:flex; flex-direction:column; gap:12px; }
-    .sales-editor { border-top:1px solid #e2e8f0; padding-top:12px; display:flex; flex-direction:column; gap:10px; }
-    .sales-editor-header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .sale-row { display:flex; align-items:end; gap:8px; }
-    .sale-row label { flex:1; display:flex; flex-direction:column; gap:6px; color:#334155; }
-    .actions { display:flex; gap:8px; justify-content:flex-end; }
-    .hint { color:#64748b; font-size:12px; }
-    .error { color:#dc2626; margin:0; }
-    @media (max-width: 900px) {
-      .detail-table th, .detail-table td { display:block; width:100%; box-sizing:border-box; }
-      .sale-row { flex-direction:column; align-items:stretch; }
-    }
-  `]
+  templateUrl: './users-management.component.html',
+  styleUrls: ['./users-management.component.css'],
 })
 export class UsersManagementComponent {
   private readonly parentRole = 'PARENT';
@@ -503,19 +83,7 @@ export class UsersManagementComponent {
   currentPage = 1;
   selectedParentId: string | null = null;
   editingOriginalRole: string | null = null;
-  form = {
-    userCode: '',
-    email: '',
-    phone: '',
-    password: '',
-    fullName: '',
-    role: 'DIRECTOR',
-    facebookLink: '',
-    address: '',
-    saleOwnerId: '',
-    adGroupId: '',
-    managedSales: [] as string[],
-  };
+  form: UserManagementForm = this.buildEmptyForm('DIRECTOR');
   editingId: string | null = null;
 
   roleOptions: RoleOption[] = [
@@ -526,6 +94,7 @@ export class UsersManagementComponent {
     { value: 'ADSMANAGER', label: 'Ads manager', codeLabel: 'Ma ads manager', codeHint: 'VD: ADS001' },
     { value: 'TEACHER', label: 'Giao vien', codeLabel: 'Ma giao vien', codeHint: 'VD: GV001' },
     { value: 'PARENT', label: 'Phu huynh', codeLabel: 'Ma phu huynh', codeHint: 'VD: PH001' },
+    { value: 'SHAREHOLDER', label: 'Co dong', codeLabel: 'Ma co dong', codeHint: 'VD: SH001' },
     { value: 'MANAGER', label: 'Quan ly (legacy)', codeLabel: 'Ma quan ly', codeHint: 'VD: QL001' },
     { value: 'HCNS', label: 'HCNS (legacy)', codeLabel: 'Ma HCNS', codeHint: 'VD: HCNS001' },
     { value: 'PARTIME', label: 'Partime (legacy)', codeLabel: 'Ma partime', codeHint: 'VD: PT001' },
@@ -687,9 +256,43 @@ export class UsersManagementComponent {
     return role === 'TEACHER';
   }
 
+  isShareholderRole(role: string): boolean {
+    return role === 'SHAREHOLDER';
+  }
+
+  private emptyTeacherSalaryConfig(): TeacherOnboardingSalaryConfigDraft {
+    return {
+      baseSalary: null,
+      standardHours: 176,
+      scheduledStartTime: '08:00',
+      latePenaltyAmount: 0,
+      notes: '',
+    };
+  }
+
+  private buildEmptyForm(role: string): UserManagementForm {
+    return {
+      userCode: '',
+      email: '',
+      phone: '',
+      password: '',
+      fullName: '',
+      role,
+      ownershipPercentage: null,
+      facebookLink: '',
+      address: '',
+      saleOwnerId: '',
+      adGroupId: '',
+      managedSales: [],
+      salaryConfig: this.isTeacherRole(role) ? this.emptyTeacherSalaryConfig() : null,
+    };
+  }
+
   onFormRoleChange(role: string) {
     if (this.isParentRole(role)) {
+      this.form.ownershipPercentage = null;
       this.form.managedSales = [];
+      this.form.salaryConfig = null;
       if (this.canAssignParentOwner()) {
         void this.ensureSalesLoaded();
       }
@@ -703,16 +306,39 @@ export class UsersManagementComponent {
     this.form.address = '';
     this.form.saleOwnerId = '';
     this.form.adGroupId = '';
+    if (!this.isShareholderRole(role)) {
+      this.form.ownershipPercentage = null;
+    }
 
     if (this.isTeacherRole(role)) {
       if (!this.form.managedSales.length) {
         this.form.managedSales = [''];
+      }
+      if (!this.form.salaryConfig) {
+        this.form.salaryConfig = this.emptyTeacherSalaryConfig();
       }
       void this.ensureSalesLoaded();
       return;
     }
 
     this.form.managedSales = [];
+    this.form.salaryConfig = null;
+  }
+
+  formatOwnershipPercentage(user: UserItem): string {
+    if (!this.isShareholderRole(user.role)) {
+      return '-';
+    }
+
+    const value = user.ownershipPercentage;
+    if (value === null || value === undefined) {
+      return '-';
+    }
+
+    return `${Number(value).toLocaleString('vi-VN', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })}%`;
   }
 
   onFilterChange() {
@@ -989,6 +615,20 @@ export class UsersManagementComponent {
   async saveParentOwnerAssignment() {
     if (!this.selectedParentId || !this.selectedParentSaleOwnerId) return;
 
+    const parent = this.selectedParentDetail;
+    const nextSale = this.salesOptions().find((sale) => sale._id === this.selectedParentSaleOwnerId) || null;
+    if (!nextSale) {
+      this.parentOwnerError.set('Khong tim thay sale phu trach moi');
+      return;
+    }
+
+    const currentOwnerLabel = this.currentParentOwnerLabel(parent);
+    const nextOwnerLabel = nextSale.fullName;
+    const confirmMessage = `Chuyen sale phu trach tu ${currentOwnerLabel} sang ${nextOwnerLabel} cho ${parent?.fullName || 'phu huynh nay'}?`;
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
     this.parentOwnerSaving.set(true);
     this.parentOwnerError.set('');
     this.parentOwnerSuccess.set('');
@@ -997,8 +637,7 @@ export class UsersManagementComponent {
       const savedUser = await this.userService.update(this.selectedParentId, {
         saleOwnerId: this.selectedParentSaleOwnerId,
       });
-      const selectedSale = this.salesOptions().find((sale) => sale._id === this.selectedParentSaleOwnerId) || null;
-      this.syncLocalParentOwner(this.selectedParentId, selectedSale);
+      this.syncLocalParentOwner(this.selectedParentId, nextSale);
       this.selectedParentSaleOwnerId = savedUser.saleOwnerId || this.selectedParentSaleOwnerId;
       this.parentOwnerSuccess.set('Da cap nhat sale phu trach cho phu huynh');
       await this.reload();
@@ -1063,28 +702,17 @@ export class UsersManagementComponent {
 
   openModal() {
     this.error.set('');
-      this.form = {
-        userCode: '',
-        email: '',
-        phone: '',
-        password: '',
-        fullName: '',
-        role: this.isSaleViewer() || this.parentMode() ? this.parentRole : 'DIRECTOR',
-        facebookLink: '',
-        address: '',
-        saleOwnerId: '',
-        adGroupId: '',
-        managedSales: [],
-      };
-      this.editingId = null;
-      this.editingOriginalRole = null;
-      if (this.isParentRole(this.form.role)) {
-        if (this.canAssignParentOwner()) {
-          void this.ensureSalesLoaded();
-        }
-        if (this.canManageParentAds()) {
-          void this.ensureAdGroupsLoaded();
-        }
+    const role = this.isSaleViewer() || this.parentMode() ? this.parentRole : 'DIRECTOR';
+    this.form = this.buildEmptyForm(role);
+    this.editingId = null;
+    this.editingOriginalRole = null;
+    if (this.isParentRole(this.form.role)) {
+      if (this.canAssignParentOwner()) {
+        void this.ensureSalesLoaded();
+      }
+      if (this.canManageParentAds()) {
+        void this.ensureAdGroupsLoaded();
+      }
     }
     this.showModal.set(true);
   }
@@ -1139,6 +767,60 @@ export class UsersManagementComponent {
     return 'Thao tac that bai, vui long kiem tra lai du lieu';
   }
 
+  private buildTeacherSalaryConfigPayload(): CreateUserSalaryConfigPayload | null {
+    const draft = this.form.salaryConfig;
+    if (!draft) {
+      this.error.set('Vui long khai bao salary config mac dinh cho giao vien');
+      return null;
+    }
+
+    if (draft.baseSalary === null || draft.baseSalary === undefined || `${draft.baseSalary}`.trim() === '') {
+      this.error.set('Vui long nhap luong cung mac dinh hop le cho giao vien');
+      return null;
+    }
+    const baseSalary = Number(draft.baseSalary);
+    if (!Number.isFinite(baseSalary) || baseSalary < 0) {
+      this.error.set('Vui long nhap luong cung mac dinh hop le cho giao vien');
+      return null;
+    }
+
+    if (draft.standardHours === null || draft.standardHours === undefined || `${draft.standardHours}`.trim() === '') {
+      this.error.set('Vui long nhap so gio chuan hop le cho giao vien');
+      return null;
+    }
+    const standardHours = Number(draft.standardHours);
+    if (!Number.isFinite(standardHours) || standardHours < 1) {
+      this.error.set('Vui long nhap so gio chuan hop le cho giao vien');
+      return null;
+    }
+
+    const scheduledStartTime = draft.scheduledStartTime.trim();
+    if (!scheduledStartTime) {
+      this.error.set('Vui long nhap gio vao ca mac dinh cho giao vien');
+      return null;
+    }
+
+    const latePenaltyAmount = Number(draft.latePenaltyAmount ?? 0);
+    if (!Number.isFinite(latePenaltyAmount) || latePenaltyAmount < 0) {
+      this.error.set('Phat di muon mac dinh khong duoc am');
+      return null;
+    }
+
+    const notes = draft.notes.trim();
+    return {
+      baseSalary,
+      standardHours,
+      scheduledStartTime,
+      latePenaltyAmount,
+      commissionEnabled: false,
+      commissionType: 'PROGRESSIVE',
+      commissionTiers: [],
+      kpiBonusEnabled: false,
+      kpiBonusTiers: [],
+      notes: notes || undefined,
+    };
+  }
+
   async submit() {
     const userCode = this.form.userCode.trim().toUpperCase();
     const selfEditing = this.isSelfEditing();
@@ -1149,11 +831,17 @@ export class UsersManagementComponent {
 
     try {
       const isParentRole = this.isParentRole(this.form.role);
+      const isCreateTeacher = !this.editingId && this.isTeacherRole(this.form.role);
       const adGroupId = isParentRole ? this.form.adGroupId.trim() : '';
       const managedSales = !this.editingId && this.isTeacherRole(this.form.role)
         ? Array.from(new Set(this.form.managedSales.map((saleId) => saleId.trim()).filter(Boolean)))
         : [];
       const saleOwnerId = this.isParentRole(this.form.role) ? this.form.saleOwnerId.trim() : '';
+      const teacherSalaryConfig = isCreateTeacher ? this.buildTeacherSalaryConfigPayload() : undefined;
+      if (isCreateTeacher && !teacherSalaryConfig) {
+        return;
+      }
+      const salaryConfig = teacherSalaryConfig ?? undefined;
       const payload = {
         userCode,
         email: this.form.email.trim(),
@@ -1161,10 +849,14 @@ export class UsersManagementComponent {
         password: this.form.password.trim(),
         fullName: this.form.fullName.trim(),
         role: this.form.role,
+        ownershipPercentage: this.isShareholderRole(this.form.role) && this.form.ownershipPercentage !== null
+          ? Number(this.form.ownershipPercentage)
+          : undefined,
         facebookLink: isParentRole ? this.form.facebookLink.trim() : undefined,
         address: isParentRole ? this.form.address.trim() : undefined,
         saleOwnerId: isParentRole && saleOwnerId ? saleOwnerId : undefined,
         managedSales: managedSales.length ? managedSales : undefined,
+        salaryConfig,
       };
 
       let savedUser: UserItem;
@@ -1175,6 +867,7 @@ export class UsersManagementComponent {
           phone: payload.phone,
           fullName: payload.fullName,
           role: payload.role,
+          ownershipPercentage: payload.ownershipPercentage,
           facebookLink: payload.facebookLink,
           address: payload.address,
           saleOwnerId: payload.saleOwnerId,
@@ -1211,19 +904,21 @@ export class UsersManagementComponent {
   edit(user: UserItem) {
     this.editingId = user._id;
     this.editingOriginalRole = user.role;
-      this.form = {
-        userCode: (user.userCode || '').trim(),
-        email: user.email,
-        phone: user.phone || '',
-        password: '',
-        fullName: user.fullName,
-        role: user.role,
-        facebookLink: user.facebookLink || '',
-        address: user.address || '',
-        saleOwnerId: user.saleOwnerId || '',
-        adGroupId: user.adGroupId || '',
-        managedSales: [],
-      };
+    this.form = {
+      userCode: (user.userCode || '').trim(),
+      email: user.email,
+      phone: user.phone || '',
+      password: '',
+      fullName: user.fullName,
+      role: user.role,
+      ownershipPercentage: user.ownershipPercentage ?? null,
+      facebookLink: user.facebookLink || '',
+      address: user.address || '',
+      saleOwnerId: user.saleOwnerId || '',
+      adGroupId: user.adGroupId || '',
+      managedSales: [],
+      salaryConfig: null,
+    };
     if (this.isParentRole(user.role)) {
       if (this.canAssignParentOwner()) {
         void this.ensureSalesLoaded();

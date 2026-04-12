@@ -173,6 +173,7 @@ PayrollTransactionSchema.index({ sessionId: 1 }, { unique: true });
 
 // Query nhanh theo teacher và status
 PayrollTransactionSchema.index({ teacherId: 1, status: 1 });
+PayrollTransactionSchema.index({ teacherId: 1, sessionDate: 1, status: 1 });
 
 // Query nhanh các record HELD cần xử lý
 PayrollTransactionSchema.index({ status: 1, heldAt: 1 });

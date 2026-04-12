@@ -12,7 +12,7 @@ import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
-import { MessageService } from '../services/message.service';
+import { AiSuggestionPreview, MessageService } from '../services/message.service';
 import { AuthService } from '../services/auth.service';
 import { environment } from '../../environments/environment';
 
@@ -59,6 +59,8 @@ interface UserItem {
   role: string;
   email: string;
 }
+
+interface MessageAiPreview extends AiSuggestionPreview {}
 
 @Component({
   selector: 'app-messages',
@@ -203,6 +205,42 @@ interface UserItem {
       </div>
 
       <div class="chat-input">
+        <div class="chat-ai-toolbar" *ngIf="selectedConv() && isParentSupport(selectedConv()!)">
+          <button
+            type="button"
+            class="secondary suggest-button"
+            data-testid="messages-ai-suggest-button"
+            (click)="suggestAiReply()"
+            [disabled]="suggesting() || sending()">
+            {{ suggesting() ? 'Dang goi y AI...' : 'Goi y AI' }}
+          </button>
+          <span class="ai-toolbar-note">AI chi tao ban nhap de agent xem truoc, chua gui vao hoi thoai.</span>
+        </div>
+        <div
+          class="ai-preview-panel"
+          *ngIf="aiPreview() as preview"
+          data-testid="messages-ai-suggest-preview">
+          <div class="ai-preview-header">
+            <span class="kind-tag ai-preview-tag">Ban nhap AI</span>
+            <div class="ai-preview-actions">
+              <button
+                type="button"
+                class="secondary small"
+                data-testid="messages-ai-suggest-apply"
+                (click)="applyAiSuggestion()">
+                Chen vao o nhap
+              </button>
+              <button
+                type="button"
+                class="ghost small"
+                data-testid="messages-ai-suggest-discard"
+                (click)="discardAiSuggestion()">
+                Bo goi y
+              </button>
+            </div>
+          </div>
+          <div class="ai-preview-content">{{ preview.content }}</div>
+        </div>
         <textarea
           [(ngModel)]="messageInput"
           [placeholder]="messagePlaceholder()"
@@ -485,9 +523,48 @@ interface UserItem {
     .chat-input {
       padding: 14px 20px;
       border-top: 1px solid #e5e7eb;
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr auto;
       gap: 10px;
       align-items: flex-end;
+    }
+    .chat-ai-toolbar {
+      grid-column: 1 / -1;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .suggest-button { white-space: nowrap; }
+    .ai-toolbar-note { font-size: 12px; color: #64748b; }
+    .ai-preview-panel {
+      grid-column: 1 / -1;
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid #c7d2fe;
+      background: #eef2ff;
+    }
+    .ai-preview-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .ai-preview-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .ai-preview-tag { background: #c7d2fe; color: #312e81; }
+    .ai-preview-content {
+      color: #312e81;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
     }
     .chat-input textarea {
       flex: 1;
@@ -517,12 +594,37 @@ interface UserItem {
     }
     button.primary:hover { background: #ea580c; }
     button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    button.secondary {
+      padding: 8px 14px;
+      background: #fff;
+      color: #0f172a;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    button.secondary:hover { background: #f8fafc; }
+    button.secondary.small,
+    button.ghost.small { padding: 6px 10px; font-size: 12px; }
+    button.ghost {
+      padding: 8px 14px;
+      background: transparent;
+      color: #4338ca;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    button.ghost:hover { text-decoration: underline; }
 
     @media (max-width: 900px) {
       .msg-layout { flex-direction: column; height: auto; }
       .conv-list-panel, .chat-panel { width: 100%; }
       .chat-panel { min-height: 420px; }
       .message-bubble { max-width: 85%; }
+      .chat-ai-toolbar { align-items: stretch; }
     }
   `],
 })
@@ -541,9 +643,11 @@ export class MessagesComponent implements OnInit, OnDestroy {
   messages = signal<Message[]>([]);
   availableUsers = signal<UserItem[]>([]);
   sending = signal(false);
+  suggesting = signal(false);
   showNewChat = signal(false);
   currentUserId = signal('');
   currentUserRole = signal('');
+  aiPreview = signal<MessageAiPreview | null>(null);
 
   searchKeyword = '';
   messageInput = '';
@@ -645,6 +749,7 @@ export class MessagesComponent implements OnInit, OnDestroy {
     this.showNewChat.set(false);
     this.selectedUserId = '';
     this.selectedConv.set(conversation);
+    this.aiPreview.set(null);
     this.requestedConversationId = conversation._id;
 
     if (syncRoute) {
@@ -707,6 +812,7 @@ export class MessagesComponent implements OnInit, OnDestroy {
     if (this.showNewChat()) {
       this.selectedConv.set(null);
       this.messages.set([]);
+      this.aiPreview.set(null);
       this.selectedUserId = '';
       this.messageInput = '';
       this.requestedConversationId = '';
@@ -739,11 +845,13 @@ export class MessagesComponent implements OnInit, OnDestroy {
       if (selected) {
         await this.messageService.sendToConversation(selected._id, content);
         this.messageInput = '';
+        this.aiPreview.set(null);
         await this.loadMessages(selected._id);
         await this.loadConversations();
       } else if (this.selectedUserId) {
         await this.messageService.sendMessage(this.selectedUserId, content);
         this.messageInput = '';
+        this.aiPreview.set(null);
         this.showNewChat.set(false);
         await this.loadConversations();
         const newConversation = this.conversations().find((conversation) =>
@@ -758,6 +866,31 @@ export class MessagesComponent implements OnInit, OnDestroy {
     } catch {}
 
     this.sending.set(false);
+  }
+
+  async suggestAiReply() {
+    const selected = this.selectedConv();
+    if (!selected || !this.isParentSupport(selected)) return;
+
+    this.suggesting.set(true);
+    try {
+      const preview = await this.messageService.previewAiSuggestion(selected._id);
+      this.aiPreview.set(preview);
+    } catch {
+      this.aiPreview.set(null);
+    } finally {
+      this.suggesting.set(false);
+    }
+  }
+
+  applyAiSuggestion() {
+    const preview = this.aiPreview();
+    if (!preview) return;
+    this.messageInput = preview.content;
+  }
+
+  discardAiSuggestion() {
+    this.aiPreview.set(null);
   }
 
   canStartDirectChat(): boolean {

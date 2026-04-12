@@ -1,55 +1,38 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   Logger,
-  NotFoundException,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
-import { Model, Types, Connection, ClientSession } from 'mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import {
   Attendance,
   AttendanceDocument,
   AttendanceStatus,
-  COUNTED_ATTENDANCE_STATUSES,
 } from './schemas/attendance.schema';
+import { Classroom, ClassDocument, ClassMode } from '../classes/schemas/class.schema';
+import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { CreateAttendanceDto, BulkAttendanceDto } from './dto/create-attendance.dto';
 import { UpdateAttendanceDto } from './dto/update-attendance.dto';
 import { GenerateAttendanceLinkDto, StudentAttendanceDto } from './dto/generate-link.dto';
-import { UserDocument } from '../users/schemas/user.schema';
-import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
-import { Classroom, ClassDocument, ClassMode } from '../classes/schemas/class.schema';
-import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Session, SessionDocument, SessionStatus, SessionType } from '../sessions/schemas/session.schema';
-import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType } from '../invoices/schemas/invoice.schema';
-import {
-  TrialEnrollment,
-  TrialEnrollmentDocument,
-  TrialEnrollmentStatus,
-} from '../trial-enrollments/schemas/trial-enrollment.schema';
-import { Wallet, WalletDocument, WalletStatus } from '../wallets/schemas/wallet.schema';
-import { Role } from '../common/interfaces/role.enum';
 import { ClassesService } from '../classes/classes.service';
-import { randomBytes } from 'crypto';
-import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { normalizeDate } from '../common/utils/date.utils';
 import {
-  getClassPricingConfigAt,
-  getDurationForStudentAt,
-  getTeacherIdForStudentAt,
-  getTeacherOwnedStudentIdsAt,
-} from '../classes/student-config.utils';
-import { validateAndProcessBase64Image } from '../common/utils/image-validation.utils';
-import { normalizeDate, dayRange, buildDateFilter } from '../common/utils/date.utils';
-
-type StudentLean = Student & {
-  _id: Types.ObjectId;
-  isTrial?: boolean;
-  trialEnrollmentId?: Types.ObjectId;
-};
-type ClassLean = Classroom & { _id: Types.ObjectId };
-const OFFLINE_MIN_TEACHER_PAYOUT = 200_000;
+  ClassLean,
+  getUserId,
+  isTeacher,
+  isCountedAttendanceStatus,
+  normalizeInteractiveAttendanceStatus,
+  normalizeBulkAttendanceStatus,
+  assertClassAccess,
+  getSubstituteInfo,
+  resolveAttendanceTeacherId,
+  getOpsCheckerId,
+} from './attendance.utils';
+import { AttendanceSessionBridgeService } from './attendance-session-bridge.service';
+import { AttendanceQueryService } from './attendance-query.service';
+import { AttendanceLinkService } from './attendance-link.service';
 
 @Injectable()
 export class AttendanceService {
@@ -58,810 +41,24 @@ export class AttendanceService {
   constructor(
     @InjectModel(Attendance.name) private readonly attendanceModel: Model<AttendanceDocument>,
     @InjectModel(Classroom.name) private readonly classModel: Model<ClassDocument>,
-    @InjectModel(Student.name) private readonly studentModel: Model<StudentDocument>,
-    @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
-    @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
-    @InjectModel(TrialEnrollment.name)
-    private readonly trialEnrollmentModel: Model<TrialEnrollmentDocument>,
-    @InjectModel(Wallet.name) private readonly walletModel: Model<WalletDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly classesService: ClassesService,
+    private readonly sessionBridgeService: AttendanceSessionBridgeService,
+    private readonly queryService: AttendanceQueryService,
+    private readonly linkService: AttendanceLinkService,
   ) {}
 
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // PRIVATE HELPERS
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  private getUserId(user: JwtPayload): string {
-    return user?.sub ?? user?._id;
-  }
-
-  private isCountedAttendanceStatus(status?: AttendanceStatus | null): boolean {
-    return !!status && COUNTED_ATTENDANCE_STATUSES.includes(status);
-  }
-
-  private normalizeInteractiveAttendanceStatus(
-    status?: AttendanceStatus | null,
-  ): AttendanceStatus | null {
-    if (status === undefined) {
-      return AttendanceStatus.PRESENT;
-    }
-    return status ?? null;
-  }
-
-  private normalizeBulkAttendanceStatus(
-    status?: AttendanceStatus | null,
-  ): AttendanceStatus | null {
-    return status ?? null;
-  }
-
-  private async loadTrialStudentsForClass(classId: Types.ObjectId): Promise<StudentLean[]> {
-    const enrollments = await this.trialEnrollmentModel
-      .find({
-        classId,
-        status: {
-          $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
-        },
-        studentId: { $exists: true, $ne: null },
-      })
-      .populate('studentId', 'fullName age parentName studentCode faceImage parentPhone')
-      .lean();
-
-    return enrollments
-      .map((enrollment: any) => {
-        const student = enrollment.studentId;
-        if (!student?._id) return null;
-        return {
-          ...student,
-          _id: student._id,
-          isTrial: true,
-          trialEnrollmentId: enrollment._id,
-        } as StudentLean;
-      })
-      .filter((student): student is StudentLean => !!student);
-  }
-
-  private async findActiveTrialEnrollment(
-    classId: Types.ObjectId,
-    studentId: Types.ObjectId,
-    mongoSession?: ClientSession,
-  ) {
-    let query = this.trialEnrollmentModel.findOne({
-      classId,
-      studentId,
-      status: {
-        $in: [TrialEnrollmentStatus.PENDING_TRIAL, TrialEnrollmentStatus.WAITING_DECISION],
-      },
-    });
-    if (mongoSession) {
-      query = query.session(mongoSession);
-    }
-    return query.sort({ createdAt: -1 }).lean();
-  }
-
-  private async isStudentAllowedInClass(
-    classroom: ClassLean,
-    studentId: string,
-    mongoSession?: ClientSession,
-  ): Promise<boolean> {
-    const inRoster = classroom.students?.some((s: any) => s.toString() === studentId);
-    if (inRoster) return true;
-    if (!Types.ObjectId.isValid(studentId)) return false;
-    const activeTrial = await this.findActiveTrialEnrollment(
-      classroom._id as Types.ObjectId,
-      new Types.ObjectId(studentId),
-      mongoSession,
-    );
-    return !!activeTrial;
-  }
-
-  private async syncTrialUsage(classId: Types.ObjectId, studentId: Types.ObjectId): Promise<void> {
-    const enrollment = await this.trialEnrollmentModel
-      .findOne({
-        classId,
-        studentId,
-        status: {
-          $in: [
-            TrialEnrollmentStatus.PENDING_TRIAL,
-            TrialEnrollmentStatus.WAITING_DECISION,
-            TrialEnrollmentStatus.CONVERTED,
-          ],
-        },
-      })
-      .sort({ createdAt: -1 });
-
-    if (!enrollment) return;
-
-    const used = await this.sessionModel.countDocuments({
-      classId,
-      studentId,
-      sessionType: SessionType.TRIAL,
-      status: { $nin: [SessionStatus.CANCELLED, SessionStatus.RESCHEDULED] },
-      trialEnrollmentId: enrollment._id,
-    });
-
-    let nextStatus = enrollment.status;
-    if (
-      nextStatus === TrialEnrollmentStatus.PENDING_TRIAL &&
-      used >= (enrollment.maxTrialSessions || 2)
-    ) {
-      nextStatus = TrialEnrollmentStatus.WAITING_DECISION;
-    }
-
-    if (used !== enrollment.trialSessionsUsed || nextStatus !== enrollment.status) {
-      enrollment.trialSessionsUsed = used;
-      enrollment.status = nextStatus as any;
-      await enrollment.save();
-    }
-  }
-
-  /**
-   * TÃƒÆ’Ã‚Â­nh amountCharged cho 1 buÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i hÃƒÂ¡Ã‚Â»Ã‚Âc dÃƒÂ¡Ã‚Â»Ã‚Â±a trÃƒÆ’Ã‚Âªn per-minute rate tÃƒÂ¡Ã‚Â»Ã‚Â« Invoice.
-   * Fallback sang class-level pricing nÃƒÂ¡Ã‚ÂºÃ‚Â¿u khÃƒÆ’Ã‚Â´ng cÃƒÆ’Ã‚Â³ invoice.
-   *
-   * VD: Invoice 3,800,000 / 20 buÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i / 70 phÃƒÆ’Ã‚Âºt ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ perMinuteRate = 2,714.29
-   *   ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ buÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i 90 phÃƒÆ’Ã‚Âºt: 2,714.29 ÃƒÆ’Ã¢â‚¬â€ 90 = 244,286 Ãƒâ€žÃ¢â‚¬Ëœ
-   */
-  private async resolveAmountCharged(
-    studentId: Types.ObjectId,
-    classId: Types.ObjectId,
-    durationMinutes: number,
-    classroom: ClassLean,
-    date: Date,
-  ): Promise<number> {
-    const classPricing = getClassPricingConfigAt(classroom, date);
-    const snapshotPerMinuteRate = Number(classPricing.perMinuteRate ?? 0);
-    if (snapshotPerMinuteRate > 0) {
-      return this.roundMoneyToThousand(snapshotPerMinuteRate * durationMinutes);
-    }
-
-    const snapshotBaseDuration = Number(classPricing.baseDuration ?? 60);
-    const snapshotPricePerSession = Number(classPricing.pricePerSession ?? 0);
-    if (snapshotBaseDuration > 0 && snapshotPricePerSession > 0) {
-      const ratio = durationMinutes / snapshotBaseDuration;
-      return this.roundMoneyToThousand(snapshotPricePerSession * ratio);
-    }
-
-    // Legacy fallback: latest approved invoice with perMinuteRate
-    const invoice = await this.invoiceModel
-      .findOne({
-        studentId,
-        classId,
-        status: 'APPROVED',
-        perMinuteRate: { $gt: 0 },
-      })
-      .sort('-createdAt')
-      .select('perMinuteRate referenceDuration pricePerSession')
-      .lean();
-
-    if (invoice?.perMinuteRate) {
-      return this.roundMoneyToThousand(invoice.perMinuteRate * durationMinutes);
-    }
-
-    // Final fallback: class-level pricing
-    const baseDuration =
-      (classroom as any).baseDuration ?? (classroom as any).sessionDuration ?? 60;
-    const pricePerSession = (classroom as any).pricePerSession ?? 0;
-    const ratio = durationMinutes / baseDuration;
-    return this.roundMoneyToThousand(pricePerSession * ratio);
-  }
-
-  private async resolveCurrentAmountCharged(
-    studentId: Types.ObjectId,
-    classId: Types.ObjectId,
-    durationMinutes: number,
-    classroom: ClassLean,
-  ): Promise<number> {
-    const classPricing = getClassPricingConfigAt(classroom);
-    const snapshotPerMinuteRate = Number(classPricing.perMinuteRate ?? 0);
-    if (snapshotPerMinuteRate > 0) {
-      return this.roundMoneyToThousand(snapshotPerMinuteRate * durationMinutes);
-    }
-
-    const snapshotBaseDuration = Number(classPricing.baseDuration ?? 60);
-    const snapshotPricePerSession = Number(classPricing.pricePerSession ?? 0);
-    if (snapshotBaseDuration > 0 && snapshotPricePerSession > 0) {
-      const ratio = durationMinutes / snapshotBaseDuration;
-      return this.roundMoneyToThousand(snapshotPricePerSession * ratio);
-    }
-
-    const invoice = await this.invoiceModel
-      .findOne({
-        studentId,
-        classId,
-        status: 'APPROVED',
-        perMinuteRate: { $gt: 0 },
-      })
-      .sort('-createdAt')
-      .select('perMinuteRate referenceDuration pricePerSession')
-      .lean();
-
-    if (invoice?.perMinuteRate) {
-      return this.roundMoneyToThousand(invoice.perMinuteRate * durationMinutes);
-    }
-
-    const baseDuration =
-      (classroom as any).baseDuration ?? (classroom as any).sessionDuration ?? 60;
-    const pricePerSession = (classroom as any).pricePerSession ?? 0;
-    const ratio = durationMinutes / baseDuration;
-    return this.roundMoneyToThousand(pricePerSession * ratio);
-  }
-
-  private roundMoneyToThousand(value: number): number {
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    return Math.round(value / 1000) * 1000;
-  }
-
-  private roundMoneyDownToThousand(value: number): number {
-    if (!Number.isFinite(value) || value <= 0) return 0;
-    return Math.floor(value / 1000) * 1000;
-  }
-
-  private resolveSessionDurationForDate(
-    classroom: ClassLean,
-    studentId: string,
-    date: Date,
-  ): number {
-    const durationConfig = getDurationForStudentAt(classroom, studentId, date);
-    return (
-      durationConfig.sessionDuration
-      || getClassPricingConfigAt(classroom, date).sessionDuration
-      || 60
-    );
-  }
-
-  private resolveCurrentSessionDuration(
-    classroom: ClassLean,
-    studentId: string,
-  ): number {
-    const durationConfig = getDurationForStudentAt(classroom, studentId);
-    return (
-      durationConfig.sessionDuration
-      || getClassPricingConfigAt(classroom).sessionDuration
-      || 60
-    );
-  }
-
-  private resolveTeacherPayout(durationMinutes: number, classroom: ClassLean, date: Date): number {
-    const classPricing = getClassPricingConfigAt(classroom, date);
-    const snapshotBaseDuration = Number(classPricing.baseDuration ?? 60);
-    const snapshotTeacherPayPerSession = Number(classPricing.teacherPayPerSession ?? 0);
-    if (snapshotBaseDuration > 0 && snapshotTeacherPayPerSession > 0) {
-      const ratio = durationMinutes / snapshotBaseDuration;
-      return this.roundMoneyDownToThousand(snapshotTeacherPayPerSession * ratio);
-    }
-    return this.roundMoneyDownToThousand(snapshotTeacherPayPerSession);
-  }
-
-  private resolveCurrentTeacherPayout(durationMinutes: number, classroom: ClassLean): number {
-    const classPricing = getClassPricingConfigAt(classroom);
-    const snapshotBaseDuration = Number(classPricing.baseDuration ?? 60);
-    const snapshotTeacherPayPerSession = Number(classPricing.teacherPayPerSession ?? 0);
-    if (snapshotBaseDuration > 0 && snapshotTeacherPayPerSession > 0) {
-      const ratio = durationMinutes / snapshotBaseDuration;
-      return this.roundMoneyDownToThousand(snapshotTeacherPayPerSession * ratio);
-    }
-    return this.roundMoneyDownToThousand(snapshotTeacherPayPerSession);
-  }
-
-  private async hasAttendanceInvoiceCoverageForAmount(params: {
-    studentId: Types.ObjectId;
-    classId: Types.ObjectId;
-    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining' | 'trialSessionsRemaining';
-    coverageAmount: number;
-    mongoSession?: ClientSession;
-  }): Promise<boolean> {
-    const { studentId, classId, allowanceField, coverageAmount, mongoSession } = params;
-    if (!Number.isFinite(coverageAmount) || coverageAmount <= 0) {
-      return false;
-    }
-
-    let remainingAmount = coverageAmount;
-    let query = this.invoiceModel
-      .find({
-        studentId,
-        classId,
-        status: InvoiceStatus.APPROVED,
-        [allowanceField]: { $gt: 0 },
-      })
-      .sort({ paymentDate: 1, createdAt: 1 })
-      .select(`pricePerSession ${allowanceField}`)
-      .lean();
-
-    if (mongoSession) {
-      query = query.session(mongoSession);
-    }
-
-    const invoices = await query;
-    for (const invoice of invoices as any[]) {
-      if (remainingAmount <= 0) {
-        break;
-      }
-
-      const pricePerSession = Number(invoice?.pricePerSession ?? 0);
-      const remainingUnits = Number(invoice?.[allowanceField] ?? 0);
-      if (!Number.isFinite(pricePerSession) || pricePerSession <= 0) {
-        continue;
-      }
-      if (!Number.isFinite(remainingUnits) || remainingUnits <= 0) {
-        continue;
-      }
-
-      const amountCovered = Math.min(remainingAmount, remainingUnits * pricePerSession);
-      if (amountCovered <= 0) {
-        continue;
-      }
-
-      remainingAmount = Math.max(0, remainingAmount - amountCovered);
-    }
-
-    return remainingAmount <= 0;
-  }
-
-  private calcAttendanceDebtLimit(
-    wallet: Pick<Wallet, 'debtLimit' | 'trialDebtSessions'> | null | undefined,
-    pricePerSession: number,
-  ): number {
-    const fixedDebtLimit = Number(wallet?.debtLimit ?? 0);
-    if (Number.isFinite(fixedDebtLimit) && fixedDebtLimit > 0) {
-      return fixedDebtLimit;
-    }
-
-    const trialDebtSessions = Number(wallet?.trialDebtSessions ?? 2);
-    if (!Number.isFinite(trialDebtSessions) || trialDebtSessions <= 0) {
-      return 0;
-    }
-    if (!Number.isFinite(pricePerSession) || pricePerSession <= 0) {
-      return 0;
-    }
-
-    return trialDebtSessions * pricePerSession;
-  }
-
-  private async assertAttendanceFinancialEligibility(params: {
-    classId: Types.ObjectId;
-    studentId: Types.ObjectId;
-    date: Date;
-    classroom: ClassLean;
-    mongoSession?: ClientSession;
-  }): Promise<void> {
-    const { classId, studentId, date, classroom, mongoSession } = params;
-
-    const activeTrial = await this.findActiveTrialEnrollment(classId, studentId, mongoSession);
-    const isTrialAttendance =
-      (classroom as any).classMode === ClassMode.OFFLINE && !!activeTrial;
-    if (isTrialAttendance) {
-      return;
-    }
-
-    const durationMinutes = this.resolveSessionDurationForDate(
-      classroom,
-      studentId.toString(),
-      date,
-    );
-    const amountCharged = await this.resolveAmountCharged(
-      studentId,
-      classId,
-      durationMinutes,
-      classroom,
-      date,
-    );
-    if (!Number.isFinite(amountCharged) || amountCharged <= 0) {
-      return;
-    }
-
-    const hasPaidCoverage = await this.hasAttendanceInvoiceCoverageForAmount({
-      studentId,
-      classId,
-      allowanceField: 'sessionsRemaining',
-      coverageAmount: amountCharged,
-      mongoSession,
-    });
-    if (!hasPaidCoverage) {
-      const hasBonusCoverage = await this.hasAttendanceInvoiceCoverageForAmount({
-        studentId,
-        classId,
-        allowanceField: 'bonusSessionsRemaining',
-        coverageAmount: amountCharged,
-        mongoSession,
-      });
-      if (hasBonusCoverage) {
-        return;
-      }
-
-      throw new BadRequestException(
-        'Hoc sinh khong du buoi hoc con lai de diem danh PRESENT/LATE.',
-      );
-    }
-
-    let studentQuery = this.studentModel
-      .findById(studentId)
-      .select('parentUserId')
-      .lean();
-    if (mongoSession) {
-      studentQuery = studentQuery.session(mongoSession);
-    }
-    const student = await studentQuery;
-    const parentUserId = student?.parentUserId;
-    if (!parentUserId) {
-      throw new BadRequestException(
-        'Hoc sinh chua co tai khoan phu huynh de doi tru vi. Khong the diem danh PRESENT/LATE.',
-      );
-    }
-
-    let walletQuery = this.walletModel
-      .findOne({ userId: parentUserId })
-      .select('balance debtLimit trialDebtSessions status')
-      .lean();
-    if (mongoSession) {
-      walletQuery = walletQuery.session(mongoSession);
-    }
-    const wallet = await walletQuery;
-
-    const walletStatus = wallet?.status ?? WalletStatus.ACTIVE;
-    if (walletStatus === WalletStatus.FROZEN || walletStatus === WalletStatus.CLOSED) {
-      throw new BadRequestException(
-        'Vi phu huynh dang bi khoa. Khong the diem danh PRESENT/LATE.',
-      );
-    }
-
-    const classPricing = getClassPricingConfigAt(classroom, date);
-    const pricePerSession =
-      Number(classPricing.pricePerSession ?? 0)
-      || Number((classroom as any).pricePerSession ?? 0);
-    const effectiveDebtLimit = this.calcAttendanceDebtLimit(wallet, pricePerSession);
-    const currentBalance = Number(wallet?.balance ?? 0);
-    const minimumRequiredBalance = amountCharged - effectiveDebtLimit;
-
-    if (currentBalance < minimumRequiredBalance) {
-      throw new BadRequestException(
-        `Vi phu huynh khong du so du de diem danh. So du hien tai: ${currentBalance.toLocaleString('vi-VN')}d, ` +
-          `gioi han no: -${effectiveDebtLimit.toLocaleString('vi-VN')}d.`,
-      );
-    }
-  }
-
-  private isTeacher(user: JwtPayload): boolean {
-    return user?.role === Role.TEACHER;
-  }
-
-  private hasFullAccess(user: JwtPayload): boolean {
-    return [Role.DIRECTOR, Role.OPS].includes(user?.role as Role);
-  }
-
-  private getOpsCheckerId(user: JwtPayload): Types.ObjectId | null {
-    if (![Role.DIRECTOR, Role.OPS].includes(user?.role as Role)) {
-      return null;
-    }
-    return new Types.ObjectId(this.getUserId(user));
-  }
-
-  private getVisibleStudentIdsForTeacher(
-    classroom: ClassLean,
-    teacherId: string,
-    fallbackToAllForSubstitute = false,
-    date?: Date,
-  ): Set<string> {
-    const ownedStudentIds = getTeacherOwnedStudentIdsAt(classroom, teacherId, date);
-    if (ownedStudentIds.length > 0) {
-      return new Set(ownedStudentIds);
-    }
-
-    if (fallbackToAllForSubstitute) {
-      const isSubstituteTeacher = date
-        ? this.getActiveSubstituteForDate(classroom, date)?.teacherId === teacherId
-        : (
-          Array.isArray((classroom as any)?.substituteTeachers)
-          && (classroom as any).substituteTeachers.some(
-            (item: any) => item?.teacherId?.toString?.() === teacherId,
-          )
-        );
-      if (isSubstituteTeacher) {
-        const allStudentIds = Array.isArray(classroom?.students)
-          ? classroom.students
-              .map((student: any) => student?._id?.toString?.() || student?.toString?.())
-              .filter((studentId: string | undefined): studentId is string => !!studentId)
-          : [];
-        return new Set(allStudentIds);
-      }
-    }
-
-    return new Set<string>();
-  }
-
-  private assertClassAccess(
-    classroom: ClassLean | null,
-    user: JwtPayload,
-    date?: Date,
-  ): asserts classroom is ClassLean {
-    if (!classroom) throw new NotFoundException('Khong tim thay lop hoc');
-    if (this.hasFullAccess(user)) return;
-    if (this.isTeacher(user)) {
-      const uid = this.getUserId(user);
-      const tid = classroom.teacher?.toString();
-      if (!date && tid && tid === uid) return;
-
-      if (date) {
-        const isPrimaryTeacher = !!tid && tid === uid;
-        const subs = (classroom as any).substituteTeachers || [];
-        const d = new Date(
-          Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
-        );
-        const activeSub = subs.find((s: any) => {
-          if (s.teacherId?.toString() !== uid) return false;
-          const from = new Date(s.fromDate);
-          from.setUTCHours(0, 0, 0, 0);
-          const to = new Date(s.toDate);
-          to.setUTCHours(23, 59, 59, 999);
-          return d >= from && d <= to;
-        });
-        if (activeSub) return;
-        const visibleStudentIds = this.getVisibleStudentIdsForTeacher(classroom, uid, false, date);
-        if (visibleStudentIds.size > 0) return;
-        if (isPrimaryTeacher && (((classroom as any)?.students as any[]) || []).length === 0) return;
-      } else if (this.getVisibleStudentIdsForTeacher(classroom, uid).size > 0) {
-        return;
-      }
-
-      throw new ForbiddenException(
-        'Ban khong phu trach lop hoc nay va khong co quyen day thay cho ngay nay',
-      );
-    }
-
-    throw new ForbiddenException('Ban khong co quyen truy cap lop hoc nay');
-  }
-  /**
-   * LÃƒÂ¡Ã‚ÂºÃ‚Â¥y thÃƒÆ’Ã‚Â´ng tin GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay Ãƒâ€žÃ¢â‚¬Ëœang active cho lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp tÃƒÂ¡Ã‚ÂºÃ‚Â¡i ngÃƒÆ’Ã‚Â y cÃƒÂ¡Ã‚Â»Ã‚Â¥ thÃƒÂ¡Ã‚Â»Ã†â€™.
-   * TrÃƒÂ¡Ã‚ÂºÃ‚Â£ vÃƒÂ¡Ã‚Â»Ã‚Â null nÃƒÂ¡Ã‚ÂºÃ‚Â¿u ngÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Âi dÃƒÆ’Ã‚Â¹ng lÃƒÆ’Ã‚Â  GV chÃƒÆ’Ã‚Â­nh hoÃƒÂ¡Ã‚ÂºÃ‚Â·c khÃƒÆ’Ã‚Â´ng phÃƒÂ¡Ã‚ÂºÃ‚Â£i TEACHER.
-   */
-  private getSubstituteInfo(
-    classroom: ClassLean,
-    user: JwtPayload,
-    date: Date,
-  ): { teacherId: string; payRate: number; canCreateLink: boolean } | null {
-    if (!this.isTeacher(user)) return null;
-    const uid = this.getUserId(user);
-    // NÃƒÂ¡Ã‚ÂºÃ‚Â¿u lÃƒÆ’Ã‚Â  GV chÃƒÆ’Ã‚Â­nh ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ khÃƒÆ’Ã‚Â´ng phÃƒÂ¡Ã‚ÂºÃ‚Â£i substitute
-    if (classroom.teacher?.toString() === uid) return null;
-
-    const subs = (classroom as any).substituteTeachers || [];
-    const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const active = subs.find((s: any) => {
-      if (s.teacherId?.toString() !== uid) return false;
-      const from = new Date(s.fromDate); from.setUTCHours(0, 0, 0, 0);
-      const to = new Date(s.toDate); to.setUTCHours(23, 59, 59, 999);
-      return d >= from && d <= to;
-    });
-
-    if (!active) return null;
-    return {
-      teacherId: uid,
-      payRate: active.payRate ?? 0,
-      canCreateLink: active.canCreateLink ?? true,
-    };
-  }
-
-  private getActiveSubstituteForDate(
-    classroom: ClassLean,
-    date: Date,
-  ): { teacherId: string; payRate: number; canCreateLink: boolean } | null {
-    const subs = (classroom as any).substituteTeachers || [];
-    const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const active = subs.find((s: any) => {
-      const teacherId = s.teacherId?.toString?.();
-      if (!teacherId) return false;
-      const from = new Date(s.fromDate);
-      from.setUTCHours(0, 0, 0, 0);
-      const to = new Date(s.toDate);
-      to.setUTCHours(23, 59, 59, 999);
-      return d >= from && d <= to;
-    });
-    if (!active?.teacherId) return null;
-    return {
-      teacherId: active.teacherId.toString(),
-      payRate: active.payRate ?? 0,
-      canCreateLink: active.canCreateLink ?? true,
-    };
-  }
-
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  private resolveAttendanceTeacherId(
-    classroom: ClassLean,
-    user: JwtPayload,
-    date: Date,
-    studentId: string,
-  ): Types.ObjectId {
-    const activeSubstitute = this.getActiveSubstituteForDate(classroom, date);
-    const assignedTeacherId = activeSubstitute?.teacherId
-      || getTeacherIdForStudentAt(classroom, studentId, date);
-
-    if (this.isTeacher(user)) {
-      const actorTeacherId = this.getUserId(user);
-      const actorSubstitute = this.getSubstituteInfo(classroom, user, date);
-      if (actorSubstitute) {
-        return new Types.ObjectId(actorTeacherId);
-      }
-      if (assignedTeacherId && assignedTeacherId !== actorTeacherId) {
-        throw new ForbiddenException('Ban khong phu trach hoc sinh nay trong lop hoc');
-      }
-      return new Types.ObjectId(actorTeacherId);
-    }
-
-    if (!assignedTeacherId) {
-      throw new BadRequestException('Lop hoc chua co giao vien phu trach');
-    }
-
-    return new Types.ObjectId(assignedTeacherId);
-  }
-
-  /**
-   * Recompute OFFLINE teacher payout for one class/day.
-   *
-   * Rule:
-   * - totalTeacherPayout = max(200_000, teacherPayPerStudent * attendedCount)
-   * - attendedCount = ALL students with PRESENT/LATE + linked session (kể cả FINALIZED)
-   * - Only distribute payout to sessions NOT yet finalized/cancelled/rescheduled
-   * - Sessions đã FINALIZED giữ nguyên payout (bù trừ từ remaining)
-   *
-   * Fix race condition: trước đây chỉ đếm sessions chưa FINALIZED → attendedCount sai
-   * khi một số sessions finalize trước khi điểm danh hết. Giờ đếm TẤT CẢ attended sessions,
-   * chỉ update những sessions chưa lock (non-FINALIZED).
-   */
-  private async recomputeOfflineTeacherPayoutForDay(params: {
-    classId: string | Types.ObjectId;
-    date: Date;
-    classroom: ClassLean;
-  }): Promise<{
-    attendedCount: number;
-    perStudentTeacherPay: number;
-    totalTeacherPayout: number;
-    minimumApplied: boolean;
-  }> {
-    const { date, classroom } = params;
-    if ((classroom as any).classMode !== ClassMode.OFFLINE) {
-      return {
-        attendedCount: 0,
-        perStudentTeacherPay: 0,
-        totalTeacherPayout: 0,
-        minimumApplied: false,
-      };
-    }
-
-    const classObjectId =
-      typeof params.classId === 'string'
-        ? new Types.ObjectId(params.classId)
-        : params.classId;
-
-    // Only students who actually attended are counted.
-    const attendanceRows = await this.attendanceModel
-      .find({
-        classId: classObjectId,
-        date,
-        status: { $in: [...COUNTED_ATTENDANCE_STATUSES] },
-        sessionId: { $exists: true, $ne: null },
-      })
-      .select('sessionId')
-      .lean();
-
-    const uniqueSessionIds = Array.from(
-      new Set(
-        attendanceRows
-          .map((row: any) => row.sessionId?.toString())
-          .filter((id: string | undefined): id is string => !!id),
-      ),
-    );
-
-    const perStudentTeacherPay = this.roundMoneyDownToThousand(
-      Number(getClassPricingConfigAt(classroom, date).teacherPayPerStudent ?? 0),
-    );
-
-    if (uniqueSessionIds.length === 0) {
-      return {
-        attendedCount: 0,
-        perStudentTeacherPay,
-        totalTeacherPayout: 0,
-        minimumApplied: false,
-      };
-    }
-
-    // Lấy TẤT CẢ sessions (kể cả FINALIZED) để tính đúng totalAttendedCount.
-    // CANCELLED/RESCHEDULED bị loại vì học sinh đó thực sự không có mặt.
-    const allAttendedSessions = await this.sessionModel
-      .find({
-        _id: { $in: uniqueSessionIds.map((id) => new Types.ObjectId(id)) },
-        classId: classObjectId,
-        scheduledDate: dayRange(date),
-        status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-      })
-      .select('_id status teacherPayout')
-      .sort({ _id: 1 })
-      .lean();
-
-    const totalAttendedCount = allAttendedSessions.length;
-    if (totalAttendedCount === 0) {
-      return {
-        attendedCount: 0,
-        perStudentTeacherPay,
-        totalTeacherPayout: 0,
-        minimumApplied: false,
-      };
-    }
-
-    const computedTotal = this.roundMoneyDownToThousand(perStudentTeacherPay * totalAttendedCount);
-    const totalTeacherPayout = this.roundMoneyDownToThousand(
-      Math.max(OFFLINE_MIN_TEACHER_PAYOUT, computedTotal),
-    );
-    const minimumApplied = totalTeacherPayout > computedTotal;
-
-    // Tách sessions đã FINALIZED (không thể update) và chưa FINALIZED (có thể update).
-    const finalizedSessions = allAttendedSessions.filter(
-      (s: any) => s.status === 'FINALIZED',
-    );
-    const updatableSessions = allAttendedSessions.filter(
-      (s: any) => s.status !== 'FINALIZED',
-    );
-
-    // Tổng payout đã bị lock trong FINALIZED sessions
-    const finalizedTotal = finalizedSessions.reduce(
-      (acc: number, s: any) => acc + (Number(s.teacherPayout) || 0),
-      0,
-    );
-
-    // Phần còn lại để phân bổ cho các sessions chưa finalize
-    const remainingPayout = Math.max(0, totalTeacherPayout - finalizedTotal);
-
-    if (updatableSessions.length > 0 && remainingPayout > 0) {
-      // Spread remainingPayout across updatable sessions
-      const basePerSession = this.roundMoneyDownToThousand(
-        remainingPayout / updatableSessions.length,
-      );
-      let remainder = remainingPayout - basePerSession * updatableSessions.length;
-
-      const updates = updatableSessions.map((session: any) => {
-        const payout = basePerSession + (remainder >= 1000 ? 1000 : 0);
-        if (remainder >= 1000) remainder -= 1000;
-        return {
-          updateOne: {
-            filter: { _id: session._id },
-            update: { $set: { teacherPayout: payout } },
-          },
-        };
-      });
-
-      await this.sessionModel.bulkWrite(updates);
-    } else if (updatableSessions.length > 0 && remainingPayout === 0) {
-      // Tất cả payout đã bị lock bởi FINALIZED sessions → set updatable sessions về 0
-      const updates = updatableSessions.map((session: any) => ({
-        updateOne: {
-          filter: { _id: session._id },
-          update: { $set: { teacherPayout: 0 } },
-        },
-      }));
-      await this.sessionModel.bulkWrite(updates);
-    }
-
-    return {
-      attendedCount: totalAttendedCount,
-      perStudentTeacherPay,
-      totalTeacherPayout,
-      minimumApplied,
-    };
-  }
-  // ENSURE REAL DOCUMENTS (Class / Student)
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  /** Find or create Classroom from classCode */
   private async ensureClassForCode(classCode: string, user: JwtPayload): Promise<ClassLean> {
     const code = classCode.trim().toUpperCase();
     const existing = await this.classModel.findOne({ code }).lean<ClassLean>();
     if (existing) return existing;
 
-    const teacherId = this.isTeacher(user)
-      ? new Types.ObjectId(this.getUserId(user))
+    const teacherId = isTeacher(user)
+      ? new Types.ObjectId(getUserId(user))
       : new Types.ObjectId();
 
     const doc = await this.classModel.create({
-      name: `LÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp ${code}`,
+      name: `Lớp ${code}`,
       code,
       teacher: teacherId,
       students: [],
@@ -869,642 +66,25 @@ export class AttendanceService {
     return doc.toObject() as ClassLean;
   }
 
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // SESSION BRIDGE ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Attendance <-> Session (for payroll + wallet)
-  //
-  // Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â¢y lÃƒÆ’Ã‚Â  cÃƒÂ¡Ã‚ÂºÃ‚Â§u nÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi quan trÃƒÂ¡Ã‚Â»Ã‚Âng nhÃƒÂ¡Ã‚ÂºÃ‚Â¥t:
-  // - Ãƒâ€žÃ‚ÂiÃƒÂ¡Ã‚Â»Ã†â€™m danh PRESENT/LATE ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ tÃƒÂ¡Ã‚Â»Ã‚Â± Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ng tÃƒÂ¡Ã‚ÂºÃ‚Â¡o Session (TEACHER_COMPLETED)
-  // - Session ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ auto-confirm sau 48h ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ FINALIZED
-  // - FINALIZED ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ trÃƒÂ¡Ã‚Â»Ã‚Â« vÃƒÆ’Ã‚Â­ phÃƒÂ¡Ã‚Â»Ã‚Â¥ huynh + sÃƒÂ¡Ã‚ÂºÃ‚Âµn sÃƒÆ’Ã‚Â ng tÃƒÆ’Ã‚Â­nh lÃƒâ€ Ã‚Â°Ãƒâ€ Ã‚Â¡ng GV
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  /**
-   * Create or update a Session when attendance = PRESENT / LATE (with transaction).
-   * Returns the sessionId or null on failure.
-   */
-  private async syncSessionForAttendance(params: {
-    classId: Types.ObjectId;
-    studentId: Types.ObjectId;
-    teacherId: Types.ObjectId;
-    date: Date;
-    classroom: ClassLean;
-    substitutePayRate?: number;
-    mongoSession?: ClientSession;
-  }): Promise<Types.ObjectId | null> {
-    const {
-      classId,
-      studentId,
-      teacherId,
-      date,
-      classroom,
-      substitutePayRate,
-      mongoSession: outerSession,
-    } = params;
-
-      const mongoSession = outerSession ?? await this.connection.startSession();
-      const ownsTransaction = !outerSession;
-      const range = dayRange(date);
-      const duration = this.resolveCurrentSessionDuration(classroom, studentId.toString());
-
-      let teacherPayout: number;
-      if (substitutePayRate !== undefined) {
-        teacherPayout = this.roundMoneyDownToThousand(substitutePayRate);
-      } else if ((classroom as any).classMode === ClassMode.OFFLINE) {
-        teacherPayout = this.roundMoneyDownToThousand(
-          Number(getClassPricingConfigAt(classroom).teacherPayPerStudent ?? 0),
-        );
-      } else {
-        teacherPayout = this.resolveCurrentTeacherPayout(duration, classroom);
-      }
-
-      const activeTrialEnrollment = await this.findActiveTrialEnrollment(
-        classId,
-        studentId,
-        mongoSession,
-      );
-      const isTrialSession =
-        (classroom as any).classMode === ClassMode.OFFLINE && !!activeTrialEnrollment;
-
-      try {
-        if (ownsTransaction) {
-          mongoSession.startTransaction();
-        }
-
-      // Check for existing session on same day
-      const existingSession = await this.sessionModel
-        .findOne({
-          classId,
-          studentId,
-          scheduledDate: range,
-          status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-        })
-        .session(mongoSession);
-
-      if (existingSession) {
-        let shouldSave = false;
-
-        // Upgrade to TEACHER_COMPLETED if still SCHEDULED.
-        // Attendance owner (main/substitute teacher) becomes payout owner for payroll.
-        if (existingSession.status === 'SCHEDULED') {
-          existingSession.status = 'TEACHER_COMPLETED' as any;
-          existingSession.confirmation = existingSession.confirmation ?? ({} as any);
-          existingSession.confirmation.teacherCompletedAt = new Date();
-          if (isTrialSession && existingSession.sessionType !== SessionType.TRIAL) {
-            existingSession.sessionType = SessionType.TRIAL as any;
-          }
-          if (
-            activeTrialEnrollment &&
-            existingSession.trialEnrollmentId?.toString() !== activeTrialEnrollment._id.toString()
-          ) {
-            (existingSession as any).trialEnrollmentId = activeTrialEnrollment._id as any;
-          }
-          if (existingSession.teacherId?.toString() !== teacherId.toString()) {
-            existingSession.teacherId = teacherId as any;
-          }
-          if (Number(existingSession.teacherPayout ?? 0) !== Number(teacherPayout)) {
-            existingSession.teacherPayout = teacherPayout;
-          }
-          if (Number(existingSession.durationMinutes ?? 0) !== Number(duration)) {
-            existingSession.durationMinutes = duration;
-          }
-          shouldSave = true;
-        } else if (
-          existingSession.status === 'TEACHER_COMPLETED' &&
-          !existingSession.hasTeachingReport &&
-          !existingSession.isTeacherPaid
-        ) {
-          if (isTrialSession && existingSession.sessionType !== SessionType.TRIAL) {
-            existingSession.sessionType = SessionType.TRIAL as any;
-            shouldSave = true;
-          }
-          if (
-            activeTrialEnrollment &&
-            existingSession.trialEnrollmentId?.toString() !== activeTrialEnrollment._id.toString()
-          ) {
-            (existingSession as any).trialEnrollmentId = activeTrialEnrollment._id as any;
-            shouldSave = true;
-          }
-          if (!existingSession.teacherId) {
-            existingSession.teacherId = teacherId as any;
-            shouldSave = true;
-          }
-          if (Number(existingSession.teacherPayout ?? 0) <= 0 && Number(teacherPayout) > 0) {
-            existingSession.teacherPayout = teacherPayout;
-            shouldSave = true;
-          }
-          if (Number(existingSession.durationMinutes ?? 0) <= 0 && Number(duration) > 0) {
-            existingSession.durationMinutes = duration;
-            shouldSave = true;
-          }
-        }
-
-        if (shouldSave) {
-          await existingSession.save({ session: mongoSession });
-        }
-        if (ownsTransaction) {
-          await mongoSession.commitTransaction();
-        }
-        return existingSession._id as Types.ObjectId;
-      }
-
-      if (isTrialSession && activeTrialEnrollment) {
-        const usedTrialSessions = await this.sessionModel.countDocuments({
-          classId,
-          studentId,
-          sessionType: SessionType.TRIAL,
-          status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-          trialEnrollmentId: activeTrialEnrollment._id,
-        }).session(mongoSession);
-
-        if (usedTrialSessions >= (activeTrialEnrollment.maxTrialSessions || 2)) {
-          throw new BadRequestException('So buoi hoc thu vuot qua gioi han');
-        }
-      }
-
-      const amountCharged = await this.resolveCurrentAmountCharged(
-        studentId,
-        classId,
-        duration,
-        classroom,
-      );
-
-      const student = await this.studentModel
-        .findById(studentId)
-        .select('parentUserId')
-        .session(mongoSession)
-        .lean();
-
-      const lastSession = await this.sessionModel
-        .findOne({
-          classId,
-          studentId,
-        })
-        .sort('-sessionNumber')
-        .select('sessionNumber')
-        .session(mongoSession)
-        .lean();
-
-      const sessionNumber = (lastSession?.sessionNumber ?? 0) + 1;
-
-      try {
-        const created = await this.sessionModel.create(
-          [
-            {
-              classId,
-              studentId,
-              teacherId,
-              parentUserId: (student as any)?.parentUserId,
-              sessionType: isTrialSession ? SessionType.TRIAL : SessionType.REGULAR,
-              trialEnrollmentId: activeTrialEnrollment?._id,
-              trialConverted: false,
-              trialTeacherPaidOnly: false,
-              trialRejectedNoPay: false,
-              scheduledDate: date,
-              durationMinutes: duration,
-              sessionNumber,
-              amountCharged,
-              teacherPayout,
-              status: 'TEACHER_COMPLETED',
-              confirmation: { teacherCompletedAt: new Date() },
-              autoConfirmAfterHours: 48,
-              createdBy: teacherId,
-            },
-          ],
-          { session: mongoSession },
-        );
-
-        if (ownsTransaction) {
-          await mongoSession.commitTransaction();
-        }
-        return created[0]._id as Types.ObjectId;
-      } catch (err: any) {
-        if (ownsTransaction && mongoSession.inTransaction()) {
-          await mongoSession.abortTransaction();
-        }
-
-        if (err.code === 11000) {
-          const followUpSession = ownsTransaction ? undefined : mongoSession;
-          let foundQuery = this.sessionModel.findOne({
-            classId,
-            studentId,
-            scheduledDate: range,
-            status: { $nin: ['CANCELLED', 'RESCHEDULED'] },
-          });
-          if (followUpSession) {
-            foundQuery = foundQuery.session(followUpSession);
-          }
-          const found = await foundQuery;
-          if (found?._id) {
-            return found._id as Types.ObjectId;
-          }
-
-          // Legacy DBs may still have a unique index on
-          // (classId, studentId, scheduledDate, scheduledStartTime).
-          // If create hits duplicate key because a prior same-day session was CANCELLED,
-          // reopen that cancelled session instead of returning null.
-          let cancelledQuery = this.sessionModel
-            .findOne({
-              classId,
-              studentId,
-              scheduledDate: range,
-              status: 'CANCELLED',
-            })
-            .sort('-sessionNumber');
-          if (followUpSession) {
-            cancelledQuery = cancelledQuery.session(followUpSession);
-          }
-          const cancelled = await cancelledQuery;
-
-          if (cancelled) {
-            cancelled.status = 'TEACHER_COMPLETED' as any;
-            cancelled.teacherId = teacherId;
-            cancelled.sessionType = isTrialSession ? (SessionType.TRIAL as any) : cancelled.sessionType;
-            (cancelled as any).trialEnrollmentId = activeTrialEnrollment?._id as any;
-            (cancelled as any).trialRejectedNoPay = false;
-            cancelled.durationMinutes = duration;
-            cancelled.amountCharged = amountCharged;
-            cancelled.teacherPayout = teacherPayout;
-            cancelled.autoConfirmAfterHours = 48;
-            cancelled.cancellation = undefined as any;
-            cancelled.confirmation = cancelled.confirmation ?? ({} as any);
-            cancelled.confirmation.teacherCompletedAt = new Date();
-            await cancelled.save(followUpSession ? { session: followUpSession } : undefined);
-            return cancelled._id as Types.ObjectId;
-          }
-
-          return null;
-        }
-
-        if (ownsTransaction && mongoSession.inTransaction()) {
-          await mongoSession.abortTransaction();
-        }
-        this.logger.error(`Failed to create session: ${err.message}`, err.stack);
-        return null;
-      }
-    } catch (err: any) {
-      if (ownsTransaction && mongoSession.inTransaction()) {
-        await mongoSession.abortTransaction();
-      }
-      if (
-        err instanceof BadRequestException
-        || err instanceof ConflictException
-        || err instanceof ForbiddenException
-        || err instanceof NotFoundException
-      ) {
-        throw err;
-      }
-      this.logger.error(`Failed to sync session for attendance: ${err.message}`, err.stack);
-      return null;
-    } finally {
-      if (ownsTransaction) {
-        await mongoSession.endSession();
-      }
-    }
-  }
-
-  private async findFinalizedSessionForAttendance(
-    classId: Types.ObjectId,
-    studentId: Types.ObjectId,
-    date: Date,
-    mongoSession?: ClientSession,
-  ) {
-    let query = this.sessionModel
-      .findOne({
-        classId,
-        studentId,
-        scheduledDate: dayRange(date),
-        status: 'FINALIZED',
-      })
-      .select('_id status');
-    if (mongoSession) {
-      query = query.session(mongoSession);
-    }
-    return query.lean();
-  }
-
-  /** Cancel linked session when attendance changes to ABSENT/EXCUSED */
-  private async cancelLinkedSession(
-    sessionId?: Types.ObjectId,
-    mongoSession?: ClientSession,
-  ): Promise<void> {
-    if (!sessionId) return;
-    let query = this.sessionModel.findById(sessionId);
-    if (mongoSession) {
-      query = query.session(mongoSession);
-    }
-    const session = await query;
-    if (!session) return;
-    // Cannot cancel already-finalized sessions (wallet already deducted)
-    if (['FINALIZED', 'CANCELLED', 'RESCHEDULED'].includes(session.status)) return;
-
-    session.status = 'CANCELLED' as any;
-    session.cancellation = {
-      cancelledBy: 'SYSTEM',
-      cancelReason: 'HÃƒÂ¡Ã‚Â»Ã‚Â§y do Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh thay Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i thÃƒÆ’Ã‚Â nh vÃƒÂ¡Ã‚ÂºÃ‚Â¯ng mÃƒÂ¡Ã‚ÂºÃ‚Â·t/bÃƒÂ¡Ã‚ÂºÃ‚Â£o lÃƒâ€ Ã‚Â°u',
-      cancelledAt: new Date(),
-      refundPercent: 100,
-      refundAmount: 0,
-    } as any;
-    await session.save(mongoSession ? { session: mongoSession } : undefined);
-  }
-
-  private async clearAttendanceRecord(params: {
-    classId: string | Types.ObjectId;
-    studentId: string | Types.ObjectId;
-    date: Date;
-  }): Promise<boolean> {
-    const classObjectId =
-      typeof params.classId === 'string' ? new Types.ObjectId(params.classId) : params.classId;
-    const studentObjectId =
-      typeof params.studentId === 'string'
-        ? new Types.ObjectId(params.studentId)
-        : params.studentId;
-    const mongoSession = await this.connection.startSession();
-
-    try {
-      mongoSession.startTransaction();
-
-      const existingFinalized = await this.findFinalizedSessionForAttendance(
-        classObjectId,
-        studentObjectId,
-        params.date,
-        mongoSession,
-      );
-      if (existingFinalized) {
-        throw new BadRequestException(
-          'Buoi hoc da duoc xac nhan hoan thanh (FINALIZED). Khong the thay doi diem danh.',
-        );
-      }
-
-      const attendance = await this.attendanceModel
-        .findOne({
-          classId: classObjectId,
-          studentId: studentObjectId,
-          date: params.date,
-        })
-        .session(mongoSession);
-
-      if (!attendance) {
-        await mongoSession.commitTransaction();
-        return false;
-      }
-
-      if (attendance.sessionId) {
-        await this.cancelLinkedSession(attendance.sessionId, mongoSession);
-      }
-
-      await attendance.deleteOne({ session: mongoSession });
-      await mongoSession.commitTransaction();
-      await this.syncTrialUsage(classObjectId, studentObjectId);
-      return true;
-    } catch (err) {
-      if (mongoSession.inTransaction()) {
-        await mongoSession.abortTransaction();
-      }
-      throw err;
-    } finally {
-      await mongoSession.endSession();
-    }
-  }
-
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // LOAD STUDENTS FOR A CLASS (from class.students)
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  private async loadStudentsForClass(
-    classroom: ClassLean,
-    user: JwtPayload,
-    date?: Date,
-  ): Promise<StudentLean[]> {
-    const cls = await this.classModel
-      .findById(classroom._id)
-      .populate('students', 'fullName age parentName studentCode faceImage parentPhone')
-      .lean();
-    const rosterStudents = (((cls as any)?.students as StudentLean[]) || []).map((student) => ({
-      ...student,
-      isTrial: false,
-    }));
-    const trialStudents = await this.loadTrialStudentsForClass(classroom._id as Types.ObjectId);
-
-    const merged = new Map<string, StudentLean>();
-    rosterStudents.forEach((student) => merged.set(student._id.toString(), student));
-    trialStudents.forEach((student) => {
-      if (!merged.has(student._id.toString())) {
-        merged.set(student._id.toString(), student);
-      }
-    });
-
-    const students = [...merged.values()];
-    if (!this.isTeacher(user)) {
-      return students;
-    }
-
-    const teacherId = this.getUserId(user);
-    const isActiveSubstitute = !!(date && this.getSubstituteInfo(cls as ClassLean, user, date));
-    if (isActiveSubstitute) {
-      return students;
-    }
-
-    const visibleStudentIds = this.getVisibleStudentIdsForTeacher(
-      cls as ClassLean,
-      teacherId,
-      false,
-      date,
-    );
-    const canViewTrialStudents =
-      visibleStudentIds.size > 0
-      || (
-        (((cls as any)?.students as any[]) || []).length === 0
-        && (cls as any)?.teacher?.toString?.() === teacherId
-      );
-    return students.filter((student) => {
-      if (student.isTrial) {
-        return canViewTrialStudents;
-      }
-      return visibleStudentIds.has(student._id.toString());
-    });
-  }
-
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // CORE: Process one attendance item (with session bridge)
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  private async processOneStudent(params: {
-    classId: string;
-    studentId: string;
-    date: Date;
-    status: AttendanceStatus;
-    notes: string;
-    teacherId: Types.ObjectId;
-    classroom: ClassLean;
-    substitutePayRate?: number;
-    checkedBy?: Types.ObjectId | null;
-  }): Promise<{ attendance: any; sessionCreated: boolean }> {
-    const {
-      classId,
-      studentId,
-      date,
-      status,
-      notes,
-      teacherId,
-      classroom,
-      substitutePayRate,
-      checkedBy,
-    } = params;
-    const classObjectId = new Types.ObjectId(classId);
-    const studentObjectId = new Types.ObjectId(studentId);
-    const mongoSession = await this.connection.startSession();
-
-    try {
-      mongoSession.startTransaction();
-
-      // Check if there's an existing FINALIZED session for this attendance Ã¢â‚¬â€ block changes
-      const existingFinalized = await this.findFinalizedSessionForAttendance(
-        classObjectId,
-        studentObjectId,
-        date,
-        mongoSession,
-      );
-      if (existingFinalized) {
-        throw new BadRequestException(
-          'Buoi hoc da duoc xac nhan hoan thanh (FINALIZED). Khong the thay doi diem danh.',
-        );
-      }
-
-      const query = { classId: classObjectId, studentId: studentObjectId, date };
-      const existingAttendance = await this.attendanceModel
-        .findOne(query)
-        .select('_id sessionId teacherId sessionDuration')
-        .session(mongoSession)
-        .lean();
-
-      let sessionCreated = false;
-      const isPresent = this.isCountedAttendanceStatus(status);
-      let sessionId: Types.ObjectId | null = null;
-
-      if (isPresent) {
-        await this.assertAttendanceFinancialEligibility({
-          classId: classObjectId,
-          studentId: studentObjectId,
-          date,
-          classroom,
-          mongoSession,
-        });
-
-        // PRESENT -> ensure Session exists (TEACHER_COMPLETED)
-        sessionId = await this.syncSessionForAttendance({
-          classId: classObjectId,
-          studentId: studentObjectId,
-          teacherId,
-          date,
-          classroom,
-          substitutePayRate,
-          mongoSession,
-        });
-        if (!sessionId) {
-          throw new ConflictException(
-            'Khong the dong bo session cho diem danh hien tai. Vui long thu lai.',
-          );
-        }
-        sessionCreated = true;
-      } else if (existingAttendance?.sessionId) {
-        await this.cancelLinkedSession(existingAttendance.sessionId as Types.ObjectId, mongoSession);
-      }
-
-      const update: any = {
-        $set: {
-          status,
-          notes: notes || '',
-        },
-      };
-
-      const defaultDuration = this.resolveSessionDurationForDate(classroom, studentId, date);
-      let persistedTeacherId = existingAttendance?.teacherId || teacherId;
-      let persistedDuration = Number(existingAttendance?.sessionDuration ?? 0) || defaultDuration;
-
-      if (sessionId) {
-        update.$set.sessionId = sessionId;
-        const linkedSession = await this.sessionModel
-          .findById(sessionId)
-          .select('teacherId durationMinutes')
-          .session(mongoSession)
-          .lean();
-        if ((linkedSession as any)?.teacherId) {
-          persistedTeacherId = (linkedSession as any).teacherId;
-        }
-        const linkedDuration = Number((linkedSession as any)?.durationMinutes ?? 0);
-        if (linkedDuration > 0) {
-          persistedDuration = linkedDuration;
-        }
-      } else {
-        update.$unset = { sessionId: 1 };
-      }
-
-      update.$set.teacherId = persistedTeacherId;
-      update.$set.sessionDuration = persistedDuration;
-
-      if (isPresent && checkedBy) {
-        update.$set.checkedBy = checkedBy;
-        update.$set.checkedAt = new Date();
-      } else if (!isPresent) {
-        update.$unset = {
-          ...(update.$unset || {}),
-          checkedBy: 1,
-          checkedAt: 1,
-        };
-      }
-
-      const attendance = await this.attendanceModel.findOneAndUpdate(
-        query,
-        update,
-        {
-          new: true,
-          upsert: true,
-          setDefaultsOnInsert: true,
-          session: mongoSession,
-        },
-      );
-
-      await mongoSession.commitTransaction();
-      await this.syncTrialUsage(classObjectId, studentObjectId);
-      return { attendance, sessionCreated };
-    } catch (err) {
-      if (mongoSession.inTransaction()) {
-        await mongoSession.abortTransaction();
-      }
-      throw err;
-    } finally {
-      await mongoSession.endSession();
-    }
-  }
-  // PUBLIC API ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Main attendance operations
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  /** Ãƒâ€žÃ‚ÂiÃƒÂ¡Ã‚Â»Ã†â€™m danh mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t hÃƒÂ¡Ã‚Â»Ã‚Âc sinh */
   async markAttendance(dto: CreateAttendanceDto, user: JwtPayload) {
     const date = normalizeDate(dto.date);
     const classroom = await this.classModel.findById(dto.classId).lean<ClassLean>();
-    this.assertClassAccess(classroom, user, date);
-    const normalizedStatus = this.normalizeInteractiveAttendanceStatus(dto.status);
+    assertClassAccess(classroom, user, date);
+    const normalizedStatus = normalizeInteractiveAttendanceStatus(dto.status);
 
-    // Validate student belongs to this class
-    const studentAllowed = await this.isStudentAllowedInClass(classroom, dto.studentId);
-    if (!studentAllowed) {
-      throw new BadRequestException('HÃƒÂ¡Ã‚Â»Ã‚Âc sinh khÃƒÆ’Ã‚Â´ng thuÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp nÃƒÆ’Ã‚Â y');
+    const studentInClass = classroom.students?.some(
+      (s: any) => s.toString() === dto.studentId,
+    );
+    if (!studentInClass) {
+      throw new BadRequestException('Học sinh không thuộc lớp này');
     }
 
-    // Check nÃƒÂ¡Ã‚ÂºÃ‚Â¿u lÃƒÆ’Ã‚Â  GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ lÃƒÂ¡Ã‚ÂºÃ‚Â¥y payRate riÃƒÆ’Ã‚Âªng
-    const subInfo = this.getSubstituteInfo(classroom, user, date);
-    const attendanceTeacherId = this.resolveAttendanceTeacherId(
-      classroom,
-      user,
-      date,
-      dto.studentId,
-    );
-    const opsCheckerId = this.getOpsCheckerId(user);
+    const subInfo = getSubstituteInfo(classroom, user, date);
+    const attendanceTeacherId = resolveAttendanceTeacherId(classroom, user, date);
+    const opsChecker = getOpsCheckerId(user);
 
     const result = normalizedStatus
-      ? await this.processOneStudent({
+      ? await this.sessionBridgeService.processOneStudent({
           classId: dto.classId,
           studentId: dto.studentId,
           date,
@@ -1513,11 +93,11 @@ export class AttendanceService {
           teacherId: attendanceTeacherId,
           classroom,
           substitutePayRate: subInfo?.payRate,
-          checkedBy: opsCheckerId,
+          checkedBy: opsChecker,
         })
       : {
           attendance: null,
-          sessionCreated: await this.clearAttendanceRecord({
+          sessionCreated: await this.sessionBridgeService.clearAttendanceRecord({
             classId: dto.classId,
             studentId: dto.studentId,
             date,
@@ -1528,7 +108,7 @@ export class AttendanceService {
       | { attendedCount: number; perStudentTeacherPay: number; totalTeacherPayout: number; minimumApplied: boolean }
       | null = null;
     if ((classroom as any).classMode === ClassMode.OFFLINE) {
-      offlineSummary = await this.recomputeOfflineTeacherPayoutForDay({
+      offlineSummary = await this.sessionBridgeService.recomputeOfflineTeacherPayoutForDay({
         classId: dto.classId,
         date,
         classroom,
@@ -1558,20 +138,18 @@ export class AttendanceService {
     };
   }
 
-  /** Ãƒâ€žÃ‚ÂiÃƒÂ¡Ã‚Â»Ã†â€™m danh nhiÃƒÂ¡Ã‚Â»Ã‚Âu hÃƒÂ¡Ã‚Â»Ã‚Âc sinh cÃƒÆ’Ã‚Â¹ng lÃƒÆ’Ã‚Âºc (bulk) */
   async bulkMarkAttendance(dto: BulkAttendanceDto, user: JwtPayload) {
     const date = normalizeDate(dto.date);
     const classroom = await this.classModel.findById(dto.classId).lean<ClassLean>();
-    this.assertClassAccess(classroom, user, date);
+    assertClassAccess(classroom, user, date);
 
     const isOffline = (classroom as any).classMode === ClassMode.OFFLINE;
 
-    // Check nÃƒÂ¡Ã‚ÂºÃ‚Â¿u lÃƒÆ’Ã‚Â  GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ lÃƒÂ¡Ã‚ÂºÃ‚Â¥y payRate riÃƒÆ’Ã‚Âªng
-    const subInfo = this.getSubstituteInfo(classroom, user, date);
-    const opsCheckerId = this.getOpsCheckerId(user);
+    const subInfo = getSubstituteInfo(classroom, user, date);
+    const attendanceTeacherId = resolveAttendanceTeacherId(classroom, user, date);
+    const opsChecker = getOpsCheckerId(user);
 
-    // Load allowed students ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â only students from orders for this class
-    const students = await this.loadStudentsForClass(classroom, user, date);
+    const students = await this.queryService.loadStudentsForClass(classroom, user, date);
     const allowedIds = new Set(students.map((s) => s._id.toString()));
 
     let attendedCount = 0;
@@ -1585,27 +163,20 @@ export class AttendanceService {
     let totalProcessed = 0;
     const submittedIds = new Set<string>();
 
-    // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ Collect submitted student IDs ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
     for (const item of dto.attendances) {
       if (!allowedIds.has(item.studentId)) {
         errors.push({
           studentId: item.studentId,
-          message: 'HÃƒÂ¡Ã‚Â»Ã‚Âc sinh khÃƒÆ’Ã‚Â´ng thuÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢c lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp hÃƒÂ¡Ã‚Â»Ã‚Âc nÃƒÆ’Ã‚Â y',
+          message: 'Học sinh không thuộc lớp học này',
         });
         continue;
       }
 
       try {
         submittedIds.add(item.studentId);
-        const normalizedStatus = this.normalizeBulkAttendanceStatus(item.status);
+        const normalizedStatus = normalizeBulkAttendanceStatus(item.status);
         if (normalizedStatus) {
-          const attendanceTeacherId = this.resolveAttendanceTeacherId(
-            classroom,
-            user,
-            date,
-            item.studentId,
-          );
-          const result = await this.processOneStudent({
+          const result = await this.sessionBridgeService.processOneStudent({
             classId: dto.classId,
             studentId: item.studentId,
             date,
@@ -1614,12 +185,12 @@ export class AttendanceService {
             teacherId: attendanceTeacherId,
             classroom,
             substitutePayRate: subInfo?.payRate,
-            checkedBy: opsCheckerId,
+            checkedBy: opsChecker,
           });
           results.push(result.attendance);
           if (result.sessionCreated) sessionsCreated++;
         } else {
-          await this.clearAttendanceRecord({
+          await this.sessionBridgeService.clearAttendanceRecord({
             classId: dto.classId,
             studentId: item.studentId,
             date,
@@ -1629,26 +200,18 @@ export class AttendanceService {
       } catch (err: any) {
         errors.push({
           studentId: item.studentId,
-          message: err.message || 'LÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i khÃƒÆ’Ã‚Â´ng xÃƒÆ’Ã‚Â¡c Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹nh',
+          message: err.message || 'Lỗi không xác định',
         });
       }
     }
 
-    // ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ OFFLINE: tÃƒÂ¡Ã‚ÂºÃ‚Â¡o Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh ABSENT cho HS trong lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp nhÃƒâ€ Ã‚Â°ng KHÃƒÆ’Ã¢â‚¬ÂNG cÃƒÆ’Ã‚Â³ trong danh sÃƒÆ’Ã‚Â¡ch ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬ÃƒÂ¢Ã¢â‚¬ÂÃ¢â€šÂ¬
-    // HS vÃƒÂ¡Ã‚ÂºÃ‚Â¯ng KHÃƒÆ’Ã¢â‚¬ÂNG bÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ trÃƒÂ¡Ã‚Â»Ã‚Â« tiÃƒÂ¡Ã‚Â»Ã‚Ân ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â chÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° ghi nhÃƒÂ¡Ã‚ÂºÃ‚Â­n Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh ABSENT
     if (isOffline) {
       for (const student of students) {
         const sid = student._id.toString();
-        if (submittedIds.has(sid)) continue; // Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ xÃƒÂ¡Ã‚Â»Ã‚Â­ lÃƒÆ’Ã‚Â½ ÃƒÂ¡Ã‚Â»Ã…Â¸ trÃƒÆ’Ã‚Âªn
+        if (submittedIds.has(sid)) continue;
 
         try {
-          const attendanceTeacherId = this.resolveAttendanceTeacherId(
-            classroom,
-            user,
-            date,
-            sid,
-          );
-          const result = await this.processOneStudent({
+          const result = await this.sessionBridgeService.processOneStudent({
             classId: dto.classId,
             studentId: sid,
             date,
@@ -1657,22 +220,19 @@ export class AttendanceService {
             teacherId: attendanceTeacherId,
             classroom,
             substitutePayRate: subInfo?.payRate,
-            checkedBy: opsCheckerId,
-            // KhÃƒÆ’Ã‚Â´ng truyÃƒÂ¡Ã‚Â»Ã‚Ân forceSessionForAbsent ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ HS vÃƒÂ¡Ã‚ÂºÃ‚Â¯ng khÃƒÆ’Ã‚Â´ng tÃƒÂ¡Ã‚ÂºÃ‚Â¡o session, khÃƒÆ’Ã‚Â´ng trÃƒÂ¡Ã‚Â»Ã‚Â« tiÃƒÂ¡Ã‚Â»Ã‚Ân
+            checkedBy: opsChecker,
           });
           results.push(result.attendance);
           if (result.sessionCreated) sessionsCreated++;
         } catch (err: any) {
           errors.push({
             studentId: sid,
-            message: err.message || 'LÃƒÂ¡Ã‚Â»Ã¢â‚¬â€i khÃƒÆ’Ã‚Â´ng xÃƒÆ’Ã‚Â¡c Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹nh',
+            message: err.message || 'Lỗi không xác định',
           });
         }
       }
 
-      // OFFLINE payout rule:
-      // totalTeacherPayout = max(200k, teacherPayPerStudent * attendedCount)
-      const summary = await this.recomputeOfflineTeacherPayoutForDay({
+      const summary = await this.sessionBridgeService.recomputeOfflineTeacherPayoutForDay({
         classId: dto.classId,
         date,
         classroom,
@@ -1708,80 +268,6 @@ export class AttendanceService {
     };
   }
 
-  /** LÃƒÂ¡Ã‚ÂºÃ‚Â¥y danh sÃƒÆ’Ã‚Â¡ch Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh theo lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp vÃƒÆ’Ã‚Â  ngÃƒÆ’Ã‚Â y (bao gÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“m trÃƒÂ¡Ã‚ÂºÃ‚Â¡ng thÃƒÆ’Ã‚Â¡i Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ lÃƒâ€ Ã‚Â°u) */
-  async getAttendanceByClass(classId: string, date: string, user: JwtPayload) {
-    const classroom = await this.classModel.findById(classId).lean<ClassLean>();
-    const attendanceDate = normalizeDate(date);
-    this.assertClassAccess(classroom, user, attendanceDate);
-    const students = await this.loadStudentsForClass(classroom, user, attendanceDate);
-
-    // Existing attendance records for this day
-    const attendances = await this.attendanceModel
-      .find({ classId, date: attendanceDate })
-      .populate('studentId', 'fullName age parentName studentCode')
-      .lean();
-
-    const attendanceMap = new Map<string, any>();
-    for (const att of attendances) {
-      const sid = att.studentId?._id?.toString() ?? att.studentId?.toString();
-      if (sid) attendanceMap.set(sid, att);
-    }
-
-    const sorted = [...students].sort((a, b) =>
-      (a.fullName || '').localeCompare(b.fullName || '', 'vi', { sensitivity: 'base' }),
-    );
-
-    const attendanceList = sorted.map((student) => {
-      const sid = student._id.toString();
-      const existing = attendanceMap.get(sid);
-      return {
-        student: {
-          _id: sid,
-          fullName: student.fullName,
-          age: (student as any).age,
-          parentName: (student as any).parentName,
-          studentCode: (student as any).studentCode,
-          isTrial: !!(student as any).isTrial,
-          trialEnrollmentId: (student as any).trialEnrollmentId?.toString?.() || null,
-        },
-        attendance: existing
-          ? {
-              _id: existing._id?.toString(),
-              classId: existing.classId?.toString(),
-              studentId: sid,
-              date: existing.date,
-              status: existing.status,
-              notes: existing.notes || '',
-              attendedAt: existing.attendedAt || null,
-              imageUrl: existing.imageUrl || null,
-              sessionId: existing.sessionId?.toString() || null,
-            }
-          : {
-              _id: null,
-              classId,
-              studentId: sid,
-              date: attendanceDate,
-              status: null,
-              notes: '',
-              attendedAt: null,
-              imageUrl: null,
-              sessionId: null,
-            },
-      };
-    });
-
-    return {
-      class: {
-        _id: (classroom as any)._id,
-        name: classroom.name,
-        code: (classroom as any).code,
-      },
-      date: attendanceDate,
-      attendanceList,
-    };
-  }
-
-  /** CÃƒÂ¡Ã‚ÂºÃ‚Â­p nhÃƒÂ¡Ã‚ÂºÃ‚Â­t trÃƒÂ¡Ã‚ÂºÃ‚Â¡ng thÃƒÆ’Ã‚Â¡i Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh (cÃƒÆ’Ã‚Â³ Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“ng bÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ Session) */
   async updateAttendance(id: string, dto: UpdateAttendanceDto, user: JwtPayload) {
     const mongoSession = await this.connection.startSession();
     let classroomForRecompute: ClassLean | null = null;
@@ -1792,18 +278,17 @@ export class AttendanceService {
       mongoSession.startTransaction();
 
       const attendance = await this.attendanceModel.findById(id).session(mongoSession);
-      if (!attendance) throw new NotFoundException('Khong tim thay ban ghi diem danh');
+      if (!attendance) throw new BadRequestException('Khong tim thay ban ghi diem danh');
 
       const classroom = await this.classModel
         .findById(attendance.classId)
         .lean<ClassLean>();
-      this.assertClassAccess(classroom, user, attendance.date);
+      assertClassAccess(classroom, user, attendance.date);
       classroomForRecompute = classroom;
       classIdForRecompute = attendance.classId;
       dateForRecompute = attendance.date;
 
-      // Prevent any edits once the linked teaching session is finalized
-      const existingFinalized = await this.findFinalizedSessionForAttendance(
+      const existingFinalized = await this.sessionBridgeService.findFinalizedSessionForAttendance(
         attendance.classId,
         attendance.studentId,
         attendance.date,
@@ -1815,34 +300,17 @@ export class AttendanceService {
         );
       }
 
-      // Check neu la GV day thay -> lay payRate rieng
-      const subInfo = this.getSubstituteInfo(classroom, user, attendance.date);
-      const attendanceTeacherId = this.resolveAttendanceTeacherId(
-        classroom,
-        user,
-        attendance.date,
-        attendance.studentId.toString(),
-      );
-      const opsCheckerId = this.getOpsCheckerId(user);
+      const subInfo = getSubstituteInfo(classroom, user, attendance.date);
+      const attendanceTeacherId = resolveAttendanceTeacherId(classroom, user, attendance.date);
 
       const prevStatus = attendance.status;
       const newStatus = dto.status || prevStatus;
 
-      // Session sync on status change
-      const wasCounted = this.isCountedAttendanceStatus(prevStatus);
-      const isCounted = this.isCountedAttendanceStatus(newStatus);
+      const wasCounted = isCountedAttendanceStatus(prevStatus);
+      const isCounted = isCountedAttendanceStatus(newStatus);
 
       if (!wasCounted && isCounted) {
-        await this.assertAttendanceFinancialEligibility({
-          classId: attendance.classId,
-          studentId: attendance.studentId,
-          date: attendance.date,
-          classroom,
-          mongoSession,
-        });
-
-        // ABSENT/EXCUSED -> PRESENT/LATE: create session
-        const sid = await this.syncSessionForAttendance({
+        const sid = await this.sessionBridgeService.syncSessionForAttendance({
           classId: attendance.classId,
           studentId: attendance.studentId,
           teacherId: attendanceTeacherId,
@@ -1858,45 +326,15 @@ export class AttendanceService {
         }
         attendance.sessionId = sid;
       } else if (wasCounted && !isCounted) {
-        // PRESENT/LATE -> ABSENT/EXCUSED: cancel session
         if (attendance.sessionId) {
-          await this.cancelLinkedSession(attendance.sessionId, mongoSession);
+          await this.sessionBridgeService.cancelLinkedSession(attendance.sessionId, mongoSession);
           attendance.sessionId = undefined;
         }
       }
 
       if (dto.status) attendance.status = dto.status;
       if (dto.notes !== undefined) attendance.notes = dto.notes;
-      const defaultDuration = this.resolveCurrentSessionDuration(
-        classroom,
-        attendance.studentId.toString(),
-      );
-      let persistedTeacherId = attendance.teacherId || attendanceTeacherId;
-      let persistedDuration = Number(attendance.sessionDuration ?? 0) || defaultDuration;
-      if (attendance.sessionId) {
-        const linkedSession = await this.sessionModel
-          .findById(attendance.sessionId)
-          .select('teacherId durationMinutes')
-          .session(mongoSession)
-          .lean();
-        if ((linkedSession as any)?.teacherId) {
-          persistedTeacherId = (linkedSession as any).teacherId as any;
-        } else if (!wasCounted) {
-          persistedTeacherId = attendanceTeacherId;
-        }
-        const linkedDuration = Number((linkedSession as any)?.durationMinutes ?? 0);
-        if (linkedDuration > 0) {
-          persistedDuration = linkedDuration;
-        } else if (!wasCounted || persistedDuration <= 0) {
-          persistedDuration = defaultDuration;
-        }
-      } else if (!wasCounted) {
-        persistedTeacherId = attendanceTeacherId;
-        persistedDuration = defaultDuration;
-      }
-      attendance.teacherId = persistedTeacherId as any;
-      attendance.sessionDuration = persistedDuration;
-      // checkedBy / checkedAt đã chuyển sang PayrollTransaction (SSOT) — không còn trong Attendance schema
+      attendance.teacherId = attendanceTeacherId;
       await attendance.save({ session: mongoSession });
 
       await mongoSession.commitTransaction();
@@ -1915,7 +353,7 @@ export class AttendanceService {
       dateForRecompute &&
       (classroomForRecompute as any).classMode === ClassMode.OFFLINE
     ) {
-      await this.recomputeOfflineTeacherPayoutForDay({
+      await this.sessionBridgeService.recomputeOfflineTeacherPayoutForDay({
         classId: classIdForRecompute,
         date: dateForRecompute,
         classroom: classroomForRecompute,
@@ -1928,681 +366,53 @@ export class AttendanceService {
       .populate('classId', 'name code')
       .lean();
   }
-  /** LÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch sÃƒÂ¡Ã‚Â»Ã‚Â­ Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh cÃƒÂ¡Ã‚Â»Ã‚Â§a mÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢t hÃƒÂ¡Ã‚Â»Ã‚Âc sinh */
-  async getStudentAttendanceHistory(
-    studentId: string,
-    classId?: string,
-    actor?: JwtPayload,
-  ) {
-    const filter: any = { studentId: new Types.ObjectId(studentId) };
-    if (classId) {
-      if (!Types.ObjectId.isValid(classId)) {
-        throw new BadRequestException('classId khong hop le');
-      }
-      filter.classId = new Types.ObjectId(classId);
-    }
-    if (actor?.role === Role.TEACHER) {
-      filter.teacherId = new Types.ObjectId(this.getUserId(actor));
-    }
 
-    return this.attendanceModel
-      .find({ ...filter, status: { $exists: true, $ne: null } })
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName email')
-      .sort({ date: -1 })
-      .lean();
+  // Delegate to AttendanceQueryService
+  async getAttendanceByClass(classId: string, date: string, user: JwtPayload) {
+    return this.queryService.getAttendanceByClass(classId, date, user);
   }
 
-  /** ThÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœng kÃƒÆ’Ã‚Âª Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh theo lÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp */
-  async getAttendanceStats(
-    classId: string,
-    startDate: string,
-    endDate: string,
-    user: JwtPayload,
-  ) {
-    const classroom = await this.classModel.findById(classId).lean<ClassLean>();
-    this.assertClassAccess(classroom, user);
-
-    const start = normalizeDate(startDate);
-    const end = normalizeDate(endDate);
-    end.setUTCHours(23, 59, 59, 999);
-
-    const stats = await this.attendanceModel.aggregate([
-      {
-        $match: {
-          classId: new Types.ObjectId(classId),
-          date: { $gte: start, $lte: end },
-          status: { $exists: true, $ne: null },
-        },
-      },
-      { $group: { _id: '$status', count: { $sum: 1 } } },
-    ]);
-
-    return { classId, period: { startDate, endDate }, statistics: stats };
+  async getStudentAttendanceHistory(studentId: string, classId?: string, actor?: JwtPayload) {
+    return this.queryService.getStudentAttendanceHistory(studentId, classId, actor);
   }
 
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // GENERATE LINK + PUBLIC ENDPOINTS (self-attendance via webcam)
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  /** TÃƒÂ¡Ã‚ÂºÃ‚Â¡o link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh cho hÃƒÂ¡Ã‚Â»Ã‚Âc sinh (GV/Director tÃƒÂ¡Ã‚ÂºÃ‚Â¡o, HS tÃƒÂ¡Ã‚Â»Ã‚Â± Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh) */
-  async generateAttendanceLink(dto: GenerateAttendanceLinkDto, user: JwtPayload) {
-    const classroom = await this.classModel.findById(dto.classId).lean<ClassLean>();
-    const date = normalizeDate(dto.date);
-    this.assertClassAccess(classroom, user, date);
-
-    const studentAllowed = await this.isStudentAllowedInClass(classroom, dto.studentId);
-    if (!studentAllowed) {
-      throw new BadRequestException('Hoc sinh khong thuoc lop nay');
-    }
-
-    // GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay: kiÃƒÂ¡Ã‚Â»Ã†â€™m tra quyÃƒÂ¡Ã‚Â»Ã‚Ân tÃƒÂ¡Ã‚ÂºÃ‚Â¡o link
-    const subInfo = this.getSubstituteInfo(classroom, user, date);
-    const attendanceTeacherId = this.resolveAttendanceTeacherId(
-      classroom,
-      user,
-      date,
-      dto.studentId,
-    );
-    if (subInfo && !subInfo.canCreateLink) {
-      throw new ForbiddenException('GV dÃƒÂ¡Ã‚ÂºÃ‚Â¡y thay khÃƒÆ’Ã‚Â´ng Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c OPS cÃƒÂ¡Ã‚ÂºÃ‚Â¥p quyÃƒÂ¡Ã‚Â»Ã‚Ân tÃƒÂ¡Ã‚ÂºÃ‚Â¡o link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh');
-    }
-
-    await this.assertAttendanceFinancialEligibility({
-      classId: new Types.ObjectId(dto.classId),
-      studentId: new Types.ObjectId(dto.studentId),
-      date,
-      classroom,
-    });
-
-    const token = randomBytes(32).toString('hex');
-    const sessionDuration = this.resolveCurrentSessionDuration(classroom, dto.studentId);
-
-    // Token hÃƒÂ¡Ã‚ÂºÃ‚Â¿t hÃƒÂ¡Ã‚ÂºÃ‚Â¡n cuÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi ngÃƒÆ’Ã‚Â y Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh (khÃƒÆ’Ã‚Â´ng phÃƒÂ¡Ã‚ÂºÃ‚Â£i cuÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœi ngÃƒÆ’Ã‚Â y hiÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡n tÃƒÂ¡Ã‚ÂºÃ‚Â¡i)
-    const tokenExpiresAt = new Date(date);
-    tokenExpiresAt.setUTCDate(tokenExpiresAt.getUTCDate() + 1);
-    tokenExpiresAt.setUTCMilliseconds(-1); // 23:59:59.999
-
-    const classObjId = new Types.ObjectId(dto.classId);
-    const studentObjId = new Types.ObjectId(dto.studentId);
-
-    const finalizedSession = await this.findFinalizedSessionForAttendance(
-      classObjId,
-      studentObjId,
-      date,
-    );
-    if (finalizedSession) {
-      throw new BadRequestException(
-        'BuÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i hÃƒÂ¡Ã‚Â»Ã‚Âc Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c xÃƒÆ’Ã‚Â¡c nhÃƒÂ¡Ã‚ÂºÃ‚Â­n hoÃƒÆ’Ã‚Â n thÃƒÆ’Ã‚Â nh (FINALIZED). KhÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚Â»Ã†â€™ tÃƒÂ¡Ã‚ÂºÃ‚Â¡o lÃƒÂ¡Ã‚ÂºÃ‚Â¡i link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh.',
-      );
-    }
-
-    const existingAttendance = await this.attendanceModel.findOne({
-      classId: dto.classId,
-      studentId: dto.studentId,
-      date,
-    });
-
-    if (existingAttendance) {
-      const alreadyMarkedPresent =
-        existingAttendance.attendedAt ||
-        this.isCountedAttendanceStatus(existingAttendance.status);
-      if (alreadyMarkedPresent) {
-        throw new BadRequestException(
-          'HÃƒÂ¡Ã‚Â»Ã‚Âc sinh Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœÃƒâ€ Ã‚Â°ÃƒÂ¡Ã‚Â»Ã‚Â£c Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh cho ngÃƒÆ’Ã‚Â y nÃƒÆ’Ã‚Â y. KhÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚Â»Ã†â€™ tÃƒÂ¡Ã‚ÂºÃ‚Â¡o lÃƒÂ¡Ã‚ÂºÃ‚Â¡i link.',
-        );
-      }
-
-      if (existingAttendance.sessionId) {
-        const linkedSession = await this.sessionModel
-          .findById(existingAttendance.sessionId)
-          .select('status')
-          .lean();
-        if (
-          linkedSession &&
-          !['CANCELLED', 'RESCHEDULED'].includes((linkedSession as any).status)
-        ) {
-          throw new BadRequestException(
-            'BuÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢i hÃƒÂ¡Ã‚Â»Ã‚Âc Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ cÃƒÆ’Ã‚Â³ session Ãƒâ€žÃ¢â‚¬Ëœang hoÃƒÂ¡Ã‚ÂºÃ‚Â¡t Ãƒâ€žÃ¢â‚¬ËœÃƒÂ¡Ã‚Â»Ã¢â€žÂ¢ng. KhÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚Â»Ã†â€™ tÃƒÂ¡Ã‚ÂºÃ‚Â¡o lÃƒÂ¡Ã‚ÂºÃ‚Â¡i link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh.',
-          );
-        }
-      }
-
-      existingAttendance.teacherId = attendanceTeacherId;
-      existingAttendance.sessionDuration = sessionDuration;
-      existingAttendance.status = undefined as any;
-      existingAttendance.notes = '';
-      existingAttendance.sessionId = undefined;
-      existingAttendance.attendanceToken = token;
-      existingAttendance.tokenExpiresAt = tokenExpiresAt;
-      existingAttendance.imageUrl = undefined;
-      existingAttendance.attendedAt = undefined;
-      await existingAttendance.save();
-    } else {
-      await this.attendanceModel.create({
-        classId: dto.classId,
-        studentId: dto.studentId,
-        teacherId: attendanceTeacherId,
-        date,
-        sessionDuration,
-        attendanceToken: token,
-        tokenExpiresAt,
-        imageUrl: null,
-        attendedAt: null,
-      });
-    }
-
-    const att = await this.attendanceModel
-      .findOne({ classId: dto.classId, studentId: dto.studentId, date })
-      .populate('studentId', 'fullName age parentName')
-      .populate('classId', 'name code');
-
-    const baseUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
-    const attendanceUrl = `${baseUrl}/student-attendance/${token}`;
-
-    return { attendance: att, attendanceUrl, token, expiresAt: tokenExpiresAt };
+  async getAttendanceStats(classId: string, startDate: string, endDate: string, user: JwtPayload) {
+    return this.queryService.getAttendanceStats(classId, startDate, endDate, user);
   }
-
-  /** Public: LÃƒÂ¡Ã‚ÂºÃ‚Â¥y thÃƒÆ’Ã‚Â´ng tin Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh tÃƒÂ¡Ã‚Â»Ã‚Â« token */
-  async getAttendanceByToken(token: string) {
-    const att = await this.attendanceModel
-      .findOne({ attendanceToken: token })
-      .populate('studentId', 'fullName age parentName')
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName email')
-      .lean();
-
-    if (!att) throw new NotFoundException('Link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh khÃƒÆ’Ã‚Â´ng hÃƒÂ¡Ã‚Â»Ã‚Â£p lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡');
-    if (att.tokenExpiresAt && new Date() > att.tokenExpiresAt) {
-      throw new BadRequestException('Link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ hÃƒÂ¡Ã‚ÂºÃ‚Â¿t hÃƒÂ¡Ã‚ÂºÃ‚Â¡n');
-    }
-    if (att.attendedAt) {
-      throw new BadRequestException('Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh rÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“i, khÃƒÆ’Ã‚Â´ng thÃƒÂ¡Ã‚Â»Ã†â€™ Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh lÃƒÂ¡Ã‚ÂºÃ‚Â¡i');
-    }
-    return att;
-  }
-
-  /** Public: HÃƒÂ¡Ã‚Â»Ã‚Âc sinh submit Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh qua link (chÃƒÂ¡Ã‚Â»Ã‚Â¥p ÃƒÂ¡Ã‚ÂºÃ‚Â£nh webcam) */
-  async submitStudentAttendance(dto: StudentAttendanceDto) {
-    const attendance = await this.attendanceModel.findOne({
-      attendanceToken: dto.token,
-    });
-    if (!attendance) throw new NotFoundException('Link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh khÃƒÆ’Ã‚Â´ng hÃƒÂ¡Ã‚Â»Ã‚Â£p lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¡');
-    if (attendance.tokenExpiresAt && new Date() > attendance.tokenExpiresAt) {
-      throw new BadRequestException('Link Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh Ãƒâ€žÃ¢â‚¬ËœÃƒÆ’Ã‚Â£ hÃƒÂ¡Ã‚ÂºÃ‚Â¿t hÃƒÂ¡Ã‚ÂºÃ‚Â¡n');
-    }
-    if (attendance.attendedAt) {
-      throw new BadRequestException('Ãƒâ€žÃ‚ÂÃƒÆ’Ã‚Â£ Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh rÃƒÂ¡Ã‚Â»Ã¢â‚¬Å“i');
-    }
-
-    const classroom = await this.classModel
-      .findById(attendance.classId)
-      .lean<ClassLean>();
-    if (!classroom) {
-      throw new NotFoundException('Lop hoc khong ton tai');
-    }
-
-    await this.assertAttendanceFinancialEligibility({
-      classId: attendance.classId,
-      studentId: attendance.studentId,
-      date: attendance.date,
-      classroom,
-    });
-
-    // Validate and process image with security checks (5MB limit to match multer config)
-    const imageData = validateAndProcessBase64Image(
-      dto.imageBase64,
-      5, // 5MB max
-      `attendance_${attendance._id}`,
-    );
-
-    const uploadsDir = join(process.cwd(), 'uploads', 'attendance');
-    await mkdir(uploadsDir, { recursive: true });
-    await writeFile(join(uploadsDir, imageData.filename), imageData.buffer);
-
-    // Update attendance
-    attendance.status = AttendanceStatus.PRESENT;
-    attendance.imageUrl = `/uploads/attendance/${imageData.filename}`;
-    attendance.attendedAt = new Date();
-    await attendance.save();
-
-    // Create session for this PRESENT attendance (same bridge logic)
-    if (classroom) {
-      const sid = await this.syncSessionForAttendance({
-        classId: attendance.classId,
-        studentId: attendance.studentId,
-        teacherId: attendance.teacherId,
-        date: attendance.date,
-        classroom,
-      });
-      if (sid) {
-        const linkedSession = await this.sessionModel
-          .findById(sid)
-          .select('teacherId durationMinutes')
-          .lean();
-        attendance.sessionId = sid;
-        if ((linkedSession as any)?.teacherId) {
-          attendance.teacherId = (linkedSession as any).teacherId as any;
-        }
-        const linkedDuration = Number((linkedSession as any)?.durationMinutes ?? 0);
-        if (linkedDuration > 0) {
-          attendance.sessionDuration = linkedDuration;
-        }
-        await attendance.save();
-      }
-
-      await this.syncTrialUsage(attendance.classId, attendance.studentId);
-
-      if ((classroom as any).classMode === ClassMode.OFFLINE) {
-        await this.recomputeOfflineTeacherPayoutForDay({
-          classId: attendance.classId,
-          date: attendance.date,
-          classroom,
-        });
-      }
-    }
-
-    return this.attendanceModel
-      .findById(attendance._id)
-      .populate('studentId', 'fullName age parentName')
-      .populate('classId', 'name code')
-      .populate('teacherId', 'fullName email')
-      .lean();
-  }
-
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // REPORTS
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
   async getAttendanceReport(
-    startDate: string,
-    endDate: string,
-    classId?: string,
-    actor?: JwtPayload,
-    page: number = 1,
-    limit: number = 20,
+    startDate: string, endDate: string, classId?: string,
+    actor?: JwtPayload, page?: number, limit?: number,
   ) {
-    const start = normalizeDate(startDate);
-    const end = normalizeDate(endDate);
-    end.setUTCHours(23, 59, 59, 999);
-
-    const filter: any = {
-      date: { $gte: start, $lte: end },
-      status: { $in: [...COUNTED_ATTENDANCE_STATUSES] },
-    };
-    if (classId) {
-      if (!Types.ObjectId.isValid(classId)) {
-        throw new BadRequestException('classId khong hop le');
-      }
-      filter.classId = new Types.ObjectId(classId);
-    }
-    if (actor?.role === Role.TEACHER) {
-      filter.teacherId = new Types.ObjectId(this.getUserId(actor));
-    }
-
-    const skip = (page - 1) * limit;
-
-    const [data, total] = await Promise.all([
-      this.attendanceModel
-        .find(filter)
-        .populate('studentId', 'fullName age parentName faceImage studentCode level totalPurchasedSessions')
-        .populate('classId', 'name code')
-        .populate('teacherId', 'fullName email')
-        .sort({ date: -1, attendedAt: -1, updatedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      this.attendanceModel.countDocuments(filter),
-    ]);
-
-    const studentClassPairs = Array.from(
-      new Set(
-        data
-          .map((item: any) => {
-            const studentId = item.studentId?._id?.toString?.();
-            const attendanceClassId = item.classId?._id?.toString?.();
-            if (!studentId || !attendanceClassId) {
-              return null;
-            }
-            return `${studentId}:${attendanceClassId}`;
-          })
-          .filter((pairKey: string | null): pairKey is string => !!pairKey),
-      ),
-    );
-
-    const purchasedSessionsByPair = new Map<string, number>();
-    if (studentClassPairs.length) {
-      const pairFilters = studentClassPairs.map((pairKey) => {
-        const [studentId, attendanceClassId] = pairKey.split(':');
-        return {
-          studentId: new Types.ObjectId(studentId),
-          classId: new Types.ObjectId(attendanceClassId),
-        };
-      });
-
-      const invoiceTotals = await this.invoiceModel.aggregate<{
-        _id: { studentId: Types.ObjectId; classId: Types.ObjectId };
-        totalPurchasedSessions: number;
-      }>([
-        {
-          $match: {
-            invoiceType: InvoiceType.TUITION,
-            status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
-            $or: pairFilters,
-          },
-        },
-        {
-          $project: {
-            studentId: 1,
-            classId: 1,
-              purchasedSessions: {
-                $add: [
-                  { $ifNull: ['$sessions', 0] },
-                  { $ifNull: ['$bonusSessions', 0] },
-                  { $ifNull: ['$trialSessions', 0] },
-                ],
-              },
-          },
-        },
-        {
-          $group: {
-            _id: {
-              studentId: '$studentId',
-              classId: '$classId',
-            },
-            totalPurchasedSessions: { $sum: '$purchasedSessions' },
-          },
-        },
-      ]);
-
-      for (const item of invoiceTotals) {
-        purchasedSessionsByPair.set(
-          `${item._id.studentId.toString()}:${item._id.classId.toString()}`,
-          Math.max(0, Number(item.totalPurchasedSessions || 0)),
-        );
-      }
-    }
-
-    const normalizedData = data.map((item: any) => {
-      const studentObject = item.studentId;
-      const studentId = studentObject?._id?.toString?.();
-      const attendanceClassId = item.classId?._id?.toString?.();
-      if (!studentId || !studentObject || !attendanceClassId) {
-        return item;
-      }
-
-      return {
-        ...item,
-        studentId: {
-          ...studentObject,
-          totalPurchasedSessions:
-            purchasedSessionsByPair.get(`${studentId}:${attendanceClassId}`) || 0,
-        },
-      };
-    });
-
-    return {
-      data: normalizedData,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit) || 1,
-      },
-    };
+    return this.queryService.getAttendanceReport(startDate, endDate, classId, actor, page, limit);
   }
-
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // CLASS LISTING FOR TEACHER (from Classes collection)
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
 
   async getTeacherClassAssignments(user: JwtPayload) {
-    if (!this.isTeacher(user)) {
-      throw new ForbiddenException('ChÃƒÂ¡Ã‚Â»Ã¢â‚¬Â° giÃƒÆ’Ã‚Â¡o viÃƒÆ’Ã‚Âªn mÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºi sÃƒÂ¡Ã‚Â»Ã‚Â­ dÃƒÂ¡Ã‚Â»Ã‚Â¥ng chÃƒÂ¡Ã‚Â»Ã‚Â©c nÃƒâ€žÃ†â€™ng nÃƒÆ’Ã‚Â y');
-    }
-
-    const teacherId = new Types.ObjectId(this.getUserId(user));
-    const classes = await this.classModel
-      .find({
-        $or: [
-          { teacher: teacherId },
-          { 'substituteTeachers.teacherId': teacherId },
-          { 'studentConfigs.teacherSlots.teacherId': teacherId },
-        ],
-      })
-      .populate('students', 'fullName age parentName studentCode parentPhone')
-      .lean();
-
-    return classes
-      .map((cls: any) => {
-        const visibleStudentIds = this.getVisibleStudentIdsForTeacher(
-          cls as ClassLean,
-          teacherId.toString(),
-          true,
-        );
-        const students = (cls.students || [])
-          .filter((student: any) => visibleStudentIds.has(student?._id?.toString?.() || ''))
-          .map((student: any) => ({
-            studentId: student._id.toString(),
-            fullName: student.fullName || '',
-            studentCode: student.studentCode || '',
-            age: student.age,
-            parentName: student.parentName || '',
-            parentPhone: student.parentPhone || '',
-          }))
-          .sort((left: any, right: any) =>
-            left.fullName.localeCompare(right.fullName, 'vi', { sensitivity: 'base' }),
-          );
-
-        if (!students.length) {
-          return null;
-        }
-
-        return {
-          classId: cls._id.toString(),
-          classCode: cls.code || '',
-          className: cls.name || `LÃƒÆ’Ã‚Â¡Ãƒâ€šÃ‚Â»ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºp ${cls.code}`,
-          studentCount: students.length,
-          students,
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> => !!item)
-      .sort((left: any, right: any) =>
-        left.classCode.localeCompare(right.classCode, 'vi', { sensitivity: 'base' }),
-      );
-
-    return classes.map((cls: any) => ({
-      classId: cls._id.toString(),
-      classCode: cls.code || '',
-      className: cls.name || `LÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp ${cls.code}`,
-      studentCount: cls.students?.length || 0,
-      students: (cls.students || [])
-        .map((s: any) => ({
-          studentId: s._id.toString(),
-          fullName: s.fullName || '',
-          studentCode: s.studentCode || '',
-          age: s.age,
-          parentName: s.parentName || '',
-          parentPhone: s.parentPhone || '',
-        }))
-        .sort((a: any, b: any) =>
-          a.fullName.localeCompare(b.fullName, 'vi', { sensitivity: 'base' }),
-        ),
-    })).sort((a: any, b: any) =>
-      a.classCode.localeCompare(b.classCode, 'vi', { sensitivity: 'base' }),
-    );
+    return this.queryService.getTeacherClassAssignments(user);
   }
 
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-  // PARENT ENDPOINTS
-  // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
-
-  /** PH xem lÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¹ch sÃƒÂ¡Ã‚Â»Ã‚Â­ Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh cÃƒÂ¡Ã‚Â»Ã‚Â§a tÃƒÂ¡Ã‚ÂºÃ‚Â¥t cÃƒÂ¡Ã‚ÂºÃ‚Â£ con */
   async getChildrenAttendance(parentUserId: string, fromDate?: string, toDate?: string) {
-    const parentObjId = new Types.ObjectId(parentUserId);
-    const children = await this.studentModel
-      .find({ parentUserId: parentObjId })
-      .select('fullName studentCode')
-      .lean();
-
-    if (!children.length) return { children: [] };
-
-    const childIds = children.map((c) => c._id);
-    const filter: any = {
-      studentId: { $in: childIds },
-      status: { $exists: true, $ne: null },
-    };
-    const dateFilter = buildDateFilter(fromDate, toDate);
-    if (dateFilter) filter.date = dateFilter;
-
-    const records = await this.attendanceModel
-      .find(filter)
-      .populate('classId', 'name code')
-      .sort({ date: -1 })
-      .lean();
-
-    // Group by student
-    const grouped = children.map((child) => {
-      const studentRecords = records.filter(
-        (r) => (r as any).studentId?.toString() === child._id.toString(),
-      );
-      return {
-        student: child,
-        records: studentRecords.map((r: any) => ({
-          _id: r._id,
-          date: r.date,
-          status: r.status,
-          className: r.classId?.name || '',
-          classCode: r.classId?.code || '',
-          notes: r.notes || '',
-          parentConfirm: r.parentConfirm,
-        })),
-      };
-    });
-
-    return { children: grouped };
+    return this.queryService.getChildrenAttendance(parentUserId, fromDate, toDate);
   }
 
-  /** PH xem thÃƒÂ¡Ã‚Â»Ã¢â‚¬Ëœng kÃƒÆ’Ã‚Âª Ãƒâ€žÃ¢â‚¬ËœiÃƒÂ¡Ã‚Â»Ã†â€™m danh tÃƒÂ¡Ã‚Â»Ã¢â‚¬Â¢ng hÃƒÂ¡Ã‚Â»Ã‚Â£p */
   async getChildrenAttendanceStats(parentUserId: string, fromDate?: string, toDate?: string) {
-    const parentObjId = new Types.ObjectId(parentUserId);
-    const children = await this.studentModel
-      .find({ parentUserId: parentObjId })
-      .select('fullName studentCode')
-      .lean();
-
-    if (!children.length) return { children: [] };
-
-    const childIds = children.map((c) => c._id);
-
-    const match: any = {
-      studentId: { $in: childIds },
-      status: { $exists: true, $ne: null },
-    };
-    const dateFilter = buildDateFilter(fromDate, toDate);
-    if (dateFilter) {
-      match.date = dateFilter;
-    }
-
-    const stats = await this.attendanceModel.aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: { student: '$studentId', status: '$status' },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const result = children.map((child) => {
-      const childStats = stats.filter(
-        (s) => s._id.student.toString() === child._id.toString(),
-      );
-      const total = childStats.reduce((sum, s) => sum + s.count, 0);
-      const present = childStats.find((s) => s._id.status === 'PRESENT')?.count || 0;
-      const absent = childStats.find((s) => s._id.status === 'ABSENT')?.count || 0;
-      const late = childStats.find((s) => s._id.status === 'LATE')?.count || 0;
-
-      return {
-        student: child,
-        total,
-        present,
-        absent,
-        late,
-        presentRate: total > 0 ? Math.round((present / total) * 100) : 0,
-        absentRate: total > 0 ? Math.round((absent / total) * 100) : 0,
-        lateRate: total > 0 ? Math.round((late / total) * 100) : 0,
-      };
-    });
-
-    return { children: result };
+    return this.queryService.getChildrenAttendanceStats(parentUserId, fromDate, toDate);
   }
 
-  /**
-   * Load classes with students ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â for all roles.
-   * Returns classes from the Classes collection with populated students.
-   */
   async getClassesWithStudents(user: JwtPayload) {
-    const filter: any = {};
+    return this.queryService.getClassesWithStudents(user);
+  }
 
-    if (this.isTeacher(user)) {
-      const teacherId = new Types.ObjectId(this.getUserId(user));
-      filter.$or = [
-        { teacher: teacherId },
-        { 'substituteTeachers.teacherId': teacherId },
-        { 'studentConfigs.teacherSlots.teacherId': teacherId },
-      ];
-    }
+  // Delegate to AttendanceLinkService
+  async generateAttendanceLink(dto: GenerateAttendanceLinkDto, user: JwtPayload) {
+    return this.linkService.generateAttendanceLink(dto, user);
+  }
 
-    const classes = await this.classModel
-      .find(filter)
-      .populate('students', 'fullName age parentName studentCode parentPhone')
-      .lean();
+  async getAttendanceByToken(token: string) {
+    return this.linkService.getAttendanceByToken(token);
+  }
 
-    return classes
-      .map((cls: any) => {
-        const students = this.isTeacher(user)
-          ? (cls.students || [])
-              .filter((student: any) =>
-                this.getVisibleStudentIdsForTeacher(
-                  cls as ClassLean,
-                  this.getUserId(user),
-                  true,
-                ).has(student?._id?.toString?.() || ''),
-              )
-          : (cls.students || []);
-
-        const mappedStudents = students
-          .map((student: any) => ({
-            studentId: student._id.toString(),
-            fullName: student.fullName || '',
-            studentCode: student.studentCode || '',
-            age: student.age,
-            parentName: student.parentName || '',
-            parentPhone: student.parentPhone || '',
-          }))
-          .sort((left: any, right: any) =>
-            left.fullName.localeCompare(right.fullName, 'vi', { sensitivity: 'base' }),
-          );
-
-        if (this.isTeacher(user) && !mappedStudents.length) {
-          return null;
-        }
-
-        return {
-          classId: cls._id.toString(),
-          classCode: cls.code || '',
-          className: cls.name || `LÃƒÂ¡Ã‚Â»Ã¢â‚¬Âºp ${cls.code}`,
-          studentCount: mappedStudents.length,
-          students: mappedStudents,
-        };
-      })
-      .filter((item): item is NonNullable<typeof item> => !!item)
-      .sort((left: any, right: any) =>
-        left.classCode.localeCompare(right.classCode, 'vi', { sensitivity: 'base' }),
-      );
+  async submitStudentAttendance(dto: StudentAttendanceDto) {
+    return this.linkService.submitStudentAttendance(dto);
   }
 }
-
-
-

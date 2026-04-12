@@ -5,7 +5,6 @@ import { ReportTemplate } from '../../services/report-template.service';
 import {
   TeachingReportFormComponent,
   ReportFormValues,
-  teachingReportDraftStorageKey,
 } from './teaching-report-form.component';
 
 export interface PendingMeta {
@@ -19,7 +18,7 @@ export interface PendingMeta {
   standalone: true,
   imports: [CommonModule, TeachingReportFormComponent],
   template: `
-    <div *ngIf="sessions.length === 0" class="empty">
+    <div *ngIf="sessions.length === 0" class="empty" data-testid="report-pending-empty">
       🎉 Tất cả buổi học đã có báo cáo!
     </div>
 
@@ -27,7 +26,7 @@ export interface PendingMeta {
          class="session-card"
          [class.editing]="editingId === s._id">
 
-      <div class="session-header" (click)="canEdit && toggleEdit(s)">
+      <div class="session-header" [attr.data-testid]="'report-pending-card-' + s._id" (click)="canEdit && toggleEdit(s)">
         <div class="session-info">
           <span class="badge warning">Chưa có báo cáo</span>
           <span *ngIf="!teacherView">GV: {{ s.teacherId.fullName || 'N/A' }}</span>
@@ -51,14 +50,16 @@ export interface PendingMeta {
           <span class="badge" [attr.data-status]="s.status">{{ statusLabel(s.status) }}</span>
         </div>
         <button *ngIf="canEdit" class="btn-expand" type="button"
+                [attr.data-testid]="'report-pending-expand-' + s._id"
                 (click)="$event.stopPropagation(); toggleEdit(s)">
           {{ editingId === s._id ? '▲ Thu gọn' : '▼ Điền báo cáo' }}
         </button>
       </div>
 
-      <div *ngIf="canEdit && editingId === s._id" class="report-form-wrapper">
+      <div *ngIf="canEdit && editingId === s._id" class="report-form-wrapper" [attr.data-testid]="'report-pending-form-' + s._id">
         <app-teaching-report-form
-          [draftKey]="draftKeyFor(s._id)"
+          [contextClassId]="s.classId._id || ''"
+          [draftStorageKey]="draftStorageKey(s._id)"
           [templates]="templates"
           [submitting]="submitting"
           submitLabel="📤 Nộp báo cáo"
@@ -70,9 +71,9 @@ export interface PendingMeta {
 
     <!-- Pagination -->
     <div class="pagination" *ngIf="meta.totalPages > 1">
-      <button (click)="pageChange.emit(meta.page - 1)" [disabled]="meta.page <= 1">← Trước</button>
+      <button data-testid="report-pending-prev-page" (click)="pageChange.emit(meta.page - 1)" [disabled]="meta.page <= 1">← Trước</button>
       <span>Trang {{ meta.page }} / {{ meta.totalPages }}</span>
-      <button (click)="pageChange.emit(meta.page + 1)" [disabled]="meta.page >= meta.totalPages">Sau →</button>
+      <button data-testid="report-pending-next-page" (click)="pageChange.emit(meta.page + 1)" [disabled]="meta.page >= meta.totalPages">Sau →</button>
     </div>
   `,
   styles: [`
@@ -143,8 +144,8 @@ export class TeachingReportPendingComponent {
     this.editingId = '';
   }
 
-  draftKeyFor(sessionId: string): string {
-    return teachingReportDraftStorageKey(sessionId);
+  draftStorageKey(sessionId: string): string {
+    return `teaching-report-draft-${sessionId}`;
   }
 
   statusLabel(s: string): string {

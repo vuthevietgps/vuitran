@@ -1,0 +1,368 @@
+    <section class="investor-shell" data-testid="investor-dashboard-page">
+      <header class="hero" data-testid="investor-hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Investor dashboard</p>
+          <h1>Bảng điều khiển cổ đông</h1>
+          <p>
+            Snapshot tài chính, hiệu quả vốn và xu hướng {{ monthCount }} tháng theo chế độ chỉ đọc.
+          </p>
+        </div>
+
+        <div class="hero-actions">
+          <div class="role-chip" data-testid="investor-role-chip">{{ currentRole() || 'UNKNOWN' }}</div>
+
+          <label class="month-filter" data-testid="investor-month-filter">
+            <span>Khung xu hướng</span>
+            <select [(ngModel)]="monthCount" (ngModelChange)="onMonthCountChange($event)" [disabled]="loading()" data-testid="investor-month-select">
+              <option [ngValue]="3">3 tháng</option>
+              <option [ngValue]="6">6 tháng</option>
+              <option [ngValue]="12">12 tháng</option>
+            </select>
+          </label>
+
+          <button type="button" class="refresh-btn" (click)="loadMetrics()" [disabled]="loading()" data-testid="investor-refresh">
+            {{ loading() ? 'Đang tải...' : 'Làm mới' }}
+          </button>
+          <button
+            *ngIf="canExportInvestorSummary()"
+            type="button"
+            class="export-btn"
+            (click)="exportInvestorSummary()"
+            [disabled]="exporting()"
+            data-testid="investor-export-csv">
+            {{ exportButtonLabel() }}
+          </button>
+        </div>
+      </header>
+
+      <div class="status success" *ngIf="exportSuccess()" data-testid="investor-export-success">
+        {{ exportSuccess() }}
+      </div>
+
+      <div class="status error" *ngIf="exportError()" data-testid="investor-export-error">
+        {{ exportError() }}
+      </div>
+
+      <div class="status error" *ngIf="pageError()" data-testid="investor-page-error">
+        {{ pageError() }}
+      </div>
+
+      <div class="status warning" *ngIf="statusMessage()" data-testid="investor-status-warning">
+        {{ statusMessage() }}
+      </div>
+
+      <section class="section-status-grid" *ngIf="hasSectionErrors()" data-testid="investor-section-status-grid">
+        <article class="section-status" *ngIf="sectionError('metrics')" data-testid="investor-section-error-metrics">
+          <strong>Investor metrics</strong>
+          <span>{{ sectionError('metrics') }}</span>
+        </article>
+        <article class="section-status" *ngIf="sectionError('dashboard')" data-testid="investor-section-error-dashboard">
+          <strong>Financial dashboard</strong>
+          <span>{{ sectionError('dashboard') }}</span>
+        </article>
+        <article class="section-status" *ngIf="sectionError('alerts')" data-testid="investor-section-error-alerts">
+          <strong>Financial alerts</strong>
+          <span>{{ sectionError('alerts') }}</span>
+        </article>
+      </section>
+
+      <section class="metric-grid" *ngIf="hasAnyData(); else loadingOrEmpty" data-testid="investor-metric-grid">
+        <article class="metric-card accent-emerald" data-testid="investor-metric-cash">
+          <span class="metric-label">Tiền mặt hiện có</span>
+          <strong>{{ formatMoney(snapshotCashOnHand()) }}</strong>
+          <small>Gồm ngân hàng và quỹ đang khả dụng</small>
+        </article>
+
+        <article class="metric-card accent-amber" data-testid="investor-metric-burn-rate">
+          <span class="metric-label">Burn rate</span>
+          <strong>{{ formatMoney(snapshotBurnRate()) }}</strong>
+          <small>Chi ròng bình quân theo dashboard tài chính</small>
+        </article>
+
+        <article class="metric-card accent-sky" data-testid="investor-metric-runway">
+          <span class="metric-label">Runway</span>
+          <strong>{{ formatNumber(snapshotRunway(), 1) }} tháng</strong>
+          <small>{{ runwayHint(snapshotRunway()) }}</small>
+        </article>
+
+        <article class="metric-card accent-violet">
+          <span class="metric-label">Current ratio</span>
+          <strong>{{ formatNumber(dashboard()?.metrics?.currentRatio, 2) }}</strong>
+          <small>Thanh khoản ngắn hạn</small>
+        </article>
+
+        <article class="metric-card accent-rose" data-testid="investor-metric-alerts">
+          <span class="metric-label">Cảnh báo mở</span>
+          <strong>{{ alerts()?.totalAlerts ?? 0 }}</strong>
+          <small>{{ criticalAlertHint() }}</small>
+        </article>
+
+        <article class="metric-card accent-cyan">
+          <span class="metric-label">Khách hàng</span>
+          <strong>{{ formatCustomerBase() }}</strong>
+          <small>Enrolled / active trong kỳ đang xem</small>
+        </article>
+      </section>
+
+      <section class="panel-grid" *ngIf="hasAnyData()" data-testid="investor-panel-grid">
+        <article class="panel" *ngIf="metrics() as data" data-testid="investor-panel-revenue">
+          <div class="panel-head">
+            <h2>Doanh thu và lợi nhuận</h2>
+            <span class="panel-subtitle">Gross margin, net margin, EBITDA</span>
+          </div>
+          <div class="stack">
+            <div class="stack-row">
+              <span>Doanh thu tháng này</span>
+              <strong>{{ formatMoney(data.revenue.recognizedRevenue.thisMonth) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>So với tháng trước</span>
+              <strong>{{ formatGrowth(data.revenue.recognizedRevenue.growthPercent) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Gross profit</span>
+              <strong>{{ formatMoney(data.profitability.grossProfit) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Net profit</span>
+              <strong>{{ formatMoney(data.profitability.netProfit) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>EBITDA</span>
+              <strong>{{ formatMoney(data.profitability.ebitda) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Biên EBITDA</span>
+              <strong>{{ formatPercent(data.profitability.ebitdaMargin) }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel" *ngIf="metrics() as data" data-testid="investor-panel-unit-economics">
+          <div class="panel-head">
+            <h2>Unit economics</h2>
+            <span class="panel-subtitle">Tách riêng CPL, CAC và ARPU</span>
+          </div>
+          <div class="stack">
+            <div class="stack-row">
+              <span>CPL</span>
+              <strong>{{ formatMoney(data.unitEconomics.costPerLead) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>CAC</span>
+              <strong>{{ formatMoney(data.unitEconomics.cac) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>LTV</span>
+              <strong>{{ formatMoney(data.unitEconomics.ltv) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>LTV / CAC</span>
+              <strong
+                [class.good]="(data.unitEconomics.ltvCacRatio ?? 0) >= 3"
+                [class.warn]="(data.unitEconomics.ltvCacRatio ?? 0) >= 2 && (data.unitEconomics.ltvCacRatio ?? 0) < 3"
+                [class.bad]="(data.unitEconomics.ltvCacRatio ?? 0) > 0 && (data.unitEconomics.ltvCacRatio ?? 0) < 2">
+                {{ formatNumber(data.unitEconomics.ltvCacRatio, 2) }}x
+              </strong>
+            </div>
+            <div class="stack-row">
+              <span>ARPU enrolled</span>
+              <strong>{{ formatMoney(data.unitEconomics.arpu) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>ARPU active</span>
+              <strong>{{ formatMoney(data.unitEconomics.arpuActive) }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel" *ngIf="metrics() as data" data-testid="investor-panel-customer-base">
+          <div class="panel-head">
+            <h2>Khách hàng và retention</h2>
+            <span class="panel-subtitle">Tách enrolled và active</span>
+          </div>
+          <div class="stack">
+            <div class="stack-row">
+              <span>Enrolled students</span>
+              <strong>{{ data.customerBase.enrolledStudents }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Active students</span>
+              <strong>{{ data.customerBase.activeStudents }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Retention rate</span>
+              <strong>{{ formatPercent(data.retention.retentionRate) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Churn rate</span>
+              <strong>{{ formatPercent(data.retention.churnRate) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>At-risk count</span>
+              <strong>{{ data.retention.atRiskCount }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel" *ngIf="metrics() as data" data-testid="investor-panel-liabilities">
+          <div class="panel-head">
+            <h2>Nghĩa vụ và doanh thu chưa thực hiện</h2>
+            <span class="panel-subtitle">AR, payroll, deferred revenue</span>
+          </div>
+          <div class="stack">
+            <div class="stack-row">
+              <span>Accounts receivable</span>
+              <strong>{{ formatMoney(data.liabilities.accountsReceivable) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Payroll payable</span>
+              <strong>{{ formatMoney(data.liabilities.payrollPayable) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Expense payable</span>
+              <strong>{{ formatMoney(data.liabilities.expensePayable) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Deferred revenue</span>
+              <strong>{{ formatMoney(data.revenue.unearnedRevenue.total) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Wallet balance</span>
+              <strong>{{ formatMoney(data.revenue.unearnedRevenue.walletBalance) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Unconsumed invoice value</span>
+              <strong>{{ formatMoney(data.revenue.unearnedRevenue.unconsumedInvoiceValue) }}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="panel" *ngIf="dashboard() as dashboardData" data-testid="investor-panel-dashboard">
+          <div class="panel-head">
+            <h2>Sức khỏe tài chính vận hành</h2>
+            <span class="panel-subtitle">Dùng trực tiếp dashboard và alerts</span>
+          </div>
+          <div class="stack">
+            <div class="stack-row">
+              <span>Available cash</span>
+              <strong>{{ formatMoney(dashboardData.cashPosition.availableCash) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Reserve 3 months</span>
+              <strong>{{ formatMoney(dashboardData.obligations.operatingReserve3Months) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Total payable 14 days</span>
+              <strong>{{ formatMoney(dashboardData.obligations.totalPayable14Days) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Accounts payable</span>
+              <strong>{{ formatMoney(dashboardData.metrics.accountsPayable) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Bank balance</span>
+              <strong>{{ formatMoney(dashboardData.cashPosition.bankBalance) }}</strong>
+            </div>
+            <div class="stack-row">
+              <span>Fund balance</span>
+              <strong>{{ formatMoney(dashboardData.cashPosition.fundBalance) }}</strong>
+            </div>
+          </div>
+        </article>
+        <article class="panel" *ngIf="alerts() as alertsData" data-testid="investor-panel-alerts">
+          <div class="panel-head">
+            <h2>Cảnh báo tài chính</h2>
+            <span class="panel-subtitle">Top {{ topAlerts(alertsData).length }} cảnh báo mới nhất</span>
+          </div>
+          <div class="alert-list" *ngIf="topAlerts(alertsData).length; else noAlerts">
+            <div class="alert-item" *ngFor="let alert of topAlerts(alertsData)">
+              <span class="alert-chip" [class.critical]="alert.severity === 'CRITICAL'" [class.warning]="alert.severity === 'WARNING'">
+                {{ alert.severity }}
+              </span>
+              <div class="alert-copy">
+                <strong>{{ alert.title }}</strong>
+                <p>{{ alert.message }}</p>
+              </div>
+            </div>
+          </div>
+          <ng-template #noAlerts>
+            <p class="empty">Không có cảnh báo mở.</p>
+          </ng-template>
+        </article>
+
+        <article class="panel span-2" *ngIf="metrics() as data" data-testid="investor-panel-methodology">
+          <div class="panel-head">
+            <h2>Methodology</h2>
+            <span class="panel-subtitle">Document rõ công thức và giới hạn hiện tại</span>
+          </div>
+          <div class="methodology">
+            <div class="method-card">
+              <strong>CAC</strong>
+              <p>{{ data.methodology.cac.formula }}</p>
+              <small>{{ data.methodology.cac.note }}</small>
+            </div>
+            <div class="method-card">
+              <strong>LTV</strong>
+              <p>{{ data.methodology.ltv.formula }}</p>
+              <small>{{ data.methodology.ltv.note }}</small>
+            </div>
+            <div class="method-card">
+              <strong>ARPU</strong>
+              <p>{{ data.methodology.arpu.formula }}</p>
+              <small>{{ data.methodology.arpu.note }}</small>
+              <small *ngIf="data.methodology.arpu.activeFormula">{{ data.methodology.arpu.activeFormula }}</small>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel trend-panel" *ngIf="metrics() as data" data-testid="investor-trend-panel">
+        <div class="panel-head">
+          <h2>Xu hướng {{ data.trend.monthCount }} tháng</h2>
+          <span class="panel-subtitle">Revenue, net profit và số học sinh active</span>
+        </div>
+
+        <div class="trend-chart" *ngIf="data.trend.months.length; else noTrend">
+          <div class="trend-row trend-head">
+            <span>Tháng</span>
+            <span>Revenue</span>
+            <span>Net profit</span>
+            <span>Students</span>
+          </div>
+
+          <div class="trend-row" *ngFor="let month of data.trend.months; let i = index">
+            <span class="month">{{ month }}</span>
+            <div class="bar-group">
+              <div class="bar revenue" [style.width.%]="barPercent(data.trend.revenue[i], maxTrendValue(data))">
+                <span>{{ formatMoney(data.trend.revenue[i]) }}</span>
+              </div>
+            </div>
+            <div class="bar-group">
+              <div class="bar profit" [style.width.%]="barPercent(data.trend.netProfit[i], maxTrendValue(data))">
+                <span>{{ formatMoney(data.trend.netProfit[i]) }}</span>
+              </div>
+            </div>
+            <span class="students">{{ data.trend.studentCount[i] || 0 }}</span>
+          </div>
+        </div>
+
+        <ng-template #noTrend>
+          <p class="empty">Không có dữ liệu xu hướng.</p>
+        </ng-template>
+      </section>
+
+      <ng-template #loadingOrEmpty>
+        <section class="loading-state" *ngIf="loading(); else emptyState" data-testid="investor-loading-state">
+          <div class="pulse"></div>
+          <div class="pulse"></div>
+          <div class="pulse"></div>
+        </section>
+      </ng-template>
+
+      <ng-template #emptyState>
+        <section class="empty-state" data-testid="investor-empty-state">
+          <p>Không tải được dữ liệu nhà đầu tư.</p>
+        </section>
+      </ng-template>
+    </section>

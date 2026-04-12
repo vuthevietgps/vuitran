@@ -2,31 +2,48 @@
   <ng-container *ngIf="!error(); else errorTpl">
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">Tu van hoc tap</p>
+        <p class="eyebrow">Tư vấn học tập</p>
         <h1>{{ page()?.heroTitle || page()?.name }}</h1>
-        <p class="lead">{{ page()?.heroSubtitle || 'De lai thong tin de nhan lo trinh hoc phu hop va duoc doi ngu tu van lien he nhanh.' }}</p>
+        <p class="lead">{{ page()?.heroSubtitle || 'Để lại thông tin để nhận lộ trình học phù hợp và được đội ngũ tư vấn liên hệ nhanh.' }}</p>
 
-        <div class="content-card" *ngIf="page()?.bodyHtml" [innerHTML]="page()?.bodyHtml || ''"></div>
+        <div
+          class="content-card"
+          *ngIf="page()?.bodyHtml"
+          [innerHTML]="page()?.bodyHtml || ''"
+          (click)="handleContentCardClick($event)"
+        ></div>
       </div>
 
       <div class="form-card" *ngIf="!submitted(); else successTpl">
         <div class="form-head">
-          <h2>{{ page()?.formTitle || 'Nhan tu van va hoc thu' }}</h2>
-          <p>{{ page()?.formDescription || 'He thong se luu dung ma tracking, landing page va dinh danh phu huynh neu da co tai khoan/vi.' }}</p>
+          <h2>{{ page()?.formTitle || 'Nhận tư vấn và học thử' }}</h2>
+          <p>{{ page()?.formDescription || 'Hệ thống sẽ lưu đúng mã tracking, landing page và định danh phụ huynh nếu đã có tài khoản hoặc ví.' }}</p>
         </div>
 
-        <label>Ho ten phu huynh <input [(ngModel)]="form.parentName" /></label>
-        <label>So dien thoai <input [(ngModel)]="form.parentPhone" /></label>
-        <label>Email <input [(ngModel)]="form.parentEmail" /></label>
-        <label>Ten hoc sinh <input [(ngModel)]="form.studentName" /></label>
-        <label>Lop / khoi <input [(ngModel)]="form.studentGrade" /></label>
-        <label>Nhu cau <textarea rows="3" [(ngModel)]="form.notes"></textarea></label>
+        <label>Họ tên phụ huynh
+          <input [(ngModel)]="form.parentName" placeholder="Ví dụ: Nguyễn Thị Lan" />
+        </label>
+        <label>Số điện thoại
+          <input [(ngModel)]="form.parentPhone" placeholder="0363 614 511" />
+        </label>
+        <label>Email
+          <input [(ngModel)]="form.parentEmail" placeholder="phuhuynh@email.com" />
+        </label>
+        <label>Tên học sinh
+          <input [(ngModel)]="form.studentName" placeholder="Ví dụ: Minh Khôi" />
+        </label>
+        <label>Lớp / khối
+          <input [(ngModel)]="form.studentGrade" placeholder="Ví dụ: Lớp 7" />
+        </label>
+        <label>Nhu cầu
+          <textarea rows="3" [(ngModel)]="form.notes" placeholder="Môn học, mục tiêu, thời gian mong muốn..."></textarea>
+        </label>
 
-        <div class="privacy">{{ page()?.privacyNotice || 'Thong tin nay duoc dung de lien he tu van va doi soat attribution quang cao.' }}</div>
+        <div class="privacy">{{ page()?.privacyNotice || 'Thông tin này được dùng để liên hệ tư vấn và đối soát attribution quảng cáo.' }}</div>
         <div class="submit-error" *ngIf="submitError()">{{ submitError() }}</div>
 
         <button class="submit-btn" [disabled]="submitting()" (click)="submitForm()">
-          {{ submitting() ? 'Dang gui...' : (page()?.submitButtonText || 'Nhan tu van ngay') }}
+          {{ submitting() ? 'Đang gửi...' : (page()?.submitButtonText || 'Nhận tư vấn ngay') }}
         </button>
       </div>
     </section>
@@ -36,22 +53,58 @@
 <ng-template #loadingTpl>
   <div class="state-shell">
     <div class="spinner"></div>
-    <p>Dang tai landing page...</p>
+    <p>Đang tải landing page...</p>
   </div>
 </ng-template>
+
+<div
+  class="image-preview-backdrop"
+  *ngIf="imagePreview() as preview"
+  (click)="closeImagePreview()"
+>
+  <div
+    class="image-preview-dialog"
+    role="dialog"
+    aria-modal="true"
+    [attr.aria-label]="preview.title || preview.alt || 'Xem hình minh họa'"
+    (click)="$event.stopPropagation()"
+  >
+    <button
+      type="button"
+      class="image-preview-close"
+      aria-label="Đóng hình minh họa"
+      (click)="closeImagePreview()"
+    >
+      ×
+    </button>
+
+    <div class="image-preview-body">
+      <img
+        class="image-preview-media"
+        [src]="preview.src"
+        [alt]="preview.alt || preview.title || 'Hình minh họa landing page'"
+      />
+    </div>
+
+    <div class="image-preview-meta" *ngIf="preview.title || preview.description">
+      <h3 *ngIf="preview.title">{{ preview.title }}</h3>
+      <p *ngIf="preview.description">{{ preview.description }}</p>
+    </div>
+  </div>
+</div>
 
 <ng-template #errorTpl>
   <div class="state-shell error">
     <h2>{{ error() }}</h2>
-    <p>Vui long kiem tra lai link hoac lien he bo phan van hanh.</p>
+    <p>Vui lòng kiểm tra lại link hoặc liên hệ bộ phận vận hành.</p>
   </div>
 </ng-template>
 
 <ng-template #successTpl>
   <div class="success-card">
-    <p class="eyebrow">Da ghi nhan</p>
-    <h2>{{ page()?.successTitle || 'Cam on phu huynh' }}</h2>
-    <p>{{ page()?.successMessage || 'He thong da luu dung tracking, landing page va thong tin dinh danh de doi ngu lien he.' }}</p>
+    <p class="eyebrow">Đã ghi nhận</p>
+    <h2>{{ page()?.successTitle || 'Cảm ơn phụ huynh' }}</h2>
+    <p>{{ page()?.successMessage || 'Hệ thống đã lưu đúng tracking, landing page và thông tin định danh để đội ngũ liên hệ.' }}</p>
     <div class="success-meta" *ngIf="submitResult()">
       <div>Submission: {{ submitResult()?.submissionCode }}</div>
       <div *ngIf="submitResult()?.leadCode">Lead: {{ submitResult()?.leadCode }}</div>

@@ -29,6 +29,7 @@ import { QueryTicketDto } from './dto/query-ticket.dto';
 import { AddCommentDto } from './dto/add-comment.dto';
 import { UpdateTicketDto } from './dto/update-ticket.dto';
 import { ResolveTicketDto } from './dto/resolve-ticket.dto';
+import { buildSlaMetrics } from './tickets-sla.helper';
 
 type ParentSupportHandoffParams = {
   conversationId: string;
@@ -464,6 +465,7 @@ export class TicketsService {
     if (query.type) filter.type = query.type;
     if (query.status) filter.status = query.status;
     if (query.priority) filter.priority = query.priority;
+    if (query.overdue === 'true') filter.isOverdue = true;
 
     if (query.fromDate || query.toDate) {
       filter.createdAt = {};
@@ -502,6 +504,7 @@ export class TicketsService {
     if (query.type) filter.type = query.type;
     if (query.status) filter.status = query.status;
     if (query.priority) filter.priority = query.priority;
+    if (query.overdue === 'true') filter.isOverdue = true;
     if (query.createdBy) filter.createdBy = new Types.ObjectId(query.createdBy);
     if (query.assignedTo) filter.assignedTo = new Types.ObjectId(query.assignedTo);
     if (query.sessionId) filter.sessionId = new Types.ObjectId(query.sessionId);
@@ -733,9 +736,11 @@ export class TicketsService {
       throw new BadRequestException('Ticket da duoc xu ly');
     }
 
+    let refundLedgerEntryId: Types.ObjectId | undefined;
     if (dto.outcome === 'APPROVED' && dto.refundAmount && dto.refundAmount > 0) {
       const refundPayload = await this.buildRefundPayload(ticket, dto.refundAmount);
-      await this.walletsService.refundForSession(refundPayload, userId);
+      const refundEntry = await this.walletsService.refundForSession(refundPayload, userId);
+      refundLedgerEntryId = refundEntry?._id as Types.ObjectId | undefined;
       this.logger.log(`Ticket ${ticket.ticketCode} resolved with refund: ${dto.refundAmount}d`);
     }
 
@@ -775,6 +780,9 @@ export class TicketsService {
       summary: dto.summary,
       outcome: dto.outcome,
       refundAmount: dto.refundAmount || 0,
+      refundLedgerEntryId,
+      refundPaidAt: refundLedgerEntryId ? new Date() : undefined,
+      refundPaidBy: refundLedgerEntryId ? new Types.ObjectId(userId) : undefined,
       resolvedBy: new Types.ObjectId(userId),
       resolvedAt: new Date(),
     };
@@ -800,6 +808,17 @@ export class TicketsService {
 
     if (ticket.status !== TicketStatus.RESOLVED) {
       throw new BadRequestException('Chi dong duoc ticket da RESOLVED');
+    }
+
+    const refundAmount = Number(ticket.resolution?.refundAmount || 0);
+    if (
+      ticket.type === TicketType.REFUND_REQUEST
+      && refundAmount > 0
+      && !ticket.resolution?.refundLedgerEntryId
+    ) {
+      throw new BadRequestException(
+        'Ticket refund nay chua duoc lien ket LedgerEntry giao dich vi. Ke toan can tao giao dich hoan tien truoc khi dong ticket.',
+      );
     }
 
     ticket.status = TicketStatus.CLOSED;
@@ -905,105 +924,6 @@ export class TicketsService {
   // ════════════════════════════════════════════════════════════════════
 
   async getSlaMetrics(fromDate?: string, toDate?: string) {
-    const dateFilter: any = {};
-    if (fromDate) dateFilter.$gte = new Date(fromDate);
-    if (toDate) dateFilter.$lte = new Date(toDate);
-    const hasDate = Object.keys(dateFilter).length > 0;
-
-    const filter: any = {};
-    if (hasDate) filter.createdAt = dateFilter;
-
-    const tickets = await this.ticketModel.find(filter).lean();
-
-    // Resolution times for resolved/closed tickets
-    const resolvedTickets = tickets.filter(
-      (t: any) => [TicketStatus.RESOLVED, TicketStatus.CLOSED].includes(t.status),
-    );
-
-    const resolutionTimes = resolvedTickets.map((t: any) => {
-      const created = new Date(t.createdAt).getTime();
-      const resolved = new Date(t.resolution?.resolvedAt || t.updatedAt).getTime();
-      return (resolved - created) / (1000 * 60 * 60); // hours
-    });
-
-    const avgResolutionHours = resolutionTimes.length > 0
-      ? Math.round(resolutionTimes.reduce((s, v) => s + v, 0) / resolutionTimes.length * 10) / 10
-      : null;
-
-    // SLA compliance (resolved before dueDate)
-    const ticketsWithDue = resolvedTickets.filter((t: any) => t.dueDate);
-    const onTimeCount = ticketsWithDue.filter((t: any) => {
-      const resolved = new Date(t.resolution?.resolvedAt || t.updatedAt);
-      return resolved <= new Date(t.dueDate);
-    }).length;
-    const slaCompliance = ticketsWithDue.length > 0
-      ? Math.round((onTimeCount / ticketsWithDue.length) * 100)
-      : 100;
-
-    // Overdue
-    const now = new Date();
-    const overdueCount = tickets.filter(
-      (t: any) =>
-        ![TicketStatus.RESOLVED, TicketStatus.CLOSED, TicketStatus.CANCELLED].includes(t.status) &&
-        !!t.dueDate &&
-        new Date(t.dueDate) < now,
-    ).length;
-    const overdueRate = tickets.length > 0 ? Math.round((overdueCount / tickets.length) * 100) : 0;
-
-    // By priority
-    const byPriority: Record<string, number> = {};
-    for (const t of tickets) {
-      const p = (t as any).priority || 'MEDIUM';
-      byPriority[p] = (byPriority[p] || 0) + 1;
-    }
-
-    // By status
-    const byStatus: Record<string, number> = {};
-    for (const t of tickets) {
-      byStatus[(t as any).status] = (byStatus[(t as any).status] || 0) + 1;
-    }
-
-    // Top assignees
-    const assigneeCounts: Record<string, number> = {};
-    for (const t of resolvedTickets) {
-      const aid = (t as any).assignedTo?.toString();
-      if (!aid) continue;
-      assigneeCounts[aid] = (assigneeCounts[aid] || 0) + 1;
-    }
-
-    const assigneeIds = Object.keys(assigneeCounts)
-      .filter((id) => Types.ObjectId.isValid(id))
-      .map((id) => new Types.ObjectId(id));
-
-    const userRows = assigneeIds.length > 0
-      ? await this.ticketModel.db.collection('users').find(
-        { _id: { $in: assigneeIds } },
-        { projection: { fullName: 1 } },
-      ).toArray()
-      : [];
-    const userNameById: Record<string, string> = {};
-    for (const u of userRows as any[]) {
-      userNameById[u._id.toString()] = u.fullName || u._id.toString();
-    }
-
-    const topAssignees = Object.entries(assigneeCounts)
-      .map(([id, count]) => ({
-        name: userNameById[id] || id,
-        count,
-      }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 5);
-
-    return {
-      total: tickets.length,
-      resolved: resolvedTickets.length,
-      avgResolutionHours,
-      slaCompliance,
-      overdueCount,
-      overdueRate,
-      byPriority,
-      byStatus,
-      topAssignees,
-    };
+    return buildSlaMetrics(this.ticketModel, fromDate, toDate);
   }
 }

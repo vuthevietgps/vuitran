@@ -8,6 +8,9 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { WalletsService } from './wallets.service';
+import { WalletsTopUpService } from './wallets-topup.service';
+import { WalletsOperationsService } from './wallets-operations.service';
+import { WalletsQueryService } from './wallets-query.service';
 import { WalletStatus } from './schemas/wallet.schema';
 import {
   TransactionType,
@@ -52,15 +55,15 @@ function buildService(overrides: Partial<{
   const parentAttributionModel = overrides.parentAttributionModel ?? ({} as any);
   const connection = overrides.connection ?? ({} as any);
 
+  const topUpService = new WalletsTopUpService(walletModel, ledgerModel, bankAccountModel, connection);
+  const operationsService = new WalletsOperationsService(walletModel, ledgerModel, userModel, connection);
+  const queryService = new WalletsQueryService(walletModel, ledgerModel, userModel, invoiceModel, studentModel, parentAttributionModel);
+
   return new WalletsService(
     walletModel,
-    ledgerModel,
-    userModel,
-    invoiceModel,
-    bankAccountModel,
-    studentModel,
-    parentAttributionModel,
-    connection,
+    topUpService,
+    operationsService,
+    queryService,
   );
 }
 
@@ -107,9 +110,9 @@ describe('WalletsService.requestTopUp()', () => {
     const createdEntry = { _id: new Types.ObjectId(), type: TransactionType.TOP_UP, status: TransactionStatus.PENDING };
     const creatorId = new Types.ObjectId().toString();
 
+    const walletModel = { findOneAndUpdate: jest.fn().mockResolvedValue(wallet) } as any;
     const ledgerModel = { create: jest.fn().mockResolvedValue(createdEntry) } as any;
-    const service = buildService({ ledgerModel });
-    jest.spyOn(service, 'getOrCreateWallet').mockResolvedValue(wallet as any);
+    const service = buildService({ walletModel, ledgerModel });
 
     const result = await service.requestTopUp(
       {
@@ -134,9 +137,9 @@ describe('WalletsService.requestTopUp()', () => {
     const wallet = makeWallet();
     const createdEntry = { _id: new Types.ObjectId() };
     const creatorId = new Types.ObjectId().toString();
+    const walletModel = { findOneAndUpdate: jest.fn().mockResolvedValue(wallet) } as any;
     const ledgerModel = { create: jest.fn().mockResolvedValue(createdEntry) } as any;
-    const service = buildService({ ledgerModel });
-    jest.spyOn(service, 'getOrCreateWallet').mockResolvedValue(wallet as any);
+    const service = buildService({ walletModel, ledgerModel });
 
     await service.requestTopUp(
       {
@@ -189,12 +192,14 @@ describe('WalletsService.deductForSession()', () => {
   it('throws BadRequestException when wallet is FROZEN', async () => {
     const mockSession = makeMockSession();
     const frozenWallet = makeWallet({ status: WalletStatus.FROZEN });
+    const walletModel = {
+      findOneAndUpdate: jest.fn().mockResolvedValue(frozenWallet),
+    } as any;
     const ledgerModel = {
       findOne: jest.fn().mockReturnValue(chainable(null)),
     } as any;
     const connection = { startSession: jest.fn().mockResolvedValue(mockSession) } as any;
-    const service = buildService({ ledgerModel, connection });
-    jest.spyOn(service, 'createWallet').mockResolvedValue(frozenWallet as any);
+    const service = buildService({ walletModel, ledgerModel, connection });
 
     await expect(service.deductForSession(deductParams)).rejects.toThrow(BadRequestException);
     expect(mockSession.abortTransaction).toHaveBeenCalled();
@@ -204,7 +209,9 @@ describe('WalletsService.deductForSession()', () => {
     const mockSession = makeMockSession();
     const wallet = makeWallet({ balance: 0, debtLimit: 0, trialDebtSessions: 0 });
     const walletModel = {
-      findOneAndUpdate: jest.fn().mockResolvedValue(null), // atomic check fails — balance too low
+      findOneAndUpdate: jest.fn()
+        .mockResolvedValueOnce(wallet)   // ensureWallet
+        .mockResolvedValueOnce(null),    // atomic check fails — balance too low
       findById: jest.fn().mockReturnValue({
         session: jest.fn().mockResolvedValue(wallet), // walletModel.findById(id).session(s) used in error path
       }),
@@ -214,7 +221,6 @@ describe('WalletsService.deductForSession()', () => {
     } as any;
     const connection = { startSession: jest.fn().mockResolvedValue(mockSession) } as any;
     const service = buildService({ walletModel, ledgerModel, connection });
-    jest.spyOn(service, 'createWallet').mockResolvedValue(wallet as any);
 
     await expect(service.deductForSession(deductParams)).rejects.toThrow(BadRequestException);
     expect(mockSession.abortTransaction).toHaveBeenCalled();
@@ -227,7 +233,9 @@ describe('WalletsService.deductForSession()', () => {
     const createdEntry = { _id: new Types.ObjectId(), amount: 200_000 };
 
     const walletModel = {
-      findOneAndUpdate: jest.fn().mockResolvedValue(updatedWallet),
+      findOneAndUpdate: jest.fn()
+        .mockResolvedValueOnce(wallet)          // ensureWallet
+        .mockResolvedValueOnce(updatedWallet),   // atomic deduct
     } as any;
     const ledgerModel = {
       findOne: jest.fn().mockReturnValue(chainable(null)),
@@ -235,7 +243,6 @@ describe('WalletsService.deductForSession()', () => {
     } as any;
     const connection = { startSession: jest.fn().mockResolvedValue(mockSession) } as any;
     const service = buildService({ walletModel, ledgerModel, connection });
-    jest.spyOn(service, 'createWallet').mockResolvedValue(wallet as any);
 
     const result = await service.deductForSession(deductParams);
 

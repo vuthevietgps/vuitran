@@ -163,7 +163,23 @@ export class LeadsService {
     const lead = await this.leadModel.findById(id).lean();
     if (!lead) throw new NotFoundException('Lead khong ton tai');
     this.assertSaleLeadAccess(lead, user);
-    return lead as Lead;
+    const attribution = await this.marketingAttributionService.findByLeadId(id);
+    return {
+      ...(lead as any),
+      attributionSummary: attribution
+        ? {
+            parentKey: attribution.parentKey,
+            attributionModel: attribution.attributionModel,
+            sourceType: attribution.sourceType,
+            firstAttributedAt: attribution.firstAttributedAt,
+            lastConfirmedAt: attribution.lastConfirmedAt,
+            adGroupId: attribution.adGroupId,
+            adGroupName: attribution.adGroupName,
+            platform: attribution.platform,
+          }
+        : null,
+      attributionTouchpoints: attribution?.touchpoints || [],
+    } as Lead;
   }
 
   async update(id: string, dto: UpdateLeadDto, user: any): Promise<Lead> {

@@ -14,69 +14,69 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
   imports: [CommonModule, FormsModule, RouterLink, FlowGuideComponent],
   template: `
   <app-flow-guide featureKey="pending-approvals"></app-flow-guide>
-  <div class="container">
+  <div class="container" data-testid="pending-approvals-page">
     <h2>Cho duyet</h2>
     <p class="subtitle">Tat ca hang muc dang cho duyet. Giam doc va van hanh deu co the xu ly yeu cau sua lop hoc va doi buoi hoc cua Sale tai day.</p>
 
-    <div class="summary-cards" *ngIf="data?.summary">
-      <div class="card total">
+    <div class="summary-cards" *ngIf="data?.summary" data-testid="pending-summary-cards">
+      <div class="card total" data-testid="pending-summary-total">
         <div class="card-number">{{ data.summary.totalPending }}</div>
         <div class="card-label">Tong cho duyet</div>
       </div>
-      <div class="card payroll" (click)="activeTab = 'payroll'">
+      <div class="card payroll" (click)="activeTab = 'payroll'" data-testid="pending-summary-payroll">
         <div class="card-number">{{ data.summary.pendingPayrolls }}</div>
         <div class="card-label">Bang luong</div>
       </div>
-      <div class="card invoice" (click)="activeTab = 'invoices'">
+      <div class="card invoice" (click)="activeTab = 'invoices'" data-testid="pending-summary-invoices">
         <div class="card-number">{{ data.summary.pendingInvoices }}</div>
         <div class="card-label">Hoa don</div>
       </div>
-      <div class="card topup" (click)="activeTab = 'topups'">
+      <div class="card topup" (click)="activeTab = 'topups'" data-testid="pending-summary-topups">
         <div class="card-number">{{ data.summary.pendingTopUps }}</div>
         <div class="card-label">Nap vi</div>
       </div>
-      <div class="card teacher" (click)="activeTab = 'teachers'">
+      <div class="card teacher" (click)="activeTab = 'teachers'" data-testid="pending-summary-teachers">
         <div class="card-number">{{ data.summary.pendingTeachers }}</div>
         <div class="card-label">Giao vien moi</div>
       </div>
-      <div class="card class-update" (click)="activeTab = 'classes'">
+      <div class="card class-update" (click)="activeTab = 'classes'" data-testid="pending-summary-classes">
         <div class="card-number">{{ data.summary.pendingClassUpdates }}</div>
         <div class="card-label">Sua lop hoc</div>
       </div>
-      <div class="card session-change" (click)="activeTab = 'session-changes'">
+      <div class="card session-change" (click)="activeTab = 'session-changes'" data-testid="pending-summary-session-changes">
         <div class="card-number">{{ data.summary.pendingSessionChangeRequests }}</div>
         <div class="card-label">Doi buoi hoc</div>
       </div>
-      <div class="card ticket" (click)="activeTab = 'tickets'">
+      <div class="card ticket" (click)="activeTab = 'tickets'" data-testid="pending-summary-tickets">
         <div class="card-number">{{ data.summary.openTickets }}</div>
         <div class="card-label">Ticket mo</div>
       </div>
     </div>
 
-    <div class="tabs">
-      <button [class.active]="activeTab === 'payroll'" (click)="activeTab = 'payroll'">
+    <div class="tabs" data-testid="pending-tabs">
+      <button [class.active]="activeTab === 'payroll'" (click)="activeTab = 'payroll'" data-testid="pending-tab-payroll">
         Bang luong <span class="badge" *ngIf="data?.summary?.pendingPayrolls">{{ data.summary.pendingPayrolls }}</span>
       </button>
-      <button [class.active]="activeTab === 'invoices'" (click)="activeTab = 'invoices'">
+      <button [class.active]="activeTab === 'invoices'" (click)="activeTab = 'invoices'" data-testid="pending-tab-invoices">
         Hoa don <span class="badge" *ngIf="data?.summary?.pendingInvoices">{{ data.summary.pendingInvoices }}</span>
       </button>
-      <button [class.active]="activeTab === 'topups'" (click)="activeTab = 'topups'">
+      <button [class.active]="activeTab === 'topups'" (click)="activeTab = 'topups'" data-testid="pending-tab-topups">
         Nap vi <span class="badge" *ngIf="data?.summary?.pendingTopUps">{{ data.summary.pendingTopUps }}</span>
       </button>
-      <button [class.active]="activeTab === 'teachers'" (click)="activeTab = 'teachers'">
+      <button [class.active]="activeTab === 'teachers'" (click)="activeTab = 'teachers'" data-testid="pending-tab-teachers">
         Giao vien <span class="badge" *ngIf="data?.summary?.pendingTeachers">{{ data.summary.pendingTeachers }}</span>
       </button>
-      <button [class.active]="activeTab === 'classes'" (click)="activeTab = 'classes'">
+      <button [class.active]="activeTab === 'classes'" (click)="activeTab = 'classes'" data-testid="pending-tab-classes">
         Sua lop <span class="badge" *ngIf="data?.summary?.pendingClassUpdates">{{ data.summary.pendingClassUpdates }}</span>
       </button>
-      <button [class.active]="activeTab === 'session-changes'" (click)="activeTab = 'session-changes'">
+      <button [class.active]="activeTab === 'session-changes'" (click)="activeTab = 'session-changes'" data-testid="pending-tab-session-changes">
         Doi buoi hoc <span class="badge" *ngIf="data?.summary?.pendingSessionChangeRequests">{{ data.summary.pendingSessionChangeRequests }}</span>
       </button>
     </div>
 
-    <div *ngIf="activeTab === 'payroll'" class="tab-content">
-      <div *ngIf="!data?.payrolls?.length" class="empty">Khong co bang luong cho duyet</div>
-      <table *ngIf="data?.payrolls?.length" class="data-table">
+    <div *ngIf="activeTab === 'payroll'" class="tab-content" data-testid="pending-content-payroll">
+      <div *ngIf="!data?.payrolls?.length" class="empty" data-testid="pending-empty-payroll">Khong co bang luong cho duyet</div>
+      <table *ngIf="data?.payrolls?.length" class="data-table" data-testid="pending-table-payroll">
         <thead>
           <tr>
             <th>Ma luong</th>
@@ -102,9 +102,9 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
       </table>
     </div>
 
-    <div *ngIf="activeTab === 'invoices'" class="tab-content">
-      <div *ngIf="!data?.invoices?.length" class="empty">Khong co hoa don cho duyet</div>
-      <table *ngIf="data?.invoices?.length" class="data-table">
+    <div *ngIf="activeTab === 'invoices'" class="tab-content" data-testid="pending-content-invoices">
+      <div *ngIf="!data?.invoices?.length" class="empty" data-testid="pending-empty-invoices">Khong co hoa don cho duyet</div>
+      <table *ngIf="data?.invoices?.length" class="data-table" data-testid="pending-table-invoices">
         <thead>
           <tr>
             <th>So hoa don</th>
@@ -128,9 +128,9 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
       </table>
     </div>
 
-    <div *ngIf="activeTab === 'topups'" class="tab-content">
-      <div *ngIf="!data?.topUps?.length" class="empty">Khong co yeu cau nap vi cho duyet</div>
-      <table *ngIf="data?.topUps?.length" class="data-table">
+    <div *ngIf="activeTab === 'topups'" class="tab-content" data-testid="pending-content-topups">
+      <div *ngIf="!data?.topUps?.length" class="empty" data-testid="pending-empty-topups">Khong co yeu cau nap vi cho duyet</div>
+      <table *ngIf="data?.topUps?.length" class="data-table" data-testid="pending-table-topups">
         <thead>
           <tr>
             <th>Nguoi dung</th>
@@ -154,9 +154,9 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
       </table>
     </div>
 
-    <div *ngIf="activeTab === 'teachers'" class="tab-content">
-      <div *ngIf="!data?.teachers?.length" class="empty">Khong co giao vien cho duyet</div>
-      <table *ngIf="data?.teachers?.length" class="data-table">
+    <div *ngIf="activeTab === 'teachers'" class="tab-content" data-testid="pending-content-teachers">
+      <div *ngIf="!data?.teachers?.length" class="empty" data-testid="pending-empty-teachers">Khong co giao vien cho duyet</div>
+      <table *ngIf="data?.teachers?.length" class="data-table" data-testid="pending-table-teachers">
         <thead>
           <tr>
             <th>Ho ten</th>
@@ -178,9 +178,9 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
       </table>
     </div>
 
-    <div *ngIf="activeTab === 'classes'" class="tab-content">
-      <div *ngIf="!data?.classes?.length" class="empty">Khong co yeu cau sua lop cho duyet</div>
-      <table *ngIf="data?.classes?.length" class="data-table">
+    <div *ngIf="activeTab === 'classes'" class="tab-content" data-testid="pending-content-classes">
+      <div *ngIf="!data?.classes?.length" class="empty" data-testid="pending-empty-classes">Khong co yeu cau sua lop cho duyet</div>
+      <table *ngIf="data?.classes?.length" class="data-table" data-testid="pending-table-classes">
         <thead>
           <tr>
             <th>Lop</th>
@@ -192,7 +192,7 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let classItem of data.classes">
+          <tr *ngFor="let classItem of data.classes" [attr.data-testid]="'pending-class-row-' + classItem._id">
             <td>
               <strong>{{ classItem.code }}</strong>
               <div>{{ classItem.name }}</div>
@@ -213,14 +213,14 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
                 </span>
               </ng-template>
 
-              <div class="duration-preview" *ngIf="classItem.pendingSaleUpdate?.durationPreview as preview">
-                <div class="duration-preview-head">
+              <div class="duration-preview" *ngIf="classItem.pendingSaleUpdate?.durationPreview as preview" [attr.data-testid]="'pending-class-duration-preview-' + classItem._id">
+                <div class="duration-preview-head" [attr.data-testid]="'pending-class-duration-preview-head-' + classItem._id">
                   <strong>Thoi luong:</strong>
                   {{ preview.oldBaseDuration }} / {{ preview.oldSessionDuration }} phut
                   ->
                   {{ preview.newBaseDuration }} / {{ preview.newSessionDuration }} phut
                 </div>
-                <div class="duration-preview-student" *ngFor="let student of preview.students">
+                <div class="duration-preview-student" *ngFor="let student of preview.students; let studentIndex = index" [attr.data-testid]="'pending-class-duration-preview-student-' + classItem._id + '-' + studentIndex">
                   <strong>
                     {{ student.studentName || 'Hoc sinh' }}
                     <span *ngIf="student.studentCode">({{ student.studentCode }})</span>
@@ -255,11 +255,19 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
             </td>
             <td class="action-buttons">
               <ng-container *ngIf="canReviewClassUpdate(classItem); else directorOnlyReview">
-                <button type="button" class="btn-approve" (click)="approveClassUpdate(classItem)">Phe duyet</button>
-                <button type="button" class="btn-reject" (click)="rejectClassUpdate(classItem)">Tu choi</button>
+                <button
+                  type="button"
+                  class="btn-approve"
+                  (click)="approveClassUpdate(classItem)"
+                  [attr.data-testid]="'pending-class-approve-' + classItem._id">Phe duyet</button>
+                <button
+                  type="button"
+                  class="btn-reject"
+                  (click)="rejectClassUpdate(classItem)"
+                  [attr.data-testid]="'pending-class-reject-' + classItem._id">Tu choi</button>
               </ng-container>
               <ng-template #directorOnlyReview>
-                <span class="review-note">{{ getReviewNotice(classItem) }}</span>
+                <span class="review-note" [attr.data-testid]="'pending-class-review-note-' + classItem._id">{{ getReviewNotice(classItem) }}</span>
               </ng-template>
             </td>
           </tr>
@@ -267,9 +275,9 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
       </table>
     </div>
 
-    <div *ngIf="activeTab === 'session-changes'" class="tab-content">
-      <div *ngIf="!data?.sessionChanges?.length" class="empty">Khong co yeu cau doi buoi hoc cho duyet</div>
-      <table *ngIf="data?.sessionChanges?.length" class="data-table">
+    <div *ngIf="activeTab === 'session-changes'" class="tab-content" data-testid="pending-content-session-changes">
+      <div *ngIf="!data?.sessionChanges?.length" class="empty" data-testid="pending-empty-session-changes">Khong co yeu cau doi buoi hoc cho duyet</div>
+      <table *ngIf="data?.sessionChanges?.length" class="data-table" data-testid="pending-table-session-changes">
         <thead>
           <tr>
             <th>Buoi hoc</th>
@@ -281,7 +289,7 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let request of data.sessionChanges">
+          <tr *ngFor="let request of data.sessionChanges" [attr.data-testid]="'pending-session-change-row-' + request._id">
             <td>
               <strong>{{ request.classId?.code || 'N/A' }}</strong>
               <div>{{ formatDate(request.sessionId?.scheduledDate) }} {{ request.sessionId?.scheduledStartTime || '' }}</div>
@@ -295,6 +303,12 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
               <div>{{ formatDate(request.requestedAt) }}</div>
             </td>
             <td>
+              <div *ngIf="request.requestedScheduledDate || request.requestedStartTime || request.requestedEndTime">
+                Lich hoc:
+                {{ formatDate(request.sessionId?.scheduledDate) }} {{ request.sessionId?.scheduledStartTime || '' }} {{ request.sessionId?.scheduledEndTime ? ('- ' + request.sessionId?.scheduledEndTime) : '' }}
+                ->
+                {{ formatDate(request.requestedScheduledDate || request.sessionId?.scheduledDate) }} {{ request.requestedStartTime || request.sessionId?.scheduledStartTime || '' }} {{ request.requestedEndTime ? ('- ' + request.requestedEndTime) : ((request.sessionId?.scheduledEndTime ? ('- ' + request.sessionId?.scheduledEndTime) : '')) }}
+              </div>
               <div *ngIf="request.requestedTeacherId">GV moi: {{ request.requestedTeacherId.fullName }}</div>
               <div *ngIf="request.requestedDurationMinutes">Thoi luong: {{ request.currentDurationMinutes }} -> {{ request.requestedDurationMinutes }} phut</div>
               <div>{{ request.reason }}</div>
@@ -305,16 +319,24 @@ import { SessionChangeRequestItem, SessionService } from '../services/session.se
               <div *ngIf="request.financialImpact.note" class="review-note">{{ request.financialImpact.note }}</div>
             </td>
             <td class="action-buttons">
-              <button type="button" class="btn-approve" (click)="approveSessionChange(request)">Phe duyet</button>
-              <button type="button" class="btn-reject" (click)="rejectSessionChange(request)">Tu choi</button>
+              <button
+                type="button"
+                class="btn-approve"
+                (click)="approveSessionChange(request)"
+                [attr.data-testid]="'pending-session-change-approve-' + request._id">Phe duyet</button>
+              <button
+                type="button"
+                class="btn-reject"
+                (click)="rejectSessionChange(request)"
+                [attr.data-testid]="'pending-session-change-reject-' + request._id">Tu choi</button>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div *ngIf="loading" class="loading">Dang tai...</div>
-    <div *ngIf="error" class="error">{{ error }}</div>
+    <div *ngIf="loading" class="loading" data-testid="pending-loading">Dang tai...</div>
+    <div *ngIf="error" class="error" data-testid="pending-error">{{ error }}</div>
   </div>
   `,
   styles: [`

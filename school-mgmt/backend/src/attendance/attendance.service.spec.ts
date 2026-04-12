@@ -1,324 +1,204 @@
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { AttendanceService } from './attendance.service';
-import { Role } from '../common/interfaces/role.enum';
+import { AttendanceStatus } from './schemas/attendance.schema';
 import { ClassMode } from '../classes/schemas/class.schema';
-import { WalletStatus } from '../wallets/schemas/wallet.schema';
+import { Role } from '../common/interfaces/role.enum';
 
 function buildLeanQuery<T>(value: T) {
   return {
-    session: jest.fn().mockReturnThis(),
-    select: jest.fn().mockReturnThis(),
-    sort: jest.fn().mockReturnThis(),
-    populate: jest.fn().mockReturnThis(),
     lean: jest.fn().mockResolvedValue(value),
+    populate: jest.fn().mockReturnThis(),
   } as any;
 }
 
-describe('AttendanceService historical resolution', () => {
-  let service: AttendanceService;
+function buildService(overrides: Partial<{
+  attendanceModel: any;
+  classModel: any;
+  connection: any;
+  classesService: any;
+  sessionBridgeService: any;
+  queryService: any;
+  linkService: any;
+}> = {}) {
+  const sessionBridgeService =
+    overrides.sessionBridgeService ?? {
+      processOneStudent: jest.fn(),
+      clearAttendanceRecord: jest.fn(),
+      recomputeOfflineTeacherPayoutForDay: jest.fn(),
+      findFinalizedSessionForAttendance: jest.fn(),
+      syncSessionForAttendance: jest.fn(),
+      cancelLinkedSession: jest.fn(),
+    };
+  const connection =
+    overrides.connection ?? {
+      startSession: jest.fn().mockResolvedValue({
+        startTransaction: jest.fn(),
+        commitTransaction: jest.fn().mockResolvedValue(undefined),
+        abortTransaction: jest.fn().mockResolvedValue(undefined),
+        endSession: jest.fn().mockResolvedValue(undefined),
+        inTransaction: jest.fn().mockReturnValue(true),
+      }),
+    };
 
-  beforeEach(() => {
-    service = new AttendanceService(
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-      {} as any,
-    );
-  });
-
-  const classroom = {
-    _id: 'class-1',
-    teacher: 'teacher-b',
-    students: ['student-1'],
-    substituteTeachers: [],
-    durationSnapshots: [
-      {
-        effectiveAt: new Date('2026-03-01T00:00:00.000Z'),
-        baseDuration: 70,
-        sessionDuration: 70,
-        pricePerSession: 200000,
-        teacherPayPerSession: 80000,
-        teacherPayPerStudent: 0,
-      },
-      {
-        effectiveAt: new Date('2026-03-20T00:00:00.000Z'),
-        baseDuration: 70,
-        sessionDuration: 90,
-        pricePerSession: 200000,
-        teacherPayPerSession: 80000,
-        teacherPayPerStudent: 0,
-      },
-    ],
-    studentConfigs: [
-      {
-        studentId: 'student-1',
-        teacherSlots: [
-          {
-            slotIndex: 1,
-            teacherId: 'teacher-a',
-            assignedAt: new Date('2026-03-01T00:00:00.000Z'),
-          },
-          {
-            slotIndex: 2,
-            teacherId: 'teacher-b',
-            assignedAt: new Date('2026-03-20T00:00:00.000Z'),
-          },
-        ],
-        durationSlots: [
-          {
-            slotIndex: 1,
-            baseDuration: 70,
-            sessionDuration: 70,
-            totalSessions: 10,
-            effectiveAt: new Date('2026-03-01T00:00:00.000Z'),
-          },
-          {
-            slotIndex: 2,
-            baseDuration: 70,
-            sessionDuration: 90,
-            totalSessions: 8,
-            effectiveAt: new Date('2026-03-20T00:00:00.000Z'),
-          },
-        ],
-      },
-    ],
+  return {
+    service: new AttendanceService(
+      overrides.attendanceModel ?? ({} as any),
+      overrides.classModel ?? ({} as any),
+      connection as any,
+      overrides.classesService ?? ({} as any),
+      sessionBridgeService as any,
+      overrides.queryService ?? ({} as any),
+      overrides.linkService ?? ({} as any),
+    ),
+    sessionBridgeService,
+    connection,
   };
+}
 
-  it('allows the old teacher on old attendance dates and blocks the new teacher', () => {
-    expect(() =>
-      (service as any).assertClassAccess(
-        classroom,
-        { role: Role.TEACHER, sub: 'teacher-a' },
-        new Date('2026-03-19T12:00:00.000Z'),
-      ),
-    ).not.toThrow();
-
-    expect(() =>
-      (service as any).assertClassAccess(
-        classroom,
-        { role: Role.TEACHER, sub: 'teacher-b' },
-        new Date('2026-03-19T12:00:00.000Z'),
-      ),
-    ).toThrow(ForbiddenException);
-
-    expect(() =>
-      (service as any).assertClassAccess(
-        classroom,
-        { role: Role.TEACHER, sub: 'teacher-b' },
-        new Date('2026-03-21T12:00:00.000Z'),
-      ),
-    ).not.toThrow();
+describe('AttendanceService', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
-  it('resolves historical tuition, session duration, and teacher payout from the effective snapshot', async () => {
-    await expect(
-      (service as any).resolveAmountCharged(
-        'student-1',
-        'class-1',
-        70,
-        classroom,
-        new Date('2026-03-19T12:00:00.000Z'),
-      ),
-    ).resolves.toBe(200000);
+  it('routes counted attendance through the session bridge service', async () => {
+    const classId = new Types.ObjectId().toHexString();
+    const studentId = new Types.ObjectId().toHexString();
+    const teacherId = new Types.ObjectId().toHexString();
+    const directorId = new Types.ObjectId().toHexString();
+    const attendanceId = new Types.ObjectId().toHexString();
 
-    await expect(
-      (service as any).resolveAmountCharged(
-        'student-1',
-        'class-1',
-        90,
-        classroom,
-        new Date('2026-03-21T12:00:00.000Z'),
-      ),
-    ).resolves.toBe(257000);
-
-    expect(
-      (service as any).resolveSessionDurationForDate(
-        classroom,
-        'student-1',
-        new Date('2026-03-19T12:00:00.000Z'),
-      ),
-    ).toBe(70);
-
-    expect(
-      (service as any).resolveSessionDurationForDate(
-        classroom,
-        'student-1',
-        new Date('2026-03-21T12:00:00.000Z'),
-      ),
-    ).toBe(90);
-
-    expect(
-      (service as any).resolveTeacherPayout(
-        70,
-        classroom,
-        new Date('2026-03-19T12:00:00.000Z'),
-      ),
-    ).toBe(80000);
-
-    expect(
-      (service as any).resolveTeacherPayout(
-        90,
-        classroom,
-        new Date('2026-03-21T12:00:00.000Z'),
-      ),
-    ).toBe(102000);
-  });
-});
-
-describe('AttendanceService attendance financial guard', () => {
-  let service: AttendanceService;
-  let invoiceModel: { find: jest.Mock; findOne: jest.Mock };
-  let studentModel: { findById: jest.Mock };
-  let trialEnrollmentModel: { findOne: jest.Mock };
-  let walletModel: { findOne: jest.Mock };
-
-  const classId = new Types.ObjectId();
-  const studentId = new Types.ObjectId();
-  const parentUserId = new Types.ObjectId();
-  const date = new Date('2026-04-01T09:00:00.000Z');
-  const classroom = {
-    _id: classId,
-    classMode: ClassMode.ONLINE,
-    pricePerSession: 200000,
-    teacherPayPerSession: 80000,
-    students: [studentId],
-    substituteTeachers: [],
-    durationSnapshots: [],
-    studentConfigs: [],
-  } as any;
-
-  beforeEach(() => {
-    invoiceModel = {
-      find: jest.fn(() => buildLeanQuery([])),
-      findOne: jest.fn(() => buildLeanQuery(null)),
-    };
-    studentModel = {
-      findById: jest.fn(() => buildLeanQuery({ parentUserId })),
-    };
-    trialEnrollmentModel = {
-      findOne: jest.fn(() => buildLeanQuery(null)),
-    };
-    walletModel = {
-      findOne: jest.fn(() =>
+    const attendanceModel = {
+      findById: jest.fn().mockReturnValue(
         buildLeanQuery({
-          balance: 0,
-          debtLimit: 0,
-          trialDebtSessions: 2,
-          status: WalletStatus.ACTIVE,
+          _id: attendanceId,
+          status: AttendanceStatus.PRESENT,
+          studentId,
+          classId,
+          sessionId: new Types.ObjectId(),
         }),
       ),
     };
+    const classModel = {
+      findById: jest.fn().mockReturnValue(
+        buildLeanQuery({
+          _id: new Types.ObjectId(classId),
+          teacher: new Types.ObjectId(teacherId),
+          classMode: ClassMode.ONLINE,
+          students: [new Types.ObjectId(studentId)],
+          substituteTeachers: [],
+        }),
+      ),
+    };
+    const { service, sessionBridgeService } = buildService({
+      attendanceModel,
+      classModel,
+    });
+    sessionBridgeService.processOneStudent.mockResolvedValue({
+      attendance: { _id: attendanceId },
+      sessionCreated: true,
+    });
+    attendanceModel.findById.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({
+        _id: attendanceId,
+        status: AttendanceStatus.PRESENT,
+        studentId: new Types.ObjectId(studentId),
+        classId: new Types.ObjectId(classId),
+      }),
+    });
 
-    service = new AttendanceService(
-      {} as any,
-      {} as any,
-      studentModel as any,
-      {} as any,
-      invoiceModel as any,
-      trialEnrollmentModel as any,
-      walletModel as any,
-      {} as any,
-      {} as any,
-    );
-
-    jest.spyOn(service as any, 'resolveAmountCharged').mockResolvedValue(200000);
-  });
-
-  it('allows offline trial attendance without checking invoices or wallet', async () => {
-    trialEnrollmentModel.findOne.mockReturnValueOnce(
-      buildLeanQuery({ _id: new Types.ObjectId() }),
-    );
-
-    await expect(
-      (service as any).assertAttendanceFinancialEligibility({
+    const result = await service.markAttendance(
+      {
         classId,
         studentId,
-        date,
-        classroom: { ...classroom, classMode: ClassMode.OFFLINE },
-      }),
-    ).resolves.toBeUndefined();
+        date: '2026-04-09',
+        status: AttendanceStatus.PRESENT,
+        notes: 'ok',
+      } as any,
+      { role: Role.DIRECTOR, sub: directorId } as any,
+    );
 
-    expect(invoiceModel.find).not.toHaveBeenCalled();
-    expect(walletModel.findOne).not.toHaveBeenCalled();
-  });
-
-  it('blocks counted attendance when the student has no remaining paid or bonus sessions', async () => {
-    invoiceModel.find.mockImplementation(() => buildLeanQuery([]));
-
-    await expect(
-      (service as any).assertAttendanceFinancialEligibility({
+    expect(sessionBridgeService.processOneStudent).toHaveBeenCalledWith(
+      expect.objectContaining({
         classId,
         studentId,
-        date,
-        classroom,
+        status: AttendanceStatus.PRESENT,
+        notes: 'ok',
+        checkedBy: expect.any(Types.ObjectId),
       }),
-    ).rejects.toThrow('Hoc sinh khong du buoi hoc con lai');
-
-    expect(walletModel.findOne).not.toHaveBeenCalled();
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        _id: attendanceId,
+        sessionCreated: true,
+      }),
+    );
   });
 
-  it('allows counted attendance when bonus sessions fully cover the lesson', async () => {
-    invoiceModel.find.mockImplementation((query: any) => {
-      if (query?.sessionsRemaining) {
-        return buildLeanQuery([]);
-      }
-      if (query?.bonusSessionsRemaining) {
-        return buildLeanQuery([
-          {
-            pricePerSession: 200000,
-            bonusSessionsRemaining: 1,
-          },
-        ]);
-      }
-      return buildLeanQuery([]);
+  it('aborts an update when the attendance is already linked to a finalized session', async () => {
+    const classId = new Types.ObjectId();
+    const studentId = new Types.ObjectId();
+    const attendanceId = new Types.ObjectId().toHexString();
+    const teacherId = new Types.ObjectId().toHexString();
+    const mongoSession = {
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      abortTransaction: jest.fn().mockResolvedValue(undefined),
+      endSession: jest.fn().mockResolvedValue(undefined),
+      inTransaction: jest.fn().mockReturnValue(true),
+    };
+    const attendanceDoc = {
+      _id: attendanceId,
+      classId,
+      studentId,
+      date: new Date('2026-04-09T00:00:00.000Z'),
+      status: AttendanceStatus.PRESENT,
+      sessionId: new Types.ObjectId(),
+      save: jest.fn().mockResolvedValue(undefined),
+      session: jest.fn().mockResolvedValue(undefined),
+    };
+    const attendanceModel = {
+      findById: jest.fn().mockReturnValue({
+        session: jest.fn().mockResolvedValue(attendanceDoc),
+      }),
+    };
+    const classModel = {
+      findById: jest.fn().mockReturnValue(
+        buildLeanQuery({
+          _id: classId,
+          teacher: teacherId,
+          classMode: ClassMode.ONLINE,
+          students: [studentId],
+          substituteTeachers: [],
+        }),
+      ),
+    };
+    const { service, sessionBridgeService, connection } = buildService({
+      attendanceModel,
+      classModel,
+      connection: {
+        startSession: jest.fn().mockResolvedValue(mongoSession),
+      },
+    });
+    sessionBridgeService.findFinalizedSessionForAttendance.mockResolvedValue({
+      _id: new Types.ObjectId(),
     });
 
     await expect(
-      (service as any).assertAttendanceFinancialEligibility({
-        classId,
-        studentId,
-        date,
-        classroom,
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(walletModel.findOne).not.toHaveBeenCalled();
-  });
-
-  it('blocks counted attendance when paid coverage exists but the wallet is below the debt limit', async () => {
-    invoiceModel.find.mockImplementation((query: any) => {
-      if (query?.sessionsRemaining) {
-        return buildLeanQuery([
-          {
-            pricePerSession: 200000,
-            sessionsRemaining: 2,
-          },
-        ]);
-      }
-      return buildLeanQuery([]);
-    });
-    walletModel.findOne.mockReturnValueOnce(
-      buildLeanQuery({
-        balance: -250000,
-        debtLimit: 0,
-        trialDebtSessions: 1,
-        status: WalletStatus.ACTIVE,
-      }),
+      service.updateAttendance(attendanceId, { status: AttendanceStatus.ABSENT } as any, {
+        role: Role.DIRECTOR,
+        sub: new Types.ObjectId().toHexString(),
+      } as any),
+    ).rejects.toThrow(
+      new BadRequestException(
+        'Buoi hoc da duoc xac nhan hoan thanh (FINALIZED). Khong the thay doi diem danh.',
+      ),
     );
 
-    await expect(
-      (service as any).assertAttendanceFinancialEligibility({
-        classId,
-        studentId,
-        date,
-        classroom,
-      }),
-    ).rejects.toThrow('Vi phu huynh khong du so du');
+    expect(connection.startSession).toHaveBeenCalledTimes(1);
+    expect(mongoSession.abortTransaction).toHaveBeenCalledTimes(1);
+    expect(mongoSession.endSession).toHaveBeenCalledTimes(1);
+    expect(attendanceDoc.save).not.toHaveBeenCalled();
   });
 });

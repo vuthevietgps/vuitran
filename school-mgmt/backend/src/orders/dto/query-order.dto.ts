@@ -1,4 +1,5 @@
-import { IsOptional, IsString, IsEnum } from 'class-validator';
+import { IsOptional, IsString, IsEnum, IsInt, Min, Max } from 'class-validator';
+import { Type } from 'class-transformer';
 import { OrderStatus, OrderType } from '../schemas/order.schema';
 
 export class QueryOrderDto {
@@ -25,4 +26,17 @@ export class QueryOrderDto {
   @IsString()
   @IsOptional()
   toDate?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  page?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  @IsOptional()
+  limit?: number;
 }

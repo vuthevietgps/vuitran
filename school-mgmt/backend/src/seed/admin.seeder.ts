@@ -40,12 +40,20 @@ export class AdminSeeder implements OnModuleInit {
       { email: 'director.demo@school.local', fullName: 'Giam doc Demo', role: Role.DIRECTOR, userCode: 'GD_DEMO' },
       { email: 'accounting.demo@school.local', fullName: 'Ke toan Demo', role: Role.ACCOUNTING, userCode: 'KT_DEMO' },
       { email: 'ops.demo@school.local', fullName: 'Van hanh Demo', role: Role.OPS, userCode: 'OPS_DEMO' },
+      { email: 'sale.demo@school.local', fullName: 'Sale Demo', role: Role.SALE, userCode: 'SALE_DEMO' },
+      { email: 'ads.demo@school.local', fullName: 'Ads Manager Demo', role: Role.ADSMANAGER, userCode: 'ADS_DEMO' },
+      { email: 'shareholder.demo@school.local', fullName: 'Shareholder Demo', role: Role.SHAREHOLDER, userCode: 'SH_DEMO' },
       { email: 'teacher.demo@school.local', fullName: 'Giao vien Demo', role: Role.TEACHER, userCode: 'GV_DEMO' },
       { email: 'parent.demo@school.local', fullName: 'Phu huynh Demo', role: Role.PARENT, userCode: 'PH_DEMO' },
     ];
 
     for (const demo of demoUsers) {
-      const existing = await this.userModel.findOne({ email: demo.email }).exec();
+      const existing = await this.userModel.findOne({
+        $or: [
+          { email: demo.email },
+          { userCode: demo.userCode },
+        ],
+      }).exec();
       if (existing) {
         if (!syncExisting) {
           this.logger.log(`Demo account already exists: ${demo.email}`);
@@ -57,6 +65,7 @@ export class AdminSeeder implements OnModuleInit {
           : false;
 
         const needsProfileSync =
+          existing.email !== demo.email ||
           existing.fullName !== demo.fullName ||
           existing.userCode !== demo.userCode ||
           existing.role !== demo.role ||
@@ -75,6 +84,7 @@ export class AdminSeeder implements OnModuleInit {
           { _id: existing._id },
           {
             $set: {
+              email: demo.email,
               fullName: demo.fullName,
               userCode: demo.userCode,
               role: demo.role,

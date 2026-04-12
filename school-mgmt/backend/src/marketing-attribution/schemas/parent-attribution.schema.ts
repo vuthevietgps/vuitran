@@ -24,6 +24,68 @@ export enum ParentAttributionSourceType {
   SYSTEM = 'SYSTEM',
 }
 
+@Schema({ _id: false })
+export class ParentAttributionTouchpoint {
+  @Prop({ type: Date, default: Date.now })
+  capturedAt!: Date;
+
+  @Prop({ type: Date })
+  firstTouchedAt?: Date;
+
+  @Prop({ type: Date })
+  lastConfirmedAt?: Date;
+
+  @Prop({ type: String, enum: Object.values(ParentAttributionModel) })
+  attributionModel?: string;
+
+  @Prop({ type: String, enum: Object.values(ParentAttributionSourceType), required: true })
+  sourceType!: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  parentUserId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  parentPhone?: string;
+
+  @Prop({ type: String, trim: true })
+  normalizedParentPhone?: string;
+
+  @Prop({ type: String, trim: true })
+  parentEmail?: string;
+
+  @Prop({ type: String, trim: true })
+  normalizedParentEmail?: string;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'AdGroup' })
+  adGroupId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  adGroupName?: string;
+
+  @Prop({ type: String, trim: true })
+  platform?: string;
+
+  @Prop({ type: String, trim: true })
+  adRefParam?: string;
+
+  @Prop({ type: TrackingAttributionSchema })
+  tracking?: TrackingAttribution;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Conversation' })
+  sourceConversationId?: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Lead' })
+  sourceLeadId?: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Order' })
+  sourceOrderId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  notes?: string;
+}
+
+export const ParentAttributionTouchpointSchema = SchemaFactory.createForClass(ParentAttributionTouchpoint);
+
 @Schema({ timestamps: true })
 export class ParentAttribution {
   @Prop({ required: true, trim: true, unique: true })
@@ -99,6 +161,9 @@ export class ParentAttribution {
 
   @Prop({ type: String, trim: true })
   notes?: string;
+
+  @Prop({ type: [ParentAttributionTouchpointSchema], default: [] })
+  touchpoints?: ParentAttributionTouchpoint[];
 }
 
 export const ParentAttributionSchema = SchemaFactory.createForClass(ParentAttribution);

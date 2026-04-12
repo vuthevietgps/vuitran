@@ -70,6 +70,10 @@ export class Invoice {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom', required: false })
   requestedClassId?: Types.ObjectId;
 
+  /** Tự tạo lớp mới khi duyệt hóa đơn nếu sale không chọn lớp có sẵn */
+  @Prop({ type: Boolean, default: false })
+  createNewClassWhenApproved?: boolean;
+
   /** Giáo viên được chọn sẵn từ order, sẽ dùng để auto tạo lớp mới nếu chưa chọn lớp */
   @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: false })
   requestedTeacherId?: Types.ObjectId;

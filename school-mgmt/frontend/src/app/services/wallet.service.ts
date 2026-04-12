@@ -28,6 +28,7 @@ export interface LedgerItem {
   balanceBefore: number;
   balanceAfter: number;
   description?: string;
+  adjustmentReason?: string;
   sessionId?: any;
   classId?: any;
   studentId?: any;
@@ -133,6 +134,20 @@ export class WalletService {
       this.http.post(`${environment.apiBase}/wallets/transfer`, { fromUserId, toUserId, amount, description }, {
         withCredentials: true,
       }),
+    );
+    return true;
+  }
+
+  async adjustWallet(payload: {
+    userId: string;
+    amount: number;
+    direction: 'ADD' | 'SUBTRACT';
+    description: string;
+    reason: string;
+    adjustmentType?: string;
+  }): Promise<boolean> {
+    await firstValueFrom(
+      this.http.post(`${environment.apiBase}/wallets/adjust`, payload, { withCredentials: true }),
     );
     return true;
   }

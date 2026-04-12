@@ -1,11 +1,13 @@
-import { Component, Input, Output, EventEmitter } from '@angular/core';
+﻿import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SessionItem } from '../../services/session.service';
-import { ReportTemplate } from '../../services/report-template.service';
+import {
+  ReportTemplate,
+  ReportTemplateDynamicFieldDefinition,
+} from '../../services/report-template.service';
 import {
   TeachingReportFormComponent,
   ReportFormValues,
-  teachingReportDraftStorageKey,
 } from './teaching-report-form.component';
 
 export interface CompletedMeta {
@@ -15,15 +17,14 @@ export interface CompletedMeta {
   totalPages?: number;
 }
 
+type CompletedReportRow = { label: string; value: string; isUrl?: boolean };
+
 @Component({
   selector: 'app-teaching-report-completed',
   standalone: true,
   imports: [CommonModule, TeachingReportFormComponent],
   template: `
-    <div *ngIf="sessions.length === 0" class="empty">
-      Chưa có buổi học nào đã nộp báo cáo.
-    </div>
-
+    <div *ngIf="sessions.length === 0" class="empty">Chưa có buổi học nào đã nộp báo cáo.</div>
     <div *ngFor="let s of sessions; trackBy: trackById" class="session-card completed">
       <div class="session-header" (click)="toggleView(s)">
         <div class="session-info">
@@ -40,46 +41,29 @@ export interface CompletedMeta {
           <span *ngIf="teacherView" class="divider">|</span>
           <span *ngIf="teacherView">Lương: {{ formatCurrency(s.teacherPayout) }}</span>
         </div>
-        <button class="btn-expand" type="button">
-          {{ viewingId === s._id ? '▲ Thu gọn' : '▼ Xem' }}
-        </button>
+        <button class="btn-expand" type="button">{{ viewingId === s._id ? '▲ Thu gọn' : '▼ Xem' }}</button>
       </div>
 
-      <!-- Read-only view -->
       <div *ngIf="viewingId === s._id && editingId !== s._id" class="report-view">
         <table class="report-table">
-          <tr><th>Nội dung học</th><td>{{ s.teachingReport?.lessonContent || '—' }}</td></tr>
-          <tr><th>Thái độ HS</th><td>{{ s.teachingReport?.studentAttitude || '—' }}</td></tr>
-          <tr>
-            <th>Link ghi hình</th>
+          <tr *ngFor="let row of reportRows(s)">
+            <th>{{ row.label }}</th>
             <td>
-              <a *ngIf="s.teachingReport?.recordingUrl"
-                 [href]="sanitizeUrl(s.teachingReport!.recordingUrl!)"
-                 target="_blank" rel="noopener noreferrer">
-                {{ s.teachingReport?.recordingUrl }}
-              </a>
-              <span *ngIf="!s.teachingReport?.recordingUrl">—</span>
+              <a *ngIf="row.isUrl && row.value !== '—'" [href]="sanitizeUrl(row.value)" target="_blank" rel="noopener noreferrer">{{ row.value }}</a>
+              <span *ngIf="!row.isUrl || row.value === '—'">{{ row.value }}</span>
             </td>
           </tr>
-          <tr><th>Nhận xét</th><td>{{ s.teachingReport?.teacherComment || '—' }}</td></tr>
-          <tr><th>Bài tập</th><td>{{ s.teachingReport?.homework || '—' }}</td></tr>
-          <tr><th>Ghi chú</th><td>{{ s.teachingReport?.additionalNotes || '—' }}</td></tr>
           <tr><th>Ngày nộp</th><td>{{ s.teachingReport?.submittedAt | date:'dd/MM/yyyy HH:mm' }}</td></tr>
-          <tr *ngIf="s.teachingReport?.isLateSubmission">
-            <th>Tình trạng</th>
-            <td><span class="badge late-badge">Nộp muộn {{ getLateHours(s) }}h</span></td>
-          </tr>
+          <tr *ngIf="s.teachingReport?.isLateSubmission"><th>Tình trạng</th><td><span class="badge late-badge">Nộp muộn {{ getLateHours(s) }}h</span></td></tr>
         </table>
-        <div class="form-actions" *ngIf="canEdit">
-          <button class="btn secondary" type="button" (click)="startEdit(s)">Sửa báo cáo</button>
-        </div>
+        <div class="form-actions" *ngIf="canEdit"><button class="btn secondary" type="button" (click)="startEdit(s)">Sửa báo cáo</button></div>
       </div>
 
-      <!-- Edit mode -->
       <div *ngIf="canEdit && viewingId === s._id && editingId === s._id" class="report-form-wrapper">
         <app-teaching-report-form
+          [contextClassId]="s.classId._id || ''"
           [initialValues]="editInitialValues"
-          [draftKey]="draftKeyFor(s._id)"
+          [draftStorageKey]="draftStorageKey(s._id)"
           [templates]="templates"
           [submitting]="submitting"
           submitLabel="💾 Cập nhật báo cáo"
@@ -89,7 +73,6 @@ export interface CompletedMeta {
       </div>
     </div>
 
-    <!-- Pagination -->
     <div class="pagination" *ngIf="(meta.totalPages || 0) > 1">
       <button (click)="pageChange.emit((meta.page || 1) - 1)" [disabled]="(meta.page || 1) <= 1">← Trước</button>
       <span>Trang {{ meta.page || 1 }} / {{ meta.totalPages }}</span>
@@ -97,55 +80,7 @@ export interface CompletedMeta {
     </div>
   `,
   styles: [`
-    .empty { text-align: center; padding: 40px; color: #94a3b8; font-size: 15px; }
-    .session-card {
-      background: #fff; border-radius: 10px; margin-bottom: 10px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-left: 4px solid #22c55e; overflow: hidden;
-    }
-    .session-header {
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 14px 18px; cursor: pointer; transition: background 0.15s;
-    }
-    .session-header:hover { background: #f8fafc; }
-    .session-info { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: #475569; }
-    .session-info strong { color: #1e293b; }
-    .divider { color: #cbd5e1; }
-    .badge { padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
-    .badge.success { background: #dcfce7; color: #16a34a; }
-    .badge.late-badge { background: #fee2e2; color: #dc2626; }
-    .btn-expand {
-      padding: 6px 14px; border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
-      cursor: pointer; font-size: 12px; font-weight: 600; color: #475569; white-space: nowrap;
-    }
-    .btn-expand:hover { background: #f1f5f9; }
-    .report-view { padding: 0 18px 18px; }
-    .report-form-wrapper { padding: 0 18px 18px; }
-    .report-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-    .report-table th {
-      text-align: left; padding: 8px 12px; background: #f8fafc;
-      color: #64748b; font-size: 12px; width: 140px; font-weight: 600; white-space: nowrap;
-    }
-    .report-table td { padding: 8px 12px; color: #1e293b; word-break: break-word; }
-    .report-table tr { border-bottom: 1px solid #f1f5f9; }
-    .report-table a { color: #2563eb; text-decoration: none; }
-    .report-table a:hover { text-decoration: underline; }
-    .form-actions { display: flex; gap: 8px; margin-top: 12px; }
-    .btn {
-      padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer;
-      font-size: 14px; font-weight: 600;
-    }
-    .btn.secondary { background: #f1f5f9; color: #475569; }
-    .btn.secondary:hover { background: #e2e8f0; }
-    .pagination { display: flex; gap: 12px; align-items: center; justify-content: center; padding: 20px 0; }
-    .pagination button {
-      padding: 6px 14px; border: 1px solid #cbd5e1; border-radius: 6px;
-      background: #fff; cursor: pointer; font-size: 13px;
-    }
-    .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .pagination span { font-size: 13px; color: #64748b; }
-    @media (max-width: 768px) {
-      .session-header { flex-direction: column; align-items: flex-start; gap: 10px; }
-    }
+    .empty{text-align:center;padding:40px;color:#94a3b8;font-size:15px}.session-card{background:#fff;border-radius:10px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);border-left:4px solid #22c55e;overflow:hidden}.session-header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;cursor:pointer}.session-header:hover{background:#f8fafc}.session-info{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px;color:#475569}.session-info strong{color:#1e293b}.divider{color:#cbd5e1}.badge{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}.badge.success{background:#dcfce7;color:#16a34a}.badge.late-badge{background:#fee2e2;color:#dc2626}.btn-expand{padding:6px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;font-weight:600;color:#475569}.report-view,.report-form-wrapper{padding:0 18px 18px}.report-table{width:100%;border-collapse:collapse;font-size:14px}.report-table th{text-align:left;padding:8px 12px;background:#f8fafc;color:#64748b;font-size:12px;width:160px;font-weight:600;white-space:nowrap}.report-table td{padding:8px 12px;color:#1e293b;word-break:break-word}.report-table tr{border-bottom:1px solid #f1f5f9}.report-table a{color:#2563eb;text-decoration:none}.form-actions{display:flex;gap:8px;margin-top:12px}.btn{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}.btn.secondary{background:#f1f5f9;color:#475569}.pagination{display:flex;gap:12px;align-items:center;justify-content:center;padding:20px 0}.pagination button{padding:6px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;cursor:pointer;font-size:13px}.pagination button:disabled{opacity:.5;cursor:not-allowed}.pagination span{font-size:13px;color:#64748b}@media (max-width:768px){.session-header{flex-direction:column;align-items:flex-start;gap:10px}}
   `],
 })
 export class TeachingReportCompletedComponent {
@@ -162,18 +97,11 @@ export class TeachingReportCompletedComponent {
   editingId = '';
   editInitialValues: ReportFormValues = emptyForm();
 
-  trackById(_: number, item: SessionItem) {
-    return item._id;
-  }
+  trackById(_: number, item: SessionItem) { return item._id; }
 
   toggleView(session: SessionItem) {
-    if (this.viewingId === session._id) {
-      this.viewingId = '';
-      this.editingId = '';
-    } else {
-      this.viewingId = session._id;
-      this.editingId = '';
-    }
+    if (this.viewingId === session._id) { this.viewingId = ''; this.editingId = ''; }
+    else { this.viewingId = session._id; this.editingId = ''; }
   }
 
   startEdit(session: SessionItem) {
@@ -185,6 +113,11 @@ export class TeachingReportCompletedComponent {
       teacherComment: session.teachingReport?.teacherComment || '',
       homework: session.teachingReport?.homework || '',
       additionalNotes: session.teachingReport?.additionalNotes || '',
+      templateId: session.teachingReport?.templateId,
+      templateTitle: session.teachingReport?.templateTitle,
+      templateVersion: session.teachingReport?.templateVersion,
+      dynamicFieldValues: session.teachingReport?.dynamicFieldValues,
+      dynamicFieldSchemaSnapshot: session.teachingReport?.dynamicFieldSchemaSnapshot,
     };
   }
 
@@ -193,16 +126,10 @@ export class TeachingReportCompletedComponent {
     this.editingId = '';
   }
 
-  draftKeyFor(sessionId: string): string {
-    return teachingReportDraftStorageKey(sessionId);
-  }
+  draftStorageKey(sessionId: string): string { return `teaching-report-draft-${sessionId}`; }
 
-  /** Sanitize URL: only allow http/https to prevent javascript: XSS */
   sanitizeUrl(url: string): string {
-    try {
-      const parsed = new URL(url);
-      if (['http:', 'https:'].includes(parsed.protocol)) return url;
-    } catch {}
+    try { const parsed = new URL(url); if (['http:', 'https:'].includes(parsed.protocol)) return url; } catch {}
     return '#';
   }
 
@@ -213,20 +140,41 @@ export class TeachingReportCompletedComponent {
 
   getLateHours(session: SessionItem): number {
     const deadline = new Date(session.scheduledDate).getTime() + 24 * 60 * 60 * 1000;
-    const submitted = session.teachingReport?.submittedAt
-      ? new Date(session.teachingReport.submittedAt).getTime()
-      : Date.now();
+    const submitted = session.teachingReport?.submittedAt ? new Date(session.teachingReport.submittedAt).getTime() : Date.now();
     return Math.max(0, Math.floor((submitted - deadline) / (60 * 60 * 1000)));
+  }
+
+  reportRows(session: SessionItem): CompletedReportRow[] {
+    const teachingReport = session.teachingReport;
+    const dynamicFields = this.normalizeDynamicFields(teachingReport?.dynamicFieldSchemaSnapshot);
+    if (dynamicFields.length > 0) {
+      const values = teachingReport?.dynamicFieldValues || {};
+      return dynamicFields.map((field) => ({ label: field.label, value: this.formatDynamicValue(values[field.key]), isUrl: field.type === 'url' }));
+    }
+    return [
+      { label: 'Nội dung học', value: teachingReport?.lessonContent || '—' },
+      { label: 'Thái độ HS', value: teachingReport?.studentAttitude || '—' },
+      { label: 'Link ghi hình', value: teachingReport?.recordingUrl || '—', isUrl: true },
+      { label: 'Nhận xét', value: teachingReport?.teacherComment || '—' },
+      { label: 'Bài tập', value: teachingReport?.homework || '—' },
+      { label: 'Ghi chú', value: teachingReport?.additionalNotes || '—' },
+    ];
+  }
+
+  private formatDynamicValue(value: unknown): string {
+    if (value === true) return 'Có';
+    if (value === false) return 'Không';
+    if (typeof value === 'number') return String(value);
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    return '—';
+  }
+
+  private normalizeDynamicFields(fields?: ReportTemplateDynamicFieldDefinition[]): ReportTemplateDynamicFieldDefinition[] {
+    if (!Array.isArray(fields)) return [];
+    return fields.map((field) => ({ ...field, key: (field.key || '').trim(), label: (field.label || '').trim() })).filter((field) => field.key && field.label).sort((left, right) => (left.order || 0) - (right.order || 0));
   }
 }
 
 function emptyForm(): ReportFormValues {
-  return {
-    lessonContent: '',
-    studentAttitude: '',
-    recordingUrl: '',
-    teacherComment: '',
-    homework: '',
-    additionalNotes: '',
-  };
+  return { lessonContent: '', studentAttitude: '', recordingUrl: '', teacherComment: '', homework: '', additionalNotes: '' };
 }

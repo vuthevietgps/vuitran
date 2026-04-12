@@ -95,6 +95,31 @@
   border-color: #fecaca;
 }
 
+.dashboard-empty-state {
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.14), transparent 26%),
+    linear-gradient(135deg, #eff6ff 0%, #f8fafc 58%, #ecfeff 100%);
+  border: 1px solid #bfdbfe;
+  border-radius: 24px;
+  padding: 22px;
+  box-shadow: 0 14px 32px rgba(37, 99, 235, 0.08);
+  display: grid;
+  gap: 18px;
+}
+
+.dashboard-empty-copy h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
+  font-size: 24px;
+  letter-spacing: -0.03em;
+}
+
+.dashboard-empty-actions {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 .dashboard-section {
   background: #fff;
   border-radius: 28px;
@@ -226,6 +251,11 @@
   border-radius: 22px;
   padding: 18px;
   min-width: 0;
+}
+
+.parent-learning-empty {
+  display: grid;
+  gap: 16px;
 }
 
 .panel-full {

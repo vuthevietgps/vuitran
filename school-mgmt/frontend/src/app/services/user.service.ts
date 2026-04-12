@@ -11,6 +11,7 @@ export interface UserItem {
   role: string;
   status?: string;
   phone?: string;
+  ownershipPercentage?: number | null;
   saleOwnerId?: string | null;
   saleOwnerName?: string;
   facebookLink?: string;
@@ -44,13 +45,40 @@ export interface CreateUserPayload {
   fullName: string;
   role: string;
   phone?: string;
+  ownershipPercentage?: number;
   facebookLink?: string;
   address?: string;
   saleOwnerId?: string;
   managedSales?: string[];
+  salaryConfig?: CreateUserSalaryConfigPayload;
 }
 
 export type UpdateUserPayload = Partial<CreateUserPayload>;
+
+export interface CreateUserCommissionTierPayload {
+  minRevenue: number;
+  maxRevenue?: number | null;
+  percentage: number;
+}
+
+export interface CreateUserKpiBonusTierPayload {
+  minScore: number;
+  maxScore?: number | null;
+  bonusPercentage: number;
+}
+
+export interface CreateUserSalaryConfigPayload {
+  baseSalary: number;
+  standardHours: number;
+  scheduledStartTime: string;
+  latePenaltyAmount: number;
+  commissionEnabled?: boolean;
+  commissionType?: string;
+  commissionTiers?: CreateUserCommissionTierPayload[];
+  kpiBonusEnabled?: boolean;
+  kpiBonusTiers?: CreateUserKpiBonusTierPayload[];
+  notes?: string;
+}
 
 @Injectable({ providedIn: 'root' })
 export class UserService {

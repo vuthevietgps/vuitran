@@ -27,7 +27,7 @@ import { AuthenticatedRequest } from '../common/interfaces/authenticated-request
 
 @Controller('financial-control')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.DIRECTOR, Role.ACCOUNTING)
+@Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.SHAREHOLDER)
 export class FinancialControlController {
   constructor(private readonly service: FinancialControlService) {}
 
@@ -37,10 +37,15 @@ export class FinancialControlController {
     return this.service.getFinancialDashboard();
   }
 
+  @Get('investor-metrics')
+  getInvestorMetrics(@Query('monthCount') monthCount?: string) {
+    return this.service.getInvestorMetrics(monthCount);
+  }
+
   // ─── Aging Report ───────────────────────────────────────────
   @Get('aging-report')
-  getAgingReport() {
-    return this.service.getAgingReport();
+  getAgingReport(@Req() req: AuthenticatedRequest) {
+    return this.service.getAgingReport(req.user);
   }
 
   // ─── Bank Reconciliation ────────────────────────────────────
@@ -124,11 +129,13 @@ export class FinancialControlController {
   }
 
   @Post('bank-transactions')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   recordBankTransaction(@Body() dto: RecordBankTransactionDto, @Req() req: AuthenticatedRequest) {
     return this.service.recordBankTransaction(dto, req.user);
   }
 
   @Post('bank-transactions/:id/reconcile')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   reconcileTransaction(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.reconcileTransaction(id, req.user);
   }
@@ -168,6 +175,7 @@ export class FinancialControlController {
   }
 
   @Post('fund-transactions')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING)
   recordFundTransaction(@Body() dto: FundTransactionDto, @Req() req: AuthenticatedRequest) {
     return this.service.recordFundTransaction(dto, req.user);
   }

@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { MarketingAttributionService } from './marketing-attribution.service';
+import { Module } from "@nestjs/common";
+import { MongooseModule } from "@nestjs/mongoose";
+import { MarketingAttributionService } from "./marketing-attribution.service";
+import { MarketingAttributionListener } from "./marketing-attribution.listener";
 import {
   ParentAttribution,
   ParentAttributionSchema,
-} from './schemas/parent-attribution.schema';
+} from "./schemas/parent-attribution.schema";
 
 @Module({
   imports: [
@@ -12,7 +13,7 @@ import {
       { name: ParentAttribution.name, schema: ParentAttributionSchema },
     ]),
   ],
-  providers: [MarketingAttributionService],
+  providers: [MarketingAttributionService, MarketingAttributionListener],
   exports: [MarketingAttributionService, MongooseModule],
 })
 export class MarketingAttributionModule {}

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { StudentsService } from './students.service';
+import { StudentOrderService } from './student-order.service';
+import { StudentReportService } from './student-report.service';
 import { StudentsController } from './students.controller';
 import { Student, StudentSchema } from './schemas/student.schema';
 import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.schema';
@@ -21,7 +23,7 @@ import { User, UserSchema } from '../users/schemas/user.schema';
     ]),
   ],
   controllers: [StudentsController],
-  providers: [StudentsService],
+  providers: [StudentsService, StudentOrderService, StudentReportService],
   exports: [StudentsService, MongooseModule],
 })
 export class StudentsModule {}

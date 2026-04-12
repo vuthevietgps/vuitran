@@ -4,7 +4,7 @@
  * Chạy:  node scripts/seed-all.js
  *
  * Dữ liệu tạo:
- *   • 5 demo users  (director, accounting, ops, teacher, parent)  — giữ nguyên nếu đã có
+ *   • 7 demo users  (director, accounting, ops, teacher, parent, adsmanager, shareholder)  — giữ nguyên nếu đã có
  *   • 4 teacher users + teacher profiles
  *   • 3 sale users
  *   • 5 parent users
@@ -37,6 +37,7 @@ const daysFromNow = (n) => { const d = new Date(); d.setDate(d.getDate() + n); r
 // Demo users (keep existing or create)
 const ID = {
   director: oid(), accounting: oid(), ops: oid(),
+  adsmanager: oid(), shareholder: oid(),
   // Teachers
   t1: oid(), t2: oid(), t3: oid(), t4: oid(),
   // Demo teacher (from admin.seeder)
@@ -71,7 +72,9 @@ async function main() {
 
   // Check existing demo users
   const existingDemo = await usersCol.findOne({ email: 'director.demo@school.local' });
-  let directorId, accountingId, opsId, teacherDemoId, parentDemoId;
+  let directorId, accountingId, opsId, adsManagerDemoId, shareholderDemoId, teacherDemoId, parentDemoId;
+  let hasAdsManagerDemo = false;
+  let hasShareholderDemo = false;
 
   if (existingDemo) {
     console.log('  ✅ Demo users already exist, keeping them');
@@ -80,6 +83,14 @@ async function main() {
       if (u.role === 'DIRECTOR') directorId = u._id;
       if (u.role === 'ACCOUNTING') accountingId = u._id;
       if (u.role === 'OPS') opsId = u._id;
+      if (u.role === 'ADSMANAGER') {
+        adsManagerDemoId = u._id;
+        hasAdsManagerDemo = true;
+      }
+      if (u.role === 'SHAREHOLDER') {
+        shareholderDemoId = u._id;
+        hasShareholderDemo = true;
+      }
       if (u.role === 'TEACHER') teacherDemoId = u._id;
       if (u.role === 'PARENT') parentDemoId = u._id;
     }
@@ -87,9 +98,19 @@ async function main() {
     directorId = ID.director;
     accountingId = ID.accounting;
     opsId = ID.ops;
+    adsManagerDemoId = ID.adsmanager;
+    shareholderDemoId = ID.shareholder;
     teacherDemoId = ID.tDemo;
     parentDemoId = ID.pDemo;
   }
+
+  directorId ||= ID.director;
+  accountingId ||= ID.accounting;
+  opsId ||= ID.ops;
+  adsManagerDemoId ||= ID.adsmanager;
+  shareholderDemoId ||= ID.shareholder;
+  teacherDemoId ||= ID.tDemo;
+  parentDemoId ||= ID.pDemo;
 
   const now = new Date();
   const userDocs = [
@@ -98,9 +119,18 @@ async function main() {
       { _id: directorId, email: 'director.demo@school.local', password: hash, fullName: 'Giám đốc Demo', role: 'DIRECTOR', status: 'ACTIVE', createdAt: now, updatedAt: now },
       { _id: accountingId, email: 'accounting.demo@school.local', password: hash, fullName: 'Kế toán Demo', role: 'ACCOUNTING', status: 'ACTIVE', createdAt: now, updatedAt: now },
       { _id: opsId, email: 'ops.demo@school.local', password: hash, fullName: 'Vận hành Demo', role: 'OPS', status: 'ACTIVE', createdAt: now, updatedAt: now },
+      { _id: adsManagerDemoId, email: 'adsmanager.demo@school.local', password: hash, fullName: 'Ads Manager Demo', role: 'ADSMANAGER', status: 'ACTIVE', createdAt: now, updatedAt: now },
+      { _id: shareholderDemoId, email: 'shareholder.demo@school.local', password: hash, fullName: 'Shareholder Demo', role: 'SHAREHOLDER', status: 'ACTIVE', createdAt: now, updatedAt: now },
       { _id: teacherDemoId, email: 'teacher.demo@school.local', password: hash, fullName: 'Giáo viên Demo', role: 'TEACHER', status: 'ACTIVE', createdAt: now, updatedAt: now },
       { _id: parentDemoId, email: 'parent.demo@school.local', password: hash, fullName: 'Phụ huynh Demo', role: 'PARENT', status: 'ACTIVE', createdAt: now, updatedAt: now },
-    ] : []),
+    ] : [
+      ...(!hasAdsManagerDemo ? [
+        { _id: adsManagerDemoId, email: 'adsmanager.demo@school.local', password: hash, fullName: 'Ads Manager Demo', role: 'ADSMANAGER', status: 'ACTIVE', createdAt: now, updatedAt: now },
+      ] : []),
+      ...(!hasShareholderDemo ? [
+        { _id: shareholderDemoId, email: 'shareholder.demo@school.local', password: hash, fullName: 'Shareholder Demo', role: 'SHAREHOLDER', status: 'ACTIVE', createdAt: now, updatedAt: now },
+      ] : []),
+    ]),
     // Teachers
     { _id: ID.t1, email: 'nguyenvananh.gv@school.local', password: hash, fullName: 'Nguyễn Văn Anh', role: 'TEACHER', status: 'ACTIVE', createdAt: now, updatedAt: now },
     { _id: ID.t2, email: 'tranthithuy.gv@school.local', password: hash, fullName: 'Trần Thị Thúy', role: 'TEACHER', status: 'ACTIVE', createdAt: now, updatedAt: now },
@@ -121,6 +151,40 @@ async function main() {
   // Upsert users by email
   for (const u of userDocs) {
     await usersCol.updateOne({ email: u.email }, { $setOnInsert: u }, { upsert: true });
+  }
+
+  // Canonical sync for late-added Wave 0 roles used by frontend/fullstack campaign.
+  const canonicalExtraDemoUsers = [
+    {
+      email: 'adsmanager.demo@school.local',
+      fullName: 'Ads Manager Demo',
+      role: 'ADSMANAGER',
+    },
+    {
+      email: 'shareholder.demo@school.local',
+      fullName: 'Shareholder Demo',
+      role: 'SHAREHOLDER',
+    },
+  ];
+
+  for (const demoUser of canonicalExtraDemoUsers) {
+    await usersCol.updateOne(
+      { email: demoUser.email },
+      {
+        $set: {
+          fullName: demoUser.fullName,
+          role: demoUser.role,
+          password: hash,
+          status: 'ACTIVE',
+          updatedAt: now,
+        },
+        $setOnInsert: {
+          email: demoUser.email,
+          createdAt: now,
+        },
+      },
+      { upsert: true },
+    );
   }
   console.log(`  ✅ ${userDocs.length} users upserted`);
 

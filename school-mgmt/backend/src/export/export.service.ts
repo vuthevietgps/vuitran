@@ -12,6 +12,7 @@ import { AuditAction, AuditModule } from '../audit-log/schemas/audit-log.schema'
 import { buildDateFilter } from '../common/utils/date.utils';
 import { AdsService } from '../ads/ads.service';
 import { AdsAnalyticsService } from '../ads/ads-analytics.service';
+import { FinancialControlService } from '../financial-control/financial-control.service';
 
 @Injectable()
 export class ExportService {
@@ -25,6 +26,7 @@ export class ExportService {
     private auditLogService: AuditLogService,
     private adsService: AdsService,
     private adsAnalyticsService: AdsAnalyticsService,
+    private financialControlService: FinancialControlService,
   ) {}
 
   /** Export payroll data as CSV */
@@ -183,6 +185,70 @@ export class ExportService {
     });
 
     await this.logExport(user, 'attendance', data.length);
+    return '\uFEFF' + [header, ...rows].join('\n');
+  }
+
+  async exportInvestorSummaryCsv(query: { monthCount?: string | number }, user: any): Promise<string> {
+    const [metrics, agingReport] = await Promise.all([
+      this.financialControlService.getInvestorMetrics(query.monthCount),
+      this.financialControlService.getAgingReport(user),
+    ]);
+
+    const monthCount = Number(metrics?.trend?.monthCount || query.monthCount || 6);
+    const summary = agingReport?.summary || {};
+    const details = Array.isArray(agingReport?.details) ? agingReport.details : [];
+
+    const header = this.csvRow([
+      'Section',
+      'Metric',
+      'Value',
+      'Parent',
+      'Masked phone',
+      'Students',
+      'Bucket',
+      'Notes',
+    ]);
+
+    const rows = [
+      this.csvRow(['Snapshot', 'Cash on hand', metrics?.snapshot?.cashOnHand || 0, '', '', '', '', `Khung ${monthCount} thang`]),
+      this.csvRow(['Snapshot', 'Total fund balance', metrics?.snapshot?.totalFundBalance || 0, '', '', '', '', '']),
+      this.csvRow(['Snapshot', 'Burn rate', metrics?.snapshot?.burnRate || 0, '', '', '', '', '']),
+      this.csvRow(['Snapshot', 'Runway', metrics?.snapshot?.runway || 0, '', '', '', '', '']),
+      this.csvRow(['Revenue', 'Recognized revenue this month', metrics?.revenue?.recognizedRevenue?.thisMonth || 0, '', '', '', '', '']),
+      this.csvRow(['Revenue', 'Recognized revenue YTD', metrics?.revenue?.recognizedRevenue?.ytd || 0, '', '', '', '', '']),
+      this.csvRow(['Profitability', 'Gross profit', metrics?.profitability?.grossProfit || 0, '', '', '', '', '']),
+      this.csvRow(['Profitability', 'Net profit', metrics?.profitability?.netProfit || 0, '', '', '', '', '']),
+      this.csvRow(['Customer base', 'Active students', metrics?.customerBase?.activeStudents || 0, '', '', '', '', '']),
+      this.csvRow(['Customer base', 'Enrolled students', metrics?.customerBase?.enrolledStudents || 0, '', '', '', '', '']),
+      this.csvRow(['Aging summary', 'Total AR', summary.totalAR || 0, '', '', '', '', '']),
+      this.csvRow(['Aging summary', 'Current bucket', summary.current || 0, '', '', '', 'current', '']),
+      this.csvRow(['Aging summary', '1-30 bucket', summary['1-30'] || 0, '', '', '', '1-30', '']),
+      this.csvRow(['Aging summary', '31-60 bucket', summary['31-60'] || 0, '', '', '', '31-60', '']),
+      this.csvRow(['Aging summary', '61-90 bucket', summary['61-90'] || 0, '', '', '', '61-90', '']),
+      this.csvRow(['Aging summary', '90+ bucket', summary['90+'] || 0, '', '', '', '90+', '']),
+      ...details.map((detail: any) => this.csvRow([
+        'Aging detail',
+        'Outstanding receivable',
+        detail?.totalDebt || 0,
+        detail?.parentName || '',
+        detail?.parentPhone || 'An danh',
+        Array.isArray(detail?.students) ? detail.students.join(' / ') : '',
+        detail?.bucket || '',
+        `${Array.isArray(detail?.items) ? detail.items.length : 0} chi tiet`,
+      ])),
+    ];
+
+    await this.logExport(user, 'investor-summary', details.length, {
+      targetId: 'export-investor-summary',
+      targetName: 'Export investor summary',
+      description: `Xuat bao cao co dong ${monthCount} thang (${details.length} dong aging).`,
+      newValue: {
+        monthCount,
+        rowCount: rows.length,
+        masked: user?.role === 'SHAREHOLDER',
+      },
+    });
+
     return '\uFEFF' + [header, ...rows].join('\n');
   }
 

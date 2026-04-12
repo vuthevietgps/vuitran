@@ -402,10 +402,12 @@ const ROLE_LABELS: Record<string, string> = {
 
       <!-- Bulk result -->
       <div class="bulk-result" *ngIf="bulkResult()">
-        <div class="result-row green"><span>Đã tạo:</span> <strong>{{bulkResult()!.created}}</strong></div>
+        <div class="result-row green"><span>Thành công:</span> <strong>{{bulkResult()!.created}}</strong></div>
         <div class="result-row amber"><span>Bỏ qua:</span> <strong>{{bulkResult()!.skipped}}</strong></div>
-        <div class="result-row red" *ngIf="bulkResult()!.errors?.length">
-          <span>Lỗi:</span>
+        <div class="result-row red" *ngIf="bulkResult()!.errors.length">
+          <span>Lỗi:</span> <strong>{{bulkResult()!.errors.length}}</strong>
+        </div>
+        <div class="result-row red" *ngIf="bulkResult()!.errors.length">
           <ul>
             <li *ngFor="let e of bulkResult()!.errors">{{e}}</li>
           </ul>
@@ -526,7 +528,7 @@ export class StaffPayrollComponent implements OnInit {
   showGenerateModal = signal(false);
   showBulkModal = signal(false);
   showMarkPaidModal = signal(false);
-  bulkResult = signal<any | null>(null);
+  bulkResult = signal<{ created: number; skipped: number; errors: string[] } | null>(null);
   payingItem = signal<any | null>(null);
 
   editingId: string | null = null;
@@ -758,7 +760,20 @@ export class StaffPayrollComponent implements OnInit {
     }
     try {
       const res = await this.payrollService.bulkGenerate(this.bulkForm);
-      this.bulkResult.set(res);
+      if (!res.ok) {
+        this.error.set(res.message || 'Lỗi tạo hàng loạt');
+        return;
+      }
+      const payload = (res.data ?? res) as {
+        created?: number;
+        skipped?: number;
+        errors?: unknown[];
+      };
+      this.bulkResult.set({
+        created: Number(payload.created || 0),
+        skipped: Number(payload.skipped || 0),
+        errors: Array.isArray(payload.errors) ? payload.errors.map((entry) => String(entry)) : [],
+      });
       await this.reload();
     } catch (e: any) {
       this.error.set(e?.error?.message || 'Lỗi tạo hàng loạt');

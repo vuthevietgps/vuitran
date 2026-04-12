@@ -94,10 +94,12 @@ export class DashboardService {
     return firstValueFrom(this.http.get<any>(`${this.base}/director/teacher-kpi`, { params }));
   }
 
-  getCalendarOverview(month?: number, year?: number) {
+  getCalendarOverview(month?: number, year?: number, teacherId?: string, classId?: string) {
     const params: any = {};
     if (month) params.month = month;
     if (year) params.year = year;
+    if (teacherId) params.teacherId = teacherId;
+    if (classId) params.classId = classId;
     return firstValueFrom(this.http.get<any>(`${this.base}/director/calendar`, { params }));
   }
 }

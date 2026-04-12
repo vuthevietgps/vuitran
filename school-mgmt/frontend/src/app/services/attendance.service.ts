@@ -91,6 +91,14 @@ export interface AttendanceByClassResponse {
     code: string;
   };
   date: string;
+  permissions?: {
+    canBulkEdit: boolean;
+    canGenerateLink: boolean;
+    blockedReason: string | null;
+    substituteActive: boolean;
+    substituteTeacherId: string | null;
+    activeTeacherId: string | null;
+  };
   attendanceList: StudentAttendanceItem[];
 }
 

@@ -122,7 +122,7 @@ import { AuthService } from '../services/auth.service';
             <p><strong>Ngày:</strong> {{ detailItem()!.quoteDate | date:'dd/MM/yyyy' }}</p>
             <p><strong>Tổng:</strong> {{ detailItem()!.totalAmount | number:'1.0-0' }}đ</p>
             <p><strong>Trạng thái:</strong> {{ statusLabel(detailItem()!.status) }}</p>
-            @if (detailItem()!.items?.length) {
+            @if (detailItem()!.items.length) {
               <table class="data-table">
                 <thead><tr><th>Tên</th><th>SL</th><th>ĐVT</th><th>Đơn giá</th><th>Thành tiền</th></tr></thead>
                 <tbody>

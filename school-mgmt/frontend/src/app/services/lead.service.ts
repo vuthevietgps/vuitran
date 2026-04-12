@@ -3,6 +3,61 @@ import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 
+export interface LeadAttributionTracking {
+  landingPageId?: string;
+  landingPageSlug?: string;
+  landingPageName?: string;
+  submittedUrl?: string;
+  referrerUrl?: string;
+  eventId?: string;
+  fbclid?: string;
+  fbc?: string;
+  fbp?: string;
+  gclid?: string;
+  gbraid?: string;
+  wbraid?: string;
+  ttclid?: string;
+  ttp?: string;
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  utmContent?: string;
+  utmTerm?: string;
+}
+
+export interface LeadAttributionSummary {
+  parentKey?: string | null;
+  attributionModel?: string | null;
+  sourceType?: string | null;
+  firstAttributedAt?: string | null;
+  lastConfirmedAt?: string | null;
+  adGroupId?: string | null;
+  adGroupName?: string | null;
+  platform?: string | null;
+}
+
+export interface LeadAttributionTouchpoint {
+  capturedAt?: string;
+  firstTouchedAt?: string;
+  lastConfirmedAt?: string;
+  attributionModel?: string;
+  sourceType: string;
+  parentUserId?: string;
+  parentPhone?: string;
+  normalizedParentPhone?: string;
+  parentEmail?: string;
+  normalizedParentEmail?: string;
+  adGroupId?: string;
+  adGroupName?: string;
+  platform?: string;
+  adRefParam?: string;
+  tracking?: LeadAttributionTracking;
+  sourceConversationId?: string;
+  sourceLeadId?: string;
+  sourceOrderId?: string;
+  notes?: string;
+}
+
 export interface LeadItem {
   _id: string;
   leadCode: string;
@@ -37,6 +92,8 @@ export interface LeadItem {
     returnedAt?: string;
     returnReason?: string;
   }[];
+  attributionSummary?: LeadAttributionSummary | null;
+  attributionTouchpoints?: LeadAttributionTouchpoint[];
 }
 
 export interface ContactEntry {

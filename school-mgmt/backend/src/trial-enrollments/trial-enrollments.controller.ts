@@ -11,6 +11,7 @@ import { QueryTrialEnrollmentDto } from './dto/query-trial-enrollment.dto';
 import { RecordTrialSessionDto } from './dto/record-trial-session.dto';
 import { ConvertTrialEnrollmentDto } from './dto/convert-trial-enrollment.dto';
 import { RejectTrialEnrollmentDto } from './dto/reject-trial-enrollment.dto';
+import { TeacherPaidOnlyTrialEnrollmentDto } from './dto/teacher-paid-only-trial-enrollment.dto';
 import { TrialEnrollmentsService } from './trial-enrollments.service';
 
 @Controller('trial-enrollments')
@@ -80,6 +81,16 @@ export class TrialEnrollmentsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.trialEnrollmentsService.reject(id, dto, req.user);
+  }
+
+  @Post(':id/teacher-paid-only')
+  @Roles(Role.OPS, Role.DIRECTOR)
+  teacherPaidOnly(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: TeacherPaidOnlyTrialEnrollmentDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.trialEnrollmentsService.teacherPaidOnly(id, dto, req.user);
   }
 
   @Delete(':id')

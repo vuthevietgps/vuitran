@@ -89,9 +89,12 @@ export class AuthService {
     // Ghi nhận chấm công đăng nhập (không block login nếu lỗi)
     try {
       const config = await this.salaryConfigService.findByUserId(user._id.toString()).catch(() => null);
+      const scheduledStartTime = config ? (config.scheduledStartTime || '08:00') : undefined;
+      const scheduledEndTime = config ? (config.scheduledEndTime || '17:00') : undefined;
       await this.workSessionsService.recordLogin(
         user._id.toString(),
-        config?.scheduledStartTime,
+        scheduledStartTime,
+        scheduledEndTime,
       );
     } catch (err) {
       // Log but don't block login

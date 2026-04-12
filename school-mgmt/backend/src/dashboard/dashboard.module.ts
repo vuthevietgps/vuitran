@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { DashboardService } from './dashboard.service';
+import { DashboardDailyTasksService } from './dashboard-daily-tasks.service';
+import { DashboardAnalyticsService } from './dashboard-analytics.service';
 import { DashboardController } from './dashboard.controller';
 import { AdsModule } from '../ads/ads.module';
 
@@ -8,6 +10,7 @@ import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { Wallet, WalletSchema } from '../wallets/schemas/wallet.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.schema';
 import { Payroll, PayrollSchema } from '../payroll/schemas/payroll.schema';
+import { PayrollTransaction, PayrollTransactionSchema } from '../payroll/schemas/payroll-transaction.schema';
 import { Ticket, TicketSchema } from '../tickets/schemas/ticket.schema';
 import { TeacherProfile, TeacherProfileSchema } from '../teachers/schemas/teacher-profile.schema';
 import { Student, StudentSchema } from '../students/schemas/student.schema';
@@ -28,6 +31,7 @@ import { TrialEnrollment, TrialEnrollmentSchema } from '../trial-enrollments/sch
       { name: Wallet.name, schema: WalletSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
       { name: Payroll.name, schema: PayrollSchema },
+      { name: PayrollTransaction.name, schema: PayrollTransactionSchema },
       { name: Ticket.name, schema: TicketSchema },
       { name: TeacherProfile.name, schema: TeacherProfileSchema },
       { name: Student.name, schema: StudentSchema },
@@ -42,6 +46,7 @@ import { TrialEnrollment, TrialEnrollmentSchema } from '../trial-enrollments/sch
     ]),
   ],
   controllers: [DashboardController],
-  providers: [DashboardService],
+  providers: [DashboardService, DashboardDailyTasksService, DashboardAnalyticsService],
+  exports: [DashboardService],
 })
 export class DashboardModule {}

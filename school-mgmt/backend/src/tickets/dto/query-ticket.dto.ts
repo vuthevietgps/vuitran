@@ -45,6 +45,9 @@ export class QueryTicketDto {
   sort?: string;
 
   @IsOptional()
+  overdue?: string;
+
+  @IsOptional()
   page?: number;
 
   @IsOptional()

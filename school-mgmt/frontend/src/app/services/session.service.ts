@@ -2,10 +2,11 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { ReportTemplateDynamicFieldDefinition } from './report-template.service';
 
 export interface SessionItem {
   _id: string;
-  classId: { _id: string; name: string; code: string };
+  classId: { _id: string; name: string; code: string; classMode?: 'ONLINE' | 'OFFLINE' };
   studentId: { _id: string; fullName: string; studentCode?: string };
   teacherId: { _id: string; fullName: string; email?: string };
   parentUserId?: { _id: string; fullName: string };
@@ -20,11 +21,20 @@ export interface SessionItem {
   status: string;
   isPaid: boolean;
   isTeacherPaid: boolean;
+  walletDeductError?: string;
+  walletDeductAlertSentAt?: string;
   topicsCovered?: string;
   homework?: string;
   teacherNotes?: string;
   parentNotes?: string;
   parentRating?: number;
+  parentFeedback?: {
+    overallRating?: number;
+    teachingQualityRating?: number;
+    communicationRating?: number;
+    facilityRating?: number;
+    parentNotes?: string;
+  };
   confirmation?: {
     teacherCompletedAt?: string;
     parentConfirmedAt?: string;
@@ -35,6 +45,7 @@ export interface SessionItem {
   cancellation?: {
     cancelledBy?: string;
     cancelReason?: string;
+    cancelledAt?: string;
     refundAmount?: number;
   };
   teachingReport?: {
@@ -44,13 +55,34 @@ export interface SessionItem {
     teacherComment?: string;
     homework?: string;
     additionalNotes?: string;
+    templateId?: string;
+    templateTitle?: string;
+    templateVersion?: number;
+    dynamicFieldValues?: Record<string, string | number | boolean>;
+    dynamicFieldSchemaSnapshot?: ReportTemplateDynamicFieldDefinition[];
     submittedAt?: string;
     deadline?: string;
     isLateSubmission?: boolean;
   };
   hasTeachingReport?: boolean;
   createdAt?: string;
+  rescheduledFromId?: SessionReference | string | null;
+  rescheduledToId?: SessionReference | string | null;
   editHistory?: SessionEditHistoryEntry[];
+}
+
+export interface SessionActionResult<T = unknown> {
+  ok: boolean;
+  data?: T | null;
+  errorMessage?: string;
+}
+
+export interface SessionReference {
+  _id?: string;
+  scheduledDate?: string;
+  scheduledStartTime?: string;
+  scheduledEndTime?: string;
+  status?: string;
 }
 
 export interface SessionChangeFinancialImpact {
@@ -73,7 +105,13 @@ export interface SessionChangeRequestItem {
   studentId?: { _id?: string; fullName?: string; studentCode?: string };
   parentUserId?: { _id?: string; fullName?: string; email?: string };
   currentTeacherId?: { _id?: string; fullName?: string; email?: string };
+  currentScheduledDate?: string;
+  currentStartTime?: string;
+  currentEndTime?: string;
   requestedTeacherId?: { _id?: string; fullName?: string; email?: string };
+  requestedScheduledDate?: string;
+  requestedStartTime?: string;
+  requestedEndTime?: string;
   currentDurationMinutes: number;
   requestedDurationMinutes?: number;
   reason: string;
@@ -88,6 +126,9 @@ export interface SessionChangeRequestItem {
 }
 
 export interface CreateSessionChangeRequestPayload {
+  requestedScheduledDate?: string;
+  requestedStartTime?: string;
+  requestedEndTime?: string;
   requestedTeacherId?: string;
   requestedDurationMinutes?: number;
   reason: string;
@@ -96,6 +137,19 @@ export interface CreateSessionChangeRequestPayload {
 export interface ReviewSessionChangeRequestPayload {
   action: 'APPROVE' | 'REJECT';
   rejectionReason?: string;
+}
+
+export interface RescheduleSessionPayload {
+  newScheduledDate: string;
+  newStartTime?: string;
+  newEndTime?: string;
+  durationMinutes?: number;
+  reason?: string;
+}
+
+export interface RescheduleSessionResult {
+  oldSession: SessionItem;
+  newSession: SessionItem;
 }
 
 export interface SessionEditHistoryChange {
@@ -153,9 +207,71 @@ export interface SessionParentConfirmPayload {
   isSatisfied?: boolean;
 }
 
+export interface SessionGeneralFeedbackPayload {
+  overallRating: number;
+  teachingQuality: number;
+  communication: number;
+  facility: number;
+  comment?: string;
+  studentId?: string;
+  sessionId?: string;
+}
+
+export interface SessionGeneralFeedbackResult {
+  success: boolean;
+  message: string;
+}
+
+export interface BulkTeachingReportPayload {
+  classId: string;
+  date: string;
+  lessonContent: string;
+  studentAttitude?: string;
+  recordingUrl?: string;
+  teacherComment?: string;
+  homework?: string;
+  additionalNotes?: string;
+  templateId?: string;
+  dynamicFieldValues?: Record<string, string | number | boolean>;
+}
+
+export interface BulkTeachingReportResult {
+  updatedCount: number;
+  skippedCount: number;
+  results: Array<{
+    sessionId: string;
+    status: string;
+    action: string;
+  }>;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SessionService {
   private http = inject(HttpClient);
+
+  private extractErrorMessage(error: any): string {
+    const payload = error?.error;
+    if (typeof payload === 'string' && payload.trim()) {
+      return payload.trim();
+    }
+
+    if (Array.isArray(payload?.message)) {
+      const message = payload.message.find((item: unknown) => typeof item === 'string' && item.trim());
+      if (message) {
+        return String(message).trim();
+      }
+    }
+
+    if (typeof payload?.message === 'string' && payload.message.trim()) {
+      return payload.message.trim();
+    }
+
+    if (typeof error?.message === 'string' && error.message.trim()) {
+      return error.message.trim();
+    }
+
+    return 'Có lỗi xảy ra.';
+  }
 
   async list(params: SessionQueryParams = {}): Promise<{ data: SessionItem[]; meta: any }> {
     const httpParams = this.buildParams(params);
@@ -241,14 +357,20 @@ export class SessionService {
     }
   }
 
-  async finalize(id: string): Promise<boolean> {
+  async finalize(id: string): Promise<SessionActionResult<SessionItem>> {
     try {
-      await firstValueFrom(
-        this.http.post(`${environment.apiBase}/sessions/${id}/finalize`, {}, { withCredentials: true }),
+      const data = await firstValueFrom(
+        this.http.post<SessionItem>(`${environment.apiBase}/sessions/${id}/finalize`, {}, { withCredentials: true }),
       );
-      return true;
-    } catch {
-      return false;
+      return {
+        ok: true,
+        data: data ?? null,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        errorMessage: this.extractErrorMessage(error),
+      };
     }
   }
 
@@ -264,6 +386,30 @@ export class SessionService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  async reschedule(
+    id: string,
+    payload: RescheduleSessionPayload,
+  ): Promise<SessionActionResult<RescheduleSessionResult>> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<RescheduleSessionResult>(
+          `${environment.apiBase}/sessions/${id}/reschedule`,
+          payload,
+          { withCredentials: true },
+        ),
+      );
+      return {
+        ok: true,
+        data: data ?? null,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        errorMessage: this.extractErrorMessage(error),
+      };
     }
   }
 
@@ -298,6 +444,43 @@ export class SessionService {
         withCredentials: true,
       }),
     );
+  }
+
+  async bulkSubmitTeachingReport(payload: BulkTeachingReportPayload): Promise<BulkTeachingReportResult> {
+    return firstValueFrom(
+      this.http.patch<BulkTeachingReportResult>(
+        `${environment.apiBase}/sessions/bulk-teaching-report`,
+        payload,
+        {
+          withCredentials: true,
+        },
+      ),
+    );
+  }
+
+  async submitGeneralFeedback(
+    payload: SessionGeneralFeedbackPayload,
+  ): Promise<SessionActionResult<SessionGeneralFeedbackResult>> {
+    try {
+      const data = await firstValueFrom(
+        this.http.post<SessionGeneralFeedbackResult>(
+          `${environment.apiBase}/sessions/general-feedback`,
+          payload,
+          {
+            withCredentials: true,
+          },
+        ),
+      );
+      return {
+        ok: true,
+        data: data ?? null,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        errorMessage: this.extractErrorMessage(error),
+      };
+    }
   }
 
   async getChangeRequests(sessionId: string): Promise<SessionChangeRequestItem[]> {

@@ -1,71 +1,77 @@
+import { Transform } from 'class-transformer';
 import {
   IsDateString,
   IsMongoId,
   IsNotEmpty,
+  IsObject,
   IsOptional,
   IsString,
   IsUrl,
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
 
-/**
- * GV nộp báo cáo giảng dạy cho TẤT CẢ học sinh trong 1 lớp OFFLINE vào 1 ngày.
- * Dùng cho lớp nhóm (classMode = OFFLINE) để tránh phải nộp từng báo cáo riêng lẻ.
- */
+const trimToUndefined = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+};
+
 export class BulkTeachingReportDto {
-  /** ID lớp học */
-  @IsMongoId({ message: 'classId không hợp lệ' })
+  @IsMongoId({ message: 'classId khong hop le' })
   @IsNotEmpty()
   classId!: string;
 
-  /** Ngày buổi học (ISO 8601, ví dụ: 2026-02-22) */
-  @IsDateString({}, { message: 'date phải đúng định dạng ISO 8601' })
+  @IsDateString({}, { message: 'date phai dung dinh dang ISO 8601' })
   @IsNotEmpty()
   date!: string;
 
-  /** Nội dung đã học trong buổi (bắt buộc, 20-2000 ký tự) */
-  @IsString({ message: 'Nội dung học phải là chuỗi văn bản' })
-  @IsNotEmpty({ message: 'Nội dung học không được để trống' })
-  @MinLength(20, { message: 'Nội dung học phải có ít nhất 20 ký tự' })
-  @MaxLength(2000, { message: 'Nội dung học không được vượt quá 2000 ký tự' })
-  @Transform(({ value }) => value?.trim())
-  lessonContent!: string;
+  @IsString({ message: 'Noi dung hoc phai la chuoi van ban' })
+  @IsOptional()
+  @MinLength(20, { message: 'Noi dung hoc phai co it nhat 20 ky tu' })
+  @MaxLength(2000, { message: 'Noi dung hoc khong duoc vuot qua 2000 ky tu' })
+  @Transform(trimToUndefined)
+  lessonContent?: string;
 
-  /** Thái độ / hành vi chung của học sinh trong buổi (tùy chọn) */
   @IsString()
   @IsOptional()
   @MaxLength(1000)
-  @Transform(({ value }) => value?.trim())
+  @Transform(trimToUndefined)
   studentAttitude?: string;
 
-  /** Link ghi hình bài giảng (tùy chọn) */
   @IsString()
   @IsOptional()
-  @IsUrl({ require_protocol: true }, { message: 'recordingUrl phải là URL hợp lệ (https://...)' })
+  @IsUrl({ require_protocol: true }, { message: 'recordingUrl phai la URL hop le (https://...)' })
   @MaxLength(500)
-  @Transform(({ value }) => value?.trim())
+  @Transform(trimToUndefined)
   recordingUrl?: string;
 
-  /** Nhận xét chung của GV (tùy chọn) */
   @IsString()
   @IsOptional()
   @MaxLength(1000)
-  @Transform(({ value }) => value?.trim())
+  @Transform(trimToUndefined)
   teacherComment?: string;
 
-  /** Bài tập về nhà (tùy chọn) */
   @IsString()
   @IsOptional()
   @MaxLength(1000)
-  @Transform(({ value }) => value?.trim())
+  @Transform(trimToUndefined)
   homework?: string;
 
-  /** Ghi chú thêm (tùy chọn) */
   @IsString()
   @IsOptional()
   @MaxLength(500)
-  @Transform(({ value }) => value?.trim())
+  @Transform(trimToUndefined)
   additionalNotes?: string;
+
+  @IsMongoId({ message: 'templateId phai la ObjectId hop le' })
+  @IsOptional()
+  templateId?: string;
+
+  @IsObject({ message: 'dynamicFieldValues phai la object hop le' })
+  @IsOptional()
+  dynamicFieldValues?: Record<string, unknown>;
 }

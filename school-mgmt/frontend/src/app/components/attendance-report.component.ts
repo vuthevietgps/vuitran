@@ -49,17 +49,17 @@ interface AttendanceReportItem {
       <div class="filters">
         <div class="filter-group">
           <label>Từ ngày:</label>
-          <input type="date" [(ngModel)]="startDate" />
+          <input data-testid="attendance-report-start-date" type="date" [(ngModel)]="startDate" />
         </div>
 
         <div class="filter-group">
           <label>Đến ngày:</label>
-          <input type="date" [(ngModel)]="endDate" />
+          <input data-testid="attendance-report-end-date" type="date" [(ngModel)]="endDate" />
         </div>
 
         <div class="filter-group">
           <label>Lớp học (tùy chọn):</label>
-          <select [(ngModel)]="selectedClassId">
+          <select data-testid="attendance-report-class-filter" [(ngModel)]="selectedClassId">
             <option value="">-- Tất cả các lớp --</option>
             <option *ngFor="let cls of classes()" [value]="cls._id">
               {{cls.code}} - {{cls.name}} ({{cls.studentCount || cls.students?.length || 0}} HS)
@@ -67,7 +67,7 @@ interface AttendanceReportItem {
           </select>
         </div>
 
-        <button class="btn-search" (click)="onApplyFilter()" [disabled]="loading()">
+        <button data-testid="attendance-report-search-button" class="btn-search" (click)="onApplyFilter()" [disabled]="loading()">
           {{ loading() ? '⏳ Đang tải...' : '🔍 Xem báo cáo' }}
         </button>
       </div>
@@ -80,12 +80,12 @@ interface AttendanceReportItem {
         Không có dữ liệu điểm danh trong khoảng thời gian này.
       </div>
 
-      <div *ngIf="reportData().length > 0" class="report-summary">
-        <div class="summary-card">
+      <div *ngIf="reportData().length > 0" class="report-summary" data-testid="attendance-report-summary">
+        <div class="summary-card" data-testid="attendance-report-summary-total-items">
           <h3>Tổng số lượt điểm danh</h3>
           <p class="summary-number">{{ totalItems() }}</p>
         </div>
-        <div class="summary-card">
+        <div class="summary-card" data-testid="attendance-report-summary-page">
           <h3>Trang hiện tại</h3>
           <p class="summary-number">{{ page() }} / {{ totalPages() }}</p>
         </div>
@@ -95,7 +95,7 @@ interface AttendanceReportItem {
         <strong>Nguon du lieu cot Tong buoi:</strong> lay realtime tu hoa don hoc phi chua huy/tu choi, gom buoi chinh, buoi tang va buoi thu.
       </p>
 
-      <div *ngIf="reportData().length > 0" class="report-table-container">
+      <div *ngIf="reportData().length > 0" class="report-table-container" data-testid="attendance-report-table-container">
         <table class="report-table">
           <thead>
             <tr>
@@ -112,7 +112,7 @@ interface AttendanceReportItem {
             </tr>
           </thead>
           <tbody>
-            <tr *ngFor="let item of reportData()">
+            <tr *ngFor="let item of reportData()" [attr.data-testid]="'attendance-report-row-' + item._id">
               <td>{{ formatDate(item.date) }}</td>
               <td>{{ formatDateTime(item.attendedAt || item.updatedAt || item.date) }}</td>
               <td>
@@ -128,7 +128,7 @@ interface AttendanceReportItem {
                 </div>
               </td>
               <td>{{ item.studentId.level || '-' }}</td>
-              <td>
+              <td [attr.data-testid]="'attendance-report-total-purchased-' + item._id">
                 <strong>{{ item.studentId.totalPurchasedSessions || 0 }}</strong>
               </td>
               <td class="image-cell">

@@ -23,6 +23,14 @@ export class WorkSession {
   @Prop({ type: Date, required: true })
   loginTime!: Date;
 
+  /** Giờ vào ca dự kiến (snapshot từ SalaryConfig tại thời điểm login) */
+  @Prop({ type: String })
+  scheduledStartTime?: string;
+
+  /** Giờ kết thúc ca dự kiến (snapshot từ SalaryConfig tại thời điểm login) */
+  @Prop({ type: String })
+  scheduledEndTime?: string;
+
   /** Thời điểm đăng xuất */
   @Prop({ type: Date })
   logoutTime?: Date;
@@ -38,6 +46,14 @@ export class WorkSession {
   /** Số phút đến muộn */
   @Prop({ type: Number, min: 0, default: 0 })
   lateMinutes!: number;
+
+  /** Có về sớm không (so với scheduledEndTime trong SalaryConfig) */
+  @Prop({ type: Boolean, default: false })
+  isEarlyLeave!: boolean;
+
+  /** Số phút về sớm */
+  @Prop({ type: Number, min: 0, default: 0 })
+  earlyLeaveMinutes!: number;
 
   /** Trạng thái */
   @Prop({ type: String, enum: WorkSessionStatus, default: WorkSessionStatus.ACTIVE })

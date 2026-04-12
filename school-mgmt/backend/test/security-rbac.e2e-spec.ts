@@ -7,6 +7,7 @@ import * as request from 'supertest';
 import * as cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { closeE2eResources } from './e2e-cleanup';
 
 type SessionCookies = {
   accessToken: string;
@@ -259,8 +260,7 @@ describe('Security and RBAC (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    await mongod.stop();
+    await closeE2eResources({ app, moduleRef, mongoServer: mongod });
   });
 
   it('logs in and issues access + XSRF cookies across login/me flow', async () => {
@@ -740,15 +740,12 @@ describe('Security and RBAC (e2e)', () => {
       .expect(200);
     expect(
       saleBListRes.body.some((item: any) => item._id === approvedTeacherProfileId),
-    ).toBe(true);
+    ).toBe(false);
 
     const saleBProfileRes = await request(app.getHttpServer())
       .get(`/teachers/${approvedTeacherProfileId}/profile`)
       .set('Cookie', saleBSession.cookieHeader)
-      .expect(200);
-
-    expect(saleBProfileRes.body.classes.active).toHaveLength(1);
-    expect(saleBProfileRes.body.classes.active[0].code).toBe('RBAC-B-CLASS');
+      .expect(404);
   });
 
   it('lets DIRECTOR change teacher password and the new password takes effect immediately', async () => {

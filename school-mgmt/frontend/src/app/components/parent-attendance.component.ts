@@ -86,7 +86,7 @@ interface ChildrenAttendanceStatsResponse {
     <label class="filter-label">Den ngay
       <input type="date" [(ngModel)]="toDate" (ngModelChange)="reload()" />
     </label>
-    <select [(ngModel)]="selectedStudentId" *ngIf="studentList().length > 1">
+    <select [ngModel]="selectedStudentId()" (ngModelChange)="selectedStudentId.set($event)" *ngIf="studentList().length > 1">
       <option value="">Tat ca con</option>
       <option *ngFor="let s of studentList()" [value]="s.studentId">{{s.studentName}}</option>
     </select>
@@ -216,7 +216,7 @@ export class ParentAttendanceComponent implements OnInit {
 
   fromDate = '';
   toDate = '';
-  selectedStudentId = '';
+  selectedStudentId = signal('');
 
   studentList = computed(() => {
     const map = new Map<string, string>();
@@ -228,8 +228,9 @@ export class ParentAttendanceComponent implements OnInit {
 
   filteredStats = computed(() => {
     const all = this.stats();
-    if (!this.selectedStudentId) return all;
-    return all.filter(s => s.studentId === this.selectedStudentId);
+    const selectedStudentId = this.selectedStudentId();
+    if (!selectedStudentId) return all;
+    return all.filter(s => s.studentId === selectedStudentId);
   });
 
   ngOnInit() {

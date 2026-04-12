@@ -9,6 +9,7 @@ import { Attendance, AttendanceSchema } from '../attendance/schemas/attendance.s
 import { Session, SessionSchema } from '../sessions/schemas/session.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.schema';
 import { AdsModule } from '../ads/ads.module';
+import { FinancialControlModule } from '../financial-control/financial-control.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { AdsModule } from '../ads/ads.module';
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
     ]),
     AdsModule,
+    FinancialControlModule,
   ],
   controllers: [ExportController],
   providers: [ExportService],

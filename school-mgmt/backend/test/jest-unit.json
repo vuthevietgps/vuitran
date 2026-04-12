@@ -14,6 +14,16 @@
   ],
   "coverageDirectory": "../coverage/unit",
   "coverageReporters": ["text", "lcov", "html", "json-summary"],
+  "reporters": [
+    "default",
+    [
+      "jest-junit",
+      {
+        "outputDirectory": "../test-results/unit",
+        "outputName": "junit.xml"
+      }
+    ]
+  ],
   "testEnvironment": "node",
   "setupFiles": ["<rootDir>/../test/setup-env.ts"],
   "passWithNoTests": true

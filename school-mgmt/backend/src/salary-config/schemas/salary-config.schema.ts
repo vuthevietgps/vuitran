@@ -33,6 +33,10 @@ export class SalaryConfig {
   @Prop({ type: String, required: true, default: '08:00' })
   scheduledStartTime!: string;
 
+  /** Giờ kết thúc ca (VD: "17:00") — dùng để tính về sớm */
+  @Prop({ type: String, required: true, default: '17:00' })
+  scheduledEndTime!: string;
+
   // ── Phạt muộn ──
 
   /** Số tiền phạt / lần đến muộn (VNĐ) */

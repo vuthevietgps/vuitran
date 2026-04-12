@@ -96,6 +96,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             <th>HS đánh giá</th>
             <th>Lớp đang dạy</th>
             <th>Doanh thu</th>
+            <th>Phạt</th>
             <th></th>
           </tr>
         </thead>
@@ -133,6 +134,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             </td>
             <td>{{ t.classes.activeClasses }}</td>
             <td>{{ t.sessions.totalRevenue | number:'1.0-0' }}đ</td>
+            <td>
+              <div class="penalty-cell" [class.has-penalty]="t.payroll.totalPenalty > 0">
+                <strong class="penalty-amount">{{ penaltyDisplay(t.payroll.totalPenalty) }}</strong>
+                <small *ngIf="t.payroll.penaltySessionCount > 0">{{ t.payroll.penaltySessionCount }} buổi</small>
+              </div>
+            </td>
             <td>
               <button class="btn-sm" (click)="viewDetail(t)" title="Xem chi tiết">📊</button>
               <button class="btn-sm" (click)="viewProfile(t)" title="Xem hồ sơ">👤</button>
@@ -201,6 +208,9 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
         <div class="kpi-card-footer">
           <span>Doanh thu: {{ t.sessions.totalRevenue | number:'1.0-0' }}đ</span>
           <span>Lương: {{ t.payroll.totalPaid | number:'1.0-0' }}đ</span>
+          <span class="teacher-penalty-inline" [class.has-penalty]="t.payroll.totalPenalty > 0">
+            Phạt: {{ penaltyDisplay(t.payroll.totalPenalty) }}
+          </span>
         </div>
         <div class="kpi-card-actions">
           <button class="btn-sm" (click)="viewDetail(t)">📊 Chi tiết</button>
@@ -269,6 +279,14 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
             <div class="detail-row"><span>Doanh thu:</span><strong>{{ selectedTeacher.sessions.totalRevenue | number:'1.0-0' }}đ</strong></div>
             <div class="detail-row"><span>Chi phí GV:</span><strong>{{ selectedTeacher.sessions.totalPayout | number:'1.0-0' }}đ</strong></div>
             <div class="detail-row"><span>Đã trả lương:</span><strong>{{ selectedTeacher.payroll.totalPaid | number:'1.0-0' }}đ</strong></div>
+            <div class="detail-row penalty-detail-row" [class.has-penalty]="selectedTeacher.payroll.totalPenalty > 0">
+              <span>Tổng phạt:</span>
+              <strong>{{ penaltyDisplay(selectedTeacher.payroll.totalPenalty) }}</strong>
+            </div>
+            <div class="detail-row" *ngIf="selectedTeacher.payroll.penaltySessionCount > 0">
+              <span>Buổi bị phạt:</span>
+              <strong>{{ selectedTeacher.payroll.penaltySessionCount }}</strong>
+            </div>
             <div class="detail-row"><span>Lớp đang dạy:</span><strong>{{ selectedTeacher.classes.activeClasses }}</strong></div>
             <div class="detail-row"><span>Tổng HS:</span><strong>{{ selectedTeacher.classes.totalStudents }}</strong></div>
           </div>
@@ -358,6 +376,10 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .data-table td { padding: 10px; border-bottom: 1px solid #f1f5f9; }
     .data-table tr:hover { background: #f8fafc; }
     .highlight-row { background: #f0fdf4 !important; }
+    .penalty-cell { display: flex; flex-direction: column; gap: 2px; min-width: 82px; }
+    .penalty-amount { color: #475569; font-weight: 700; }
+    .penalty-cell.has-penalty .penalty-amount { color: #b91c1c; }
+    .penalty-cell small { color: #94a3b8; font-size: 11px; }
     .teacher-cell { display: flex; flex-direction: column; }
     .teacher-cell small { color: #94a3b8; font-size: 11px; }
 
@@ -418,7 +440,9 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .bg-green { background: #22c55e; }
     .bg-yellow { background: #f59e0b; }
     .bg-red { background: #ef4444; }
-    .kpi-card-footer { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; padding-top: 10px; border-top: 1px solid #f1f5f9; margin-bottom: 10px; }
+    .kpi-card-footer { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; padding-top: 10px; border-top: 1px solid #f1f5f9; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
+    .teacher-penalty-inline { color: #64748b; font-weight: 600; }
+    .teacher-penalty-inline.has-penalty { color: #b91c1c; }
     .kpi-card-actions { display: flex; gap: 8px; }
 
     /* Modal */
@@ -432,6 +456,8 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .detail-card h4 { margin: 0 0 12px; color: #475569; font-size: 13px; text-transform: uppercase; letter-spacing: 0.3px; }
     .detail-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
     .detail-row span { color: #64748b; }
+    .penalty-detail-row strong { color: #475569; }
+    .penalty-detail-row.has-penalty strong { color: #b91c1c; }
     .kpi-big-score { font-size: 56px; font-weight: 800; text-align: center; }
     .kpi-big-score small { font-size: 20px; font-weight: 400; color: #94a3b8; }
     .kpi-big-score.excellent { color: #22c55e; }
@@ -553,5 +579,11 @@ export class TeacherKpiComponent implements OnInit {
     const full = Math.floor(rating);
     const half = rating - full >= 0.5 ? 1 : 0;
     return '★'.repeat(full) + (half ? '½' : '') + '☆'.repeat(5 - full - half);
+  }
+
+  penaltyDisplay(amount: number): string {
+    const safeAmount = Number(amount || 0);
+    const formatted = new Intl.NumberFormat('en-US').format(Math.abs(safeAmount));
+    return `${safeAmount > 0 ? '-' : ''}${formatted}đ`;
   }
 }

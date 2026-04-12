@@ -1,4 +1,6 @@
 import {
+  ArrayMinSize,
+  IsBoolean,
   IsArray,
   IsDateString,
   IsEnum,
@@ -80,6 +82,10 @@ export class OrderItemDto {
   @IsOptional()
   selectedClassId?: string;
 
+  @IsBoolean()
+  @IsOptional()
+  createNewClassWhenApproved?: boolean;
+
   @IsMongoId()
   @IsOptional()
   preferredTeacherId?: string;
@@ -135,6 +141,9 @@ export class CreateOrderDto {
 
   @IsString()
   @IsNotEmpty()
+  @Matches(/^0\d{9}$/, {
+    message: 'So dien thoai phai co 10 so va bat dau bang 0',
+  })
   parentPhone!: string;
 
   @IsString()
@@ -202,7 +211,7 @@ export class CreateOrderDto {
   })
   studentFaceImage?: string;
 
-  @IsString()
+  @IsMongoId()
   @IsOptional()
   existingStudentId?: string;
 
@@ -211,6 +220,7 @@ export class CreateOrderDto {
   saleId?: string;
 
   @IsArray()
+  @ArrayMinSize(1, { message: 'Don hang phai co it nhat 1 san pham' })
   @ValidateNested({ each: true })
   @Type(() => OrderItemDto)
   items!: OrderItemDto[];
@@ -256,11 +266,11 @@ export class CreateOrderDto {
   @IsOptional()
   leadSource?: string;
 
-  @IsString()
+  @IsMongoId()
   @IsOptional()
   leadId?: string;
 
-  @IsString()
+  @IsMongoId()
   @IsOptional()
   adGroupId?: string;
 

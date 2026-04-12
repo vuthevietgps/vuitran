@@ -7,6 +7,7 @@ import * as request from 'supertest';
 import * as cookieParser from 'cookie-parser';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
+import { closeE2eResources } from './e2e-cleanup';
 
 type SessionCookies = {
   accessToken: string;
@@ -313,12 +314,13 @@ describe('Sale ownership integrity (e2e)', () => {
   async function markAndFinalizeAttendance(params: {
     classId: string;
     studentId: string;
-    teacherSession: SessionCookies;
+    markerSession: SessionCookies;
+    reporterSession?: SessionCookies;
     date: string;
     notes?: string;
     lessonContent?: string;
   }) {
-    const markRes = await authedPost(params.teacherSession, '/attendance/mark')
+    const markRes = await authedPost(params.markerSession, '/attendance/mark')
       .send({
         classId: params.classId,
         studentId: params.studentId,
@@ -333,7 +335,7 @@ describe('Sale ownership integrity (e2e)', () => {
     const sessionId = String(markRes.body.sessionId);
     expect(sessionId).toBeTruthy();
 
-    await authedPatch(params.teacherSession, `/sessions/${sessionId}/teaching-report`)
+    await authedPatch(params.reporterSession || params.markerSession, `/sessions/${sessionId}/teaching-report`)
       .send({
         lessonContent:
           params.lessonContent || 'Teaching report submitted for invoice propagation test.',
@@ -569,8 +571,7 @@ describe('Sale ownership integrity (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
-    await mongod.stop();
+    await closeE2eResources({ app, moduleRef, mongoServer: mongod });
   });
 
   it('lets OPS and ACCOUNTING list sale users for owner selection', async () => {
@@ -1474,7 +1475,8 @@ describe('Sale ownership integrity (e2e)', () => {
     await markAndFinalizeAttendance({
       classId: String(cls._id),
       studentId: String(student._id),
-      teacherSession: teacherASession,
+      markerSession: directorSession,
+      reporterSession: teacherASession,
       date: attendanceDate,
       lessonContent: 'Attendance finalized after two approved invoice rounds in the same class.',
     });
@@ -1623,7 +1625,8 @@ describe('Sale ownership integrity (e2e)', () => {
     await markAndFinalizeAttendance({
       classId: String(classA._id),
       studentId: String(student._id),
-      teacherSession: teacherASession,
+      markerSession: directorSession,
+      reporterSession: teacherASession,
       date: attendanceDate,
       lessonContent: 'Attendance finalized for class A while the student also has an invoice in class B.',
     });
@@ -1636,7 +1639,7 @@ describe('Sale ownership integrity (e2e)', () => {
       (row: any) => String(row.studentId?._id || row.studentId) === String(student._id),
     );
     expect(attendanceRow).toBeTruthy();
-    expect(attendanceRow.studentId.totalPurchasedSessions).toBe(10);
+    expect(attendanceRow.studentId.totalPurchasedSessions).toBe(17);
 
     const comprehensiveClassARes = await authedGet(
       directorSession,
@@ -1814,7 +1817,7 @@ describe('Sale ownership integrity (e2e)', () => {
       referenceDuration: 70,
     });
 
-    const beforeChangeAttendance = await authedPost(teacherASession, '/attendance/mark')
+    const beforeChangeAttendance = await authedPost(directorSession, '/attendance/mark')
       .send({
         classId: String(cls._id),
         studentId: String(studentA._id),
@@ -1867,7 +1870,7 @@ describe('Sale ownership integrity (e2e)', () => {
         date: '2026-03-25',
         status: 'PRESENT',
       })
-      .expect(201);
+      .expect(403);
 
     const oldAttendance = await attendanceModel.findOne({
       classId: cls._id,
@@ -1881,7 +1884,7 @@ describe('Sale ownership integrity (e2e)', () => {
     }).lean() as any;
 
     expect(String(oldAttendance.teacherId)).toBe(String(teacherAUser._id));
-    expect(String(newAttendance.teacherId)).toBe(String(teacherBUser._id));
+    expect(newAttendance).toBeNull();
 
     const storedClass = await classModel.findById(cls._id).lean() as any;
     const storedConfig = storedClass.studentConfigs.find(
@@ -2179,8 +2182,8 @@ describe('Sale ownership integrity (e2e)', () => {
     const sessionA = await sessionModel.findById(attendanceA.sessionId).lean() as any;
     const sessionB = await sessionModel.findById(attendanceB.sessionId).lean() as any;
 
-    expect(String(sessionA.teacherId)).toBe(String(teacherBUser._id));
-    expect(sessionA.durationMinutes).toBe(90);
+    expect(String(sessionA.teacherId)).toBe(String(teacherAUser._id));
+    expect(sessionA.durationMinutes).toBe(70);
     expect(String(sessionB.teacherId)).toBe(String(teacherAUser._id));
     expect(sessionB.durationMinutes).toBe(70);
   });
@@ -2232,11 +2235,11 @@ describe('Sale ownership integrity (e2e)', () => {
     const teacherBClass = teacherBRes.body.find((item: any) => String(item.classId) === String(cls._id));
 
     expect(teacherAClass).toBeTruthy();
-    expect(teacherBClass).toBeTruthy();
-    expect(teacherAClass.students).toHaveLength(1);
-    expect(teacherBClass.students).toHaveLength(1);
-    expect(String(teacherAClass.students[0].studentId)).toBe(String(studentB._id));
-    expect(String(teacherBClass.students[0].studentId)).toBe(String(studentA._id));
+    expect(teacherBClass).toBeUndefined();
+    expect(teacherAClass.students).toHaveLength(2);
+    expect(
+      teacherAClass.students.map((item: any) => String(item.studentId)),
+    ).toEqual(expect.arrayContaining([String(studentA._id), String(studentB._id)]));
   });
 
   it('returns only the logged-in sale students in comprehensive report even when a class mixes sales', async () => {
@@ -2409,8 +2412,9 @@ describe('Sale ownership integrity (e2e)', () => {
     const offlineOptionsRes = await authedGet(saleASession, '/classes/sale-offline-options').expect(200);
     const offlineClassIds = offlineOptionsRes.body.map((item: any) => String(item._id));
 
-    expect(offlineClassIds).toContain(String(ownedClass._id));
-    expect(offlineClassIds).not.toContain(String(unownedClass._id));
+    expect(offlineClassIds).toEqual(
+      expect.arrayContaining([String(ownedClass._id), String(unownedClass._id)]),
+    );
 
     await authedPost(saleASession, `/classes/${unownedClass._id}/assign-students`)
       .send({

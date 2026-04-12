@@ -1,22 +1,23 @@
 import { Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../services/auth.service';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
   <section class="login-wrapper">
-    <form (ngSubmit)="submit()" class="login-card" autocomplete="off">
+    <form (ngSubmit)="submit()" class="login-card" autocomplete="off" data-testid="login-form">
       <h2>Dang nhap</h2>
       <label>Email
         <input
           type="email"
           [(ngModel)]="email"
           name="email"
+          data-testid="login-email"
           required
           [disabled]="loading()"
           autocomplete="username"
@@ -29,6 +30,7 @@ import { AuthService } from '../services/auth.service';
           [type]="showPassword() ? 'text' : 'password'"
           [(ngModel)]="password"
           name="password"
+          data-testid="login-password"
           required
           [disabled]="loading()"
           autocomplete="current-password"
@@ -37,22 +39,24 @@ import { AuthService } from '../services/auth.service';
         />
       </label>
       <label class="inline-option">
-        <input type="checkbox" [ngModel]="showPassword()" (ngModelChange)="showPassword.set(!!$event)" name="showPassword" [disabled]="loading()" />
+        <input type="checkbox" [ngModel]="showPassword()" (ngModelChange)="showPassword.set(!!$event)" name="showPassword" data-testid="login-show-password" [disabled]="loading()" />
         <span>Hien mat khau</span>
       </label>
-      <button type="submit" [disabled]="loading()">
+      <button type="submit" data-testid="login-submit" [disabled]="loading()">
         {{ loading() ? 'Dang xu ly...' : 'Dang nhap' }}
       </button>
       <button
         *ngIf="isDemoSchoolHost"
         type="button"
         class="secondary"
+        data-testid="login-demo-admin"
         [disabled]="loading()"
         (click)="loginDemoAdmin()"
       >
         Dang nhap demo admin
       </button>
-      <p class="error" *ngIf="error()">{{error()}}</p>
+      <p class="error" *ngIf="error()" data-testid="login-error">{{error()}}</p>
+      <a class="landing-link" routerLink="/co-dong">Mo trang hop tac co dong</a>
     </form>
   </section>
   `,
@@ -68,12 +72,16 @@ import { AuthService } from '../services/auth.service';
     button:disabled { opacity:.7; cursor:not-allowed; }
     .secondary { background:#0f172a; }
     .secondary:hover { background:#020617; }
+    .landing-link { color:#0f766e; text-align:center; font-size:13px; font-weight:700; text-decoration:none; }
+    .landing-link:hover { text-decoration:underline; }
     .error { color:#dc2626; font-size:13px; margin:0; }
   `],
 })
 export class LoginComponent {
   private readonly demoAdminEmail = 'admin@demoschool.smarterp.vn';
   private readonly demoAdminPassword = '123456';
+  private readonly friendlyLockoutMessage = 'Ban da thu qua nhieu lan. Vui long doi 1 phut.';
+  private submitLocked = false;
   readonly isDemoSchoolHost =
     typeof window !== 'undefined' && window.location.hostname === 'demoschool.smarterp.vn';
 
@@ -86,17 +94,19 @@ export class LoginComponent {
   constructor(private auth: AuthService, private router: Router) {}
 
   async submit() {
-    if (this.loading()) return;
+    if (this.submitLocked || this.loading()) return;
 
+    this.submitLocked = true;
     this.email = this.email.trim().toLowerCase();
     this.error.set('');
     this.loading.set(true);
     const result = await this.auth.login(this.email, this.password);
     this.loading.set(false);
+    this.submitLocked = false;
 
     if (!result.ok) {
-      if (result.status === 429) {
-        this.error.set('Ban da thu qua nhieu lan. Vui long doi 1 phut.');
+      if (result.status === 429 || this.isLockoutMessage(result.message)) {
+        this.error.set(this.resolveLockoutMessage(result.message));
       } else if (result.status === 401) {
         this.error.set('Sai email hoac mat khau');
       } else {
@@ -105,12 +115,40 @@ export class LoginComponent {
       return;
     }
 
-    this.router.navigate(['/app/dashboard']);
+    this.router.navigateByUrl(this.auth.getDefaultAppRoute(this.auth.userSignal()?.role));
   }
 
   async loginDemoAdmin() {
     this.email = this.demoAdminEmail;
     this.password = this.demoAdminPassword;
     await this.submit();
+  }
+
+  private isLockoutMessage(message?: string): boolean {
+    const normalized = String(message || '').toLowerCase();
+    return (
+      normalized.includes('lock')
+      || normalized.includes('lockout')
+      || normalized.includes('khoa')
+      || normalized.includes('khóa')
+      || normalized.includes('qua nhieu')
+      || normalized.includes('quá nhiều')
+      || normalized.includes('thu lai sau')
+      || normalized.includes('thử lại sau')
+    );
+  }
+
+  private resolveLockoutMessage(message?: string): string {
+    const trimmed = String(message || '').trim();
+    const normalized = trimmed.toLowerCase();
+    if (
+      normalized.includes('ban da thu qua nhieu lan')
+      || normalized.includes('vui long doi')
+      || normalized.includes('bạn đã thử quá nhiều lần')
+      || normalized.includes('vui lòng đợi')
+    ) {
+      return trimmed;
+    }
+    return this.friendlyLockoutMessage;
   }
 }

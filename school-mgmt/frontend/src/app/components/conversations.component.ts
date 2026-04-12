@@ -1,4 +1,4 @@
-import { Component, signal, computed, OnInit, OnDestroy, ElementRef, ViewChild } from '@angular/core';
+import { Component, signal, computed, OnInit, OnDestroy, ElementRef, ViewChild, NgZone } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Subscription } from 'rxjs';
@@ -372,6 +372,7 @@ export class ConversationsComponent implements OnInit, OnDestroy {
     private authService: AuthService,
     private socketService: ChatbotSocketService,
     private userService: UserService,
+    private ngZone: NgZone,
   ) {}
 
   ngOnInit() {
@@ -391,33 +392,41 @@ export class ConversationsComponent implements OnInit, OnDestroy {
     // New message in the open conversation
     this.socketSubs.push(
       this.socketService.newMessage$.subscribe(event => {
-        const conv = this.selectedConv();
-        if (!conv || event.conversationId !== conv._id) return;
-        const current = this.messages();
-        // Avoid duplicate messages
-        if (current.some(m => m._id === event.message._id)) return;
-        this.messages.set([...current, event.message]);
-        this.messageTotal++;
-        setTimeout(() => this.scrollToBottom(), 50);
+        this.ngZone.run(() => {
+          const conv = this.selectedConv();
+          if (!conv || event.conversationId !== conv._id) return;
+          const current = this.messages();
+          // Avoid duplicate messages
+          if (current.some(m => m._id === event.message._id)) return;
+          this.messages.set([...current, event.message]);
+          this.messageTotal++;
+          setTimeout(() => this.scrollToBottom(), 50);
+        });
       })
     );
 
     // Conversation list updates (new conv, status change, last message)
     this.socketSubs.push(
       this.socketService.conversationUpdated$.subscribe(event => {
+        this.ngZone.run(() => {
         const incoming = event.conversation;
         const list = this.conversations();
         const idx = list.findIndex(c => c._id === incoming._id);
         if (idx !== -1) {
+          const merged = { ...list[idx], ...incoming };
           const updated = [...list];
-          updated[idx] = { ...updated[idx], ...incoming };
-          // Move updated conversation to top
           updated.splice(idx, 1);
-          this.conversations.set([incoming, ...updated]);
+          this.conversations.set([merged, ...updated]);
+
+          const selected = this.selectedConv();
+          if (selected?._id === merged._id) {
+            this.selectedConv.set({ ...selected, ...incoming });
+          }
         } else {
           // New conversation not yet in list — re-fetch page 1
-          this.loadConversations();
+          void this.loadConversations();
         }
+        });
       })
     );
   }

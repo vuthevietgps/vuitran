@@ -3,10 +3,11 @@
   "rootDir": "..",
   "testRegex": "test/.*\\.e2e-spec\\.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": "ts-jest"
+    "^.+\\.ts$": "ts-jest"
   },
   "testEnvironment": "node",
   "setupFiles": ["<rootDir>/test/setup-env.ts"],
+  "globalTeardown": "<rootDir>/test/jest-e2e.global-teardown.js",
   "testTimeout": 120000,
   "reporters": [
     "default",

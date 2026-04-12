@@ -23,7 +23,7 @@ import { AuthService } from '../services/auth.service';
       <div class="filters compact">
         <div class="filter-item">
           <label>Lop</label>
-          <select [(ngModel)]="selectedClassId" (change)="loadReport()">
+          <select data-testid="comprehensive-class-filter" [(ngModel)]="selectedClassId" (change)="loadReport()">
             <option value="">Tat ca lop</option>
             <option *ngFor="let cls of classes()" [value]="cls._id">
               {{ cls.code }} - {{ cls.name }}
@@ -31,9 +31,9 @@ import { AuthService } from '../services/auth.service';
           </select>
         </div>
 
-        <div class="filter-item" *ngIf="!isSale()">
+        <div class="filter-item" *ngIf="!isSale() && !isShareholder()">
           <label>Sale</label>
-          <select [ngModel]="selectedSaleId()" (ngModelChange)="onSaleFilterChange($event)">
+          <select data-testid="comprehensive-sale-filter" [ngModel]="selectedSaleId()" (ngModelChange)="onSaleFilterChange($event)">
             <option value="">Tat ca sale</option>
             <option *ngFor="let sale of saleOptions()" [value]="sale.id">
               {{ sale.name }}
@@ -43,7 +43,7 @@ import { AuthService } from '../services/auth.service';
 
         <div class="filter-item">
           <label>Tinh trang data</label>
-          <select [ngModel]="selectedDataStatus()" (ngModelChange)="onDataStatusFilterChange($event)">
+          <select data-testid="comprehensive-data-status-filter" [ngModel]="selectedDataStatus()" (ngModelChange)="onDataStatusFilterChange($event)">
             <option value="">Tat ca tinh trang</option>
             <option *ngFor="let option of dataStatusOptions" [value]="option.value">
               {{ option.label }}
@@ -51,9 +51,10 @@ import { AuthService } from '../services/auth.service';
           </select>
         </div>
 
-        <div class="filter-item filter-item-search">
+        <div class="filter-item filter-item-search" *ngIf="!isShareholder()">
           <label>Tim kiem</label>
           <input
+            data-testid="comprehensive-search-input"
             type="text"
             [(ngModel)]="searchTerm"
             (input)="onSearchInput()"
@@ -62,83 +63,87 @@ import { AuthService } from '../services/auth.service';
         </div>
 
         <div class="filter-actions">
-          <button class="btn btn-primary" (click)="loadReport()">Tim kiem</button>
-          <button class="btn btn-export" (click)="exportCSV()">Xuat CSV</button>
+          <button data-testid="comprehensive-search-button" class="btn btn-primary" (click)="loadReport()">Tim kiem</button>
+          <button data-testid="comprehensive-export-button" class="btn btn-export" (click)="exportCSV()" *ngIf="!isShareholder()">Xuat CSV</button>
         </div>
+      </div>
+
+      <div class="privacy-banner" *ngIf="isShareholder()">
+        Du lieu chi tiet da duoc an danh cho vai tro co dong.
       </div>
 
       <div *ngIf="loading()" class="loading">Dang tai du lieu...</div>
       <div *ngIf="error()" class="error">{{ error() }}</div>
 
-      <div *ngIf="!loading() && reportRows().length > 0" class="report-summary">
-        <div class="summary-card">
+      <div *ngIf="!loading() && reportRows().length > 0" class="report-summary" data-testid="comprehensive-summary">
+        <div class="summary-card" data-testid="comprehensive-summary-total-rows">
           <h3>Tong so dong</h3>
           <p class="summary-number">{{ reportRows().length }}</p>
         </div>
-        <div class="summary-card">
+        <div class="summary-card" data-testid="comprehensive-summary-unique-classes">
           <h3>So lop</h3>
           <p class="summary-number">{{ uniqueClasses() }}</p>
         </div>
-        <div class="summary-card">
+        <div class="summary-card" data-testid="comprehensive-summary-max-sessions">
           <h3>Buoi toi da</h3>
           <p class="summary-number">{{ visibleMaxSessions() }}</p>
         </div>
-        <div class="summary-card">
+        <div class="summary-card" data-testid="comprehensive-summary-total-attended">
           <h3>Tong luot co mat</h3>
           <p class="summary-number">{{ totalAttended() }}</p>
         </div>
-        <div class="summary-card">
+        <div class="summary-card" data-testid="comprehensive-summary-total-tables">
           <h3>So bang</h3>
           <p class="summary-number">{{ sessionChunks().length }}</p>
         </div>
       </div>
 
       <ng-container *ngIf="!loading() && reportRows().length > 0">
-        <div *ngFor="let chunk of sessionChunks()" class="table-block">
+        <div *ngFor="let chunk of sessionChunks()" class="table-block" [attr.data-testid]="'comprehensive-table-block-' + chunk.start">
           <h3 class="table-title">Bang buoi {{ chunk.start + 1 }} - {{ chunk.end }}</h3>
 
-          <div class="report-table-container">
+          <div class="report-table-container" data-testid="comprehensive-table-container">
             <table class="report-table">
               <thead>
                 <tr>
                   <th class="sticky-col col-stt">STT</th>
                   <th class="sticky-col col-type">Loai lop</th>
                   <th class="sticky-col col-code">Ma HS</th>
-                  <th class="sticky-col col-name">Ten HS</th>
+                  <th class="sticky-col col-name" *ngIf="!isShareholder()">Ten HS</th>
                   <th>Level</th>
-                  <th>Ngay sinh</th>
-                  <th>Ten PH</th>
-                  <th>SDT</th>
-                  <th>Ngay sinh me</th>
+                  <th *ngIf="!isShareholder()">Ngay sinh</th>
+                  <th *ngIf="!isShareholder()">Ten PH</th>
+                  <th *ngIf="!isShareholder()">SDT</th>
+                  <th *ngIf="!isShareholder()">Ngay sinh me</th>
                   <th>Ma lop</th>
-                  <th>Ma GV + ten GV</th>
+                  <th *ngIf="!isShareholder()">Ma GV + ten GV</th>
                   <th *ngIf="showTeacherSalary()">Luong GV</th>
                   <th>So Hoa Don</th>
                   <th title="Tong buoi = Da hoc + buoi con lai tu hoa don (chinh + tang + thu)">Tong buoi (Da hoc + HD)</th>
                   <th>Da Hoc</th>
-                  <th>Sale</th>
+                  <th *ngIf="!isShareholder()">Sale</th>
                   <th>Tinh Trang Data</th>
                   <th *ngFor="let si of chunk.indices" class="session-col">Buoi {{ si + 1 }}</th>
                 </tr>
               </thead>
               <tbody>
-                <tr *ngFor="let row of reportRows(); let i = index">
+                <tr *ngFor="let row of reportRows(); let i = index" [attr.data-testid]="'comprehensive-row-' + row.studentId + '-' + row.classId">
                   <td class="sticky-col col-stt">{{ i + 1 }}</td>
                   <td class="sticky-col col-type">{{ getClassModeLabel(row.classMode) }}</td>
                   <td class="sticky-col col-code">{{ row.studentCode || '-' }}</td>
-                  <td class="sticky-col col-name"><strong>{{ row.fullName || '-' }}</strong></td>
+                  <td class="sticky-col col-name" *ngIf="!isShareholder()"><strong>{{ row.fullName || '-' }}</strong></td>
                   <td>{{ row.level || row.grade || '-' }}</td>
-                  <td>{{ formatBirthDate(row.dateOfBirth, row.studentBirthMonth) }}</td>
-                  <td>{{ row.parentName || '-' }}</td>
-                  <td>{{ row.parentPhone || '-' }}</td>
-                  <td>{{ formatMonthBirth(row.parentBirthMonth) }}</td>
+                  <td *ngIf="!isShareholder()">{{ formatBirthDate(row.dateOfBirth, row.studentBirthMonth) }}</td>
+                  <td *ngIf="!isShareholder()">{{ row.parentName || '-' }}</td>
+                  <td *ngIf="!isShareholder()">{{ row.parentPhone || '-' }}</td>
+                  <td *ngIf="!isShareholder()">{{ formatMonthBirth(row.parentBirthMonth) }}</td>
                   <td class="class-code">{{ row.classCode || '-' }}</td>
-                  <td [title]="row.teacherCodeAndName || row.teacherName">{{ row.teacherCodeAndName || row.teacherName || '-' }}</td>
+                  <td *ngIf="!isShareholder()" [title]="row.teacherCodeAndName || row.teacherName">{{ row.teacherCodeAndName || row.teacherName || '-' }}</td>
                   <td *ngIf="showTeacherSalary()" class="number-cell">{{ formatTeacherSalary(row) }}</td>
-                  <td>{{ row.invoiceNumber || '-' }}</td>
-                  <td class="number-cell">{{ row.totalSessions || '-' }}</td>
-                  <td class="number-cell">{{ row.sessionsCompleted || 0 }}</td>
-                  <td>{{ row.saleName || '-' }}</td>
+                  <td [attr.data-testid]="'comprehensive-invoice-number-' + row.studentId">{{ row.invoiceNumber || '-' }}</td>
+                  <td class="number-cell" [attr.data-testid]="'comprehensive-total-sessions-' + row.studentId">{{ row.totalSessions || '-' }}</td>
+                  <td class="number-cell" [attr.data-testid]="'comprehensive-sessions-completed-' + row.studentId">{{ row.sessionsCompleted || 0 }}</td>
+                  <td *ngIf="!isShareholder()">{{ row.saleName || '-' }}</td>
                   <td>
                     <span class="badge" [ngClass]="getDataStatusClass(row.dataStatus)">
                       {{ getDataStatusLabel(row.dataStatus) }}
@@ -148,18 +153,22 @@ import { AuthService } from '../services/auth.service';
                   <td
                     *ngFor="let si of chunk.indices"
                     class="session-cell"
+                    [attr.data-testid]="'comprehensive-session-cell-' + row.studentId + '-' + si"
                     [ngClass]="getSessionCellClass(row.sessions[si])"
                   >
                     <ng-container *ngIf="row.sessions[si] as s; else emptySessionCell">
                       <div class="cell-status">{{ getStatusLabel(s.status) }}</div>
                       <div class="cell-meta">{{ formatSessionDateTime(s) }}</div>
                       <div class="cell-meta">{{ formatSessionDuration(s.duration) }}</div>
-                      <div class="cell-meta cell-teacher" [title]="getSessionTeacher(s)">
+                      <div class="cell-meta cell-teacher" [title]="getSessionTeacher(s)" *ngIf="!isShareholder(); else redactedTeacher">
                         {{ getSessionTeacher(s) }}
                       </div>
                     </ng-container>
                     <ng-template #emptySessionCell>
                       <span class="cell-empty">-</span>
+                    </ng-template>
+                    <ng-template #redactedTeacher>
+                      <div class="cell-meta cell-teacher">GV: an danh</div>
                     </ng-template>
                   </td>
                 </tr>
@@ -213,6 +222,17 @@ import { AuthService } from '../services/auth.service';
       border: 1px solid #d1d5db;
       border-radius: 6px;
       font-size: 13px;
+    }
+
+    .privacy-banner {
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      font-size: 13px;
+      font-weight: 600;
     }
 
     .filter-actions {
@@ -439,7 +459,7 @@ export class ComprehensiveReportComponent implements OnInit {
 
   reportRows = computed(() =>
     this.allRows().filter((row) => {
-      if (this.selectedSaleId()) {
+      if (!this.isShareholder() && this.selectedSaleId()) {
         const saleKey = this.getSaleKey(row);
         if (saleKey !== this.selectedSaleId()) return false;
       }
@@ -514,7 +534,7 @@ export class ComprehensiveReportComponent implements OnInit {
     try {
       const data: ComprehensiveReportResponse = await this.studentService.getComprehensiveReport(
         this.selectedClassId || undefined,
-        this.searchTerm || undefined,
+        this.isShareholder() ? undefined : this.searchTerm || undefined,
       );
       this.allRows.set(data.rows);
 
@@ -600,6 +620,7 @@ export class ComprehensiveReportComponent implements OnInit {
   }
 
   formatTeacherSalary(row: ComprehensiveReportRow): string {
+    if (this.isShareholder()) return '-';
     const amount = Number(row.teacherSalary || 0);
     if (!amount) return '-';
     const suffix = row.teacherSalaryType === 'PER_STUDENT' ? '/HS' : '/buoi';
@@ -668,6 +689,7 @@ export class ComprehensiveReportComponent implements OnInit {
   }
 
   exportCSV() {
+    if (this.isShareholder()) return;
     const rows = this.reportRows();
     const max = Math.max(this.visibleMaxSessions(), this.sessionColumnCount);
     if (rows.length === 0) return;
@@ -746,8 +768,12 @@ export class ComprehensiveReportComponent implements OnInit {
     return this.auth.userSignal()?.role === 'SALE';
   }
 
+  isShareholder(): boolean {
+    return this.auth.userSignal()?.role === 'SHAREHOLDER';
+  }
+
   showTeacherSalary(): boolean {
-    return this.auth.userSignal()?.role !== 'PARENT';
+    return this.auth.userSignal()?.role !== 'PARENT' && !this.isShareholder();
   }
 
   private getSaleKey(row: ComprehensiveReportRow): string {

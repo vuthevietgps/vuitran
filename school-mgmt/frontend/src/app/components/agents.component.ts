@@ -13,20 +13,24 @@ import { AuthService } from '../services/auth.service';
       <div class="header">
         <h2>Danh Sách Đại Lý</h2>
         @if (canManage()) {
-          <button class="btn btn-primary" (click)="openCreate()">+ Thêm đại lý</button>
+          <button class="btn btn-primary" data-testid="agents-create-button" (click)="openCreate()">+ Thêm đại lý</button>
         }
       </div>
 
-      <!-- Filters -->
       <div class="filters">
-        <input [(ngModel)]="keyword" placeholder="Tìm mã, tên, liên hệ, SĐT..." (input)="load()" />
-        <select [(ngModel)]="statusFilter" (change)="load()">
+        <input
+          [(ngModel)]="keyword"
+          placeholder="Tìm mã, tên, liên hệ, SĐT..."
+          data-testid="agents-keyword-filter"
+          (input)="load()"
+        />
+        <select [(ngModel)]="statusFilter" data-testid="agents-status-filter" (change)="load()">
           <option value="">Tất cả trạng thái</option>
           <option value="ACTIVE">Hoạt động</option>
-          <option value="INACTIVE">Ngưng HĐ</option>
-          <option value="SUSPENDED">Tạm ngưng</option>
+          <option value="INACTIVE">Ngừng HĐ</option>
+          <option value="SUSPENDED">Tạm ngừng</option>
         </select>
-        <select [(ngModel)]="tierFilter" (change)="load()">
+        <select [(ngModel)]="tierFilter" data-testid="agents-tier-filter" (change)="load()">
           <option value="">Tất cả hạng</option>
           <option value="SILVER">Silver</option>
           <option value="GOLD">Gold</option>
@@ -34,7 +38,6 @@ import { AuthService } from '../services/auth.service';
         </select>
       </div>
 
-      <!-- Table -->
       <table class="data-table">
         <thead>
           <tr>
@@ -50,26 +53,30 @@ import { AuthService } from '../services/auth.service';
         </thead>
         <tbody>
           @for (item of items(); track item._id) {
-            <tr (click)="viewDetail(item)">
+            <tr [attr.data-testid]="'agents-row-' + item._id" (click)="viewDetail(item)">
               <td>{{ item.agentCode }}</td>
-              <td>{{ item.name }}</td>
+              <td data-testid="agents-row-name">{{ item.name }}</td>
               <td>{{ item.contactPerson }}</td>
               <td>{{ item.phone }}</td>
-              <td><span class="tier-badge" [class]="'tier-' + item.tier.toLowerCase()">{{ item.tier }}</span></td>
-              <td>{{ item.commissionRate }}%</td>
+              <td>
+                <span class="tier-badge" data-testid="agents-row-tier" [class]="'tier-' + item.tier.toLowerCase()">
+                  {{ item.tier }}
+                </span>
+              </td>
+              <td data-testid="agents-row-commission">{{ item.commissionRate }}%</td>
               <td><span class="badge" [class]="'badge-' + item.status.toLowerCase()">{{ statusLabel(item.status) }}</span></td>
               <td class="actions" (click)="$event.stopPropagation()">
                 @if (canManage()) {
-                  <button class="btn-sm" (click)="edit(item)">Sửa</button>
+                  <button class="btn-sm" [attr.data-testid]="'agents-edit-' + item._id" (click)="edit(item)">Sửa</button>
                   @if (item.status !== 'SUSPENDED') {
-                    <button class="btn-sm btn-warning" (click)="suspend(item)">Tạm ngưng</button>
+                    <button class="btn-sm btn-warning" [attr.data-testid]="'agents-suspend-' + item._id" (click)="suspend(item)">Tạm ngừng</button>
                   }
                   @if (item.status !== 'ACTIVE') {
-                    <button class="btn-sm btn-success" (click)="activate(item)">Kích hoạt</button>
+                    <button class="btn-sm btn-success" [attr.data-testid]="'agents-activate-' + item._id" (click)="activate(item)">Kích hoạt</button>
                   }
                 }
                 @if (isDirector()) {
-                  <button class="btn-sm btn-danger" (click)="deleteItem(item)">Xóa</button>
+                  <button class="btn-sm btn-danger" [attr.data-testid]="'agents-delete-' + item._id" (click)="deleteItem(item)">Xóa</button>
                 }
               </td>
             </tr>
@@ -83,43 +90,51 @@ import { AuthService } from '../services/auth.service';
         <button [disabled]="currentPage() >= totalPages()" (click)="goPage(currentPage() + 1)">›</button>
       </div>
 
-      <!-- Create/Edit Modal -->
       @if (showModal()) {
         <div class="modal-backdrop" (click)="showModal.set(false)">
-          <div class="modal" (click)="$event.stopPropagation()">
+          <div class="modal" data-testid="agents-form-modal" (click)="$event.stopPropagation()">
             <h3>{{ editing() ? 'Sửa đại lý' : 'Thêm đại lý' }}</h3>
-            <div class="form-group"><label>Tên đại lý *</label><input [(ngModel)]="form.name" /></div>
-            <div class="form-group"><label>Người liên hệ</label><input [(ngModel)]="form.contactPerson" /></div>
-            <div class="form-group"><label>SĐT</label><input [(ngModel)]="form.phone" /></div>
-            <div class="form-group"><label>Email</label><input [(ngModel)]="form.email" /></div>
-            <div class="form-group"><label>Địa chỉ</label><input [(ngModel)]="form.address" /></div>
-            <div class="form-group"><label>Mã số thuế</label><input [(ngModel)]="form.taxCode" /></div>
-            <div class="form-group"><label>Ngân hàng</label><input [(ngModel)]="form.bankName" /></div>
-            <div class="form-group"><label>Số TK</label><input [(ngModel)]="form.bankAccount" /></div>
-            <div class="form-group"><label>Chủ TK</label><input [(ngModel)]="form.bankAccountHolder" /></div>
+            <div class="form-group"><label>Tên đại lý *</label><input name="name" [(ngModel)]="form.name" /></div>
+            <div class="form-group"><label>Người liên hệ</label><input name="contactPerson" [(ngModel)]="form.contactPerson" /></div>
+            <div class="form-group"><label>SĐT</label><input name="phone" [(ngModel)]="form.phone" /></div>
+            <div class="form-group"><label>Email</label><input name="email" [(ngModel)]="form.email" /></div>
+            <div class="form-group"><label>Địa chỉ</label><input name="address" [(ngModel)]="form.address" /></div>
+            <div class="form-group"><label>Mã số thuế</label><input name="taxCode" [(ngModel)]="form.taxCode" /></div>
+            <div class="form-group"><label>Ngân hàng</label><input name="bankName" [(ngModel)]="form.bankName" /></div>
+            <div class="form-group"><label>Số TK</label><input name="bankAccount" [(ngModel)]="form.bankAccount" /></div>
+            <div class="form-group"><label>Chủ TK</label><input name="bankAccountHolder" [(ngModel)]="form.bankAccountHolder" /></div>
             <div class="form-group">
               <label>Hạng</label>
-              <select [(ngModel)]="form.tier">
+              <select name="tier" data-testid="agents-tier-select" [(ngModel)]="form.tier">
                 <option value="SILVER">Silver</option>
                 <option value="GOLD">Gold</option>
                 <option value="PLATINUM">Platinum</option>
               </select>
             </div>
-            <div class="form-group"><label>Hoa hồng (%)</label><input type="number" [(ngModel)]="form.commissionRate" min="0" max="100" /></div>
-            <div class="form-group"><label>Ghi chú</label><textarea [(ngModel)]="form.notes"></textarea></div>
+            <div class="form-group">
+              <label>Hoa hồng (%)</label>
+              <input
+                type="number"
+                name="commissionRate"
+                data-testid="agents-commission-input"
+                [(ngModel)]="form.commissionRate"
+                min="0"
+                max="100"
+              />
+            </div>
+            <div class="form-group"><label>Ghi chú</label><textarea name="notes" [(ngModel)]="form.notes"></textarea></div>
             <div class="modal-actions">
-              <button class="btn" (click)="showModal.set(false)">Hủy</button>
-              <button class="btn btn-primary" (click)="save()">Lưu</button>
+              <button class="btn" data-testid="agents-cancel" (click)="showModal.set(false)">Hủy</button>
+              <button class="btn btn-primary" data-testid="agents-save" (click)="save()">Lưu</button>
             </div>
             @if (error()) { <div class="error">{{ error() }}</div> }
           </div>
         </div>
       }
 
-      <!-- Detail Modal -->
       @if (detailItem()) {
         <div class="modal-backdrop" (click)="detailItem.set(null)">
-          <div class="modal" (click)="$event.stopPropagation()">
+          <div class="modal" data-testid="agents-detail-modal" (click)="$event.stopPropagation()">
             <h3>Chi tiết đại lý {{ detailItem()!.agentCode }}</h3>
             <p><strong>Tên:</strong> {{ detailItem()!.name }}</p>
             <p><strong>Liên hệ:</strong> {{ detailItem()!.contactPerson }}</p>
@@ -134,7 +149,7 @@ import { AuthService } from '../services/auth.service';
             <p><strong>Tổng HH đã trả:</strong> {{ detailItem()!.totalCommissionPaid | number:'1.0-0' }}đ</p>
             <p><strong>Trạng thái:</strong> {{ statusLabel(detailItem()!.status) }}</p>
             <p><strong>Người tạo:</strong> {{ detailItem()!.createdByName }}</p>
-            <button class="btn" (click)="detailItem.set(null)">Đóng</button>
+            <button class="btn" data-testid="agents-detail-close" (click)="detailItem.set(null)">Đóng</button>
           </div>
         </div>
       }
@@ -163,8 +178,28 @@ import { AuthService } from '../services/auth.service';
     .btn-danger { background: #e53935; color: #fff; border-color: #e53935; }
     .btn-warning { background: #ff9800; color: #fff; border-color: #ff9800; }
     .actions { white-space: nowrap; }
-    .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); display: flex; justify-content: center; align-items: flex-start; padding-top: 40px; z-index: 1000; }
-    .modal { background: #fff; border-radius: 8px; padding: 24px; min-width: 500px; max-width: 700px; max-height: 80vh; overflow-y: auto; }
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 40px;
+      z-index: 1000;
+    }
+    .modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 24px;
+      min-width: 500px;
+      max-width: 700px;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
     .form-group { margin-bottom: 12px; }
     .form-group label { display: block; font-weight: 600; margin-bottom: 4px; }
     .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; }
@@ -196,11 +231,23 @@ export class AgentsComponent implements OnInit {
   error = signal('');
 
   form: any = {
-    name: '', contactPerson: '', phone: '', email: '', address: '', taxCode: '',
-    bankName: '', bankAccount: '', bankAccountHolder: '', tier: 'SILVER', commissionRate: 0, notes: '',
+    name: '',
+    contactPerson: '',
+    phone: '',
+    email: '',
+    address: '',
+    taxCode: '',
+    bankName: '',
+    bankAccount: '',
+    bankAccountHolder: '',
+    tier: 'SILVER',
+    commissionRate: 0,
+    notes: '',
   };
 
-  ngOnInit() { this.load(); }
+  ngOnInit() {
+    this.load();
+  }
 
   canManage(): boolean {
     const role = this.auth.userSignal()?.role;
@@ -212,7 +259,10 @@ export class AgentsComponent implements OnInit {
   }
 
   async load() {
-    const params: Record<string, string> = { page: String(this.currentPage()), limit: String(this.limit) };
+    const params: Record<string, string> = {
+      page: String(this.currentPage()),
+      limit: String(this.limit),
+    };
     if (this.keyword) params['keyword'] = this.keyword;
     if (this.statusFilter) params['status'] = this.statusFilter;
     if (this.tierFilter) params['tier'] = this.tierFilter;
@@ -221,10 +271,17 @@ export class AgentsComponent implements OnInit {
     this.total.set(res.total);
   }
 
-  goPage(p: number) { this.currentPage.set(p); this.load(); }
+  goPage(p: number) {
+    this.currentPage.set(p);
+    this.load();
+  }
 
   statusLabel(s: string): string {
-    const map: Record<string, string> = { ACTIVE: 'Hoạt động', INACTIVE: 'Ngưng HĐ', SUSPENDED: 'Tạm ngưng' };
+    const map: Record<string, string> = {
+      ACTIVE: 'Hoạt động',
+      INACTIVE: 'Ngừng HĐ',
+      SUSPENDED: 'Tạm ngừng',
+    };
     return map[s] || s;
   }
 
@@ -232,8 +289,18 @@ export class AgentsComponent implements OnInit {
     this.editing.set(false);
     this.editingId = '';
     this.form = {
-      name: '', contactPerson: '', phone: '', email: '', address: '', taxCode: '',
-      bankName: '', bankAccount: '', bankAccountHolder: '', tier: 'SILVER', commissionRate: 0, notes: '',
+      name: '',
+      contactPerson: '',
+      phone: '',
+      email: '',
+      address: '',
+      taxCode: '',
+      bankName: '',
+      bankAccount: '',
+      bankAccountHolder: '',
+      tier: 'SILVER',
+      commissionRate: 0,
+      notes: '',
     };
     this.error.set('');
     this.showModal.set(true);
@@ -243,10 +310,17 @@ export class AgentsComponent implements OnInit {
     this.editing.set(true);
     this.editingId = item._id;
     this.form = {
-      name: item.name, contactPerson: item.contactPerson || '', phone: item.phone || '',
-      email: item.email || '', address: item.address || '', taxCode: item.taxCode || '',
-      bankName: item.bankName || '', bankAccount: item.bankAccount || '',
-      bankAccountHolder: item.bankAccountHolder || '', tier: item.tier, commissionRate: item.commissionRate,
+      name: item.name,
+      contactPerson: item.contactPerson || '',
+      phone: item.phone || '',
+      email: item.email || '',
+      address: item.address || '',
+      taxCode: item.taxCode || '',
+      bankName: item.bankName || '',
+      bankAccount: item.bankAccount || '',
+      bankAccountHolder: item.bankAccountHolder || '',
+      tier: item.tier,
+      commissionRate: item.commissionRate,
       notes: item.notes || '',
     };
     this.error.set('');
@@ -271,10 +345,12 @@ export class AgentsComponent implements OnInit {
     }
   }
 
-  viewDetail(item: AgentItem) { this.detailItem.set(item); }
+  viewDetail(item: AgentItem) {
+    this.detailItem.set(item);
+  }
 
   async suspend(item: AgentItem) {
-    if (confirm(`Tạm ngưng đại lý ${item.name}?`)) {
+    if (confirm(`Tạm ngừng đại lý ${item.name}?`)) {
       await this.svc.suspend(item._id);
       this.load();
     }

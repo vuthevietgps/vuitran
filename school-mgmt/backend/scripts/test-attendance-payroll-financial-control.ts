@@ -2,6 +2,9 @@
 import { strict as assert } from 'node:assert';
 import { Types } from 'mongoose';
 import { FinancialControlService } from '../src/financial-control/financial-control.service';
+import { FinancialControlBankFundService } from '../src/financial-control/financial-control-bank-fund.service';
+import { FinancialControlCashflowService } from '../src/financial-control/financial-control-cashflow.service';
+import { FinancialControlPnlService } from '../src/financial-control/financial-control-pnl.service';
 import { PayrollFinancialAggregateService } from '../src/financial-control/aggregates/payroll-financial.aggregate';
 import { ExpenseFinancialAggregateService } from '../src/financial-control/aggregates/expense-financial.aggregate';
 
@@ -265,26 +268,42 @@ async function main() {
     getRepaymentTimeline: async () => [],
   };
 
-  const service = new FinancialControlService(
-    empty as any,
-    empty as any,
-    empty as any,
-    empty as any,
-    createModel(() => state.sessions) as any,
-    createModel(() => state.expenses) as any,
-    createModel(() => state.invoices) as any,
-    empty as any,
-    empty as any,
-    createModel(() => state.adCosts) as any,
-    empty as any,
+  const bankFundService = new FinancialControlBankFundService(
     empty as any,
     empty as any,
     empty as any,
     empty as any,
     {} as any,
+  );
+  const cashflowService = new FinancialControlCashflowService(
+    createModel(() => state.sessions) as any,
+    createModel(() => state.invoices) as any,
+    empty as any,
+    empty as any,
+    createModel(() => state.adCosts) as any,
+    empty as any,
     payrollAggregate as any,
     expenseAggregate as any,
     loanAggregate as any,
+  );
+  const pnlService = new FinancialControlPnlService(
+    empty as any,
+    empty as any,
+    createModel(() => state.sessions) as any,
+    createModel(() => state.invoices) as any,
+    empty as any,
+    createModel(() => state.adCosts) as any,
+    payrollAggregate as any,
+    expenseAggregate as any,
+    loanAggregate as any,
+  );
+  const service = new FinancialControlService(
+    bankFundService as any,
+    cashflowService as any,
+    pnlService as any,
+    {} as any,
+    {} as any,
+    {} as any,
     {} as any,
   );
 

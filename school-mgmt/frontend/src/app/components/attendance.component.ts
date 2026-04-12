@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Role } from '../models/role.enum';
 import {
   AttendanceByClassResponse,
   AttendanceService,
@@ -8,6 +9,7 @@ import {
   BulkAttendancePayload,
   StudentAttendanceItem,
 } from '../services/attendance.service';
+import { AuthService } from '../services/auth.service';
 import { ClassItem } from '../services/class.service';
 import { FlowGuideComponent } from './shared/flow-guide.component';
 
@@ -19,7 +21,10 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
   <header class="page-header">
     <div>
       <h2>Quan ly diem danh</h2>
-      <p>Chi ghi nhan hoc sinh co mat. Hoc sinh nghi se duoc giu o trang thai chua diem danh.</p>
+      <p>
+        Giao vien chi tao link diem danh va gui cho hoc sinh. Hoc sinh tu submit qua link;
+        OPS va Director xu ly cac truong hop can sua thu cong.
+      </p>
     </div>
   </header>
   <app-flow-guide featureKey="attendance"></app-flow-guide>
@@ -28,7 +33,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     <div class="control-group">
       <label>
         Chon lop hoc:
-        <select [(ngModel)]="selectedClassId" (change)="onClassChange()" [disabled]="loading()">
+        <select data-testid="attendance-class-select" [(ngModel)]="selectedClassId" (change)="onClassChange()" [disabled]="loading()">
           <option value="">-- Chon lop hoc --</option>
           <option *ngFor="let cls of classes()" [value]="cls._id">
             {{ cls.code }} - {{ cls.name }} ({{ cls.studentCount || cls.students?.length || 0 }} hoc sinh)
@@ -41,6 +46,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
       <label>
         Ngay diem danh:
         <input
+          data-testid="attendance-date-input"
           type="date"
           [(ngModel)]="selectedDate"
           (change)="onDateChange()"
@@ -51,7 +57,7 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     </div>
 
     <div class="control-group" *ngIf="selectedClassId && selectedDate">
-      <button class="primary" (click)="loadAttendance()" [disabled]="loading()">
+      <button class="primary" data-testid="attendance-load-button" (click)="loadAttendance()" [disabled]="loading()">
         {{ loading() ? 'Dang tai...' : 'Tai danh sach' }}
       </button>
     </div>
@@ -65,24 +71,34 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
       <p>Ngay: {{ formatDate(attendanceData()?.date) }}</p>
     </div>
 
+    <div
+      class="permission-note"
+      data-testid="attendance-permission-note"
+      *ngIf="attendanceActionBlockedReason()"
+    >
+      {{ attendanceActionBlockedReason() }}
+    </div>
+
     <div class="attendance-summary" *ngIf="attendanceData()?.attendanceList?.length">
       <div class="summary-stats">
         <span class="stat present">Co mat: {{ getStatusCount(AttendanceStatus.PRESENT) }}</span>
+        <span class="stat absent">Vang mat: {{ getStatusCount(AttendanceStatus.ABSENT) }}</span>
+        <span class="stat late">Di muon: {{ getStatusCount(AttendanceStatus.LATE) }}</span>
         <span class="stat not-marked">Chua diem danh: {{ getStatusCount(null) }}</span>
       </div>
     </div>
 
-    <div class="attendance-actions" *ngIf="attendanceData()?.attendanceList?.length">
-      <button class="secondary" (click)="markAllPresent()" [disabled]="saving()">
+    <div class="attendance-actions" *ngIf="canEditAttendance() && attendanceData()?.attendanceList?.length">
+      <button class="secondary" data-testid="attendance-mark-all-present" (click)="markAllPresent()" [disabled]="saving()">
         Danh dau tat ca co mat
       </button>
-      <button class="primary" (click)="saveAttendance()" [disabled]="saving() || !hasChanges()">
+      <button class="primary" data-testid="attendance-save-button" (click)="saveAttendance()" [disabled]="saving() || !hasChanges()">
         {{ saving() ? 'Dang luu...' : 'Luu diem danh' }}
       </button>
     </div>
 
     <div class="attendance-list" *ngIf="attendanceData()?.attendanceList?.length; else noStudents">
-      <div class="student-card" *ngFor="let item of attendanceData()?.attendanceList; trackBy: trackByStudentId">
+      <div class="student-card" *ngFor="let item of attendanceData()?.attendanceList; trackBy: trackByStudentId" [attr.data-testid]="'attendance-student-card-' + item.student._id">
         <div class="student-info">
           <h4>{{ item.student.fullName }}</h4>
           <p>Tuoi: {{ item.student.age }} - Phu huynh: {{ item.student.parentName }}</p>
@@ -90,7 +106,9 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 
         <div class="student-actions">
           <button
+            *ngIf="canGenerateAttendanceLinks()"
             class="btn-link"
+            [attr.data-testid]="'attendance-generate-link-' + item.student._id"
             (click)="generateLinkForStudent(item.student._id)"
             [disabled]="!selectedDate || generatingLink === item.student._id"
             title="Tao link diem danh cho hoc sinh"
@@ -99,11 +117,12 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
           </button>
         </div>
 
-        <div class="attendance-controls-inline">
+        <div class="attendance-controls-inline" *ngIf="canEditAttendance()">
           <div class="status-selector">
             <button
               type="button"
               class="status-button present"
+              [attr.data-testid]="'attendance-present-' + item.student._id"
               [class.active]="item.attendance.status === AttendanceStatus.PRESENT"
               (click)="setStatus(item, AttendanceStatus.PRESENT)"
             >
@@ -112,7 +131,28 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
 
             <button
               type="button"
+              class="status-button absent"
+              [attr.data-testid]="'attendance-absent-' + item.student._id"
+              [class.active]="item.attendance.status === AttendanceStatus.ABSENT"
+              (click)="setStatus(item, AttendanceStatus.ABSENT)"
+            >
+              Vang mat
+            </button>
+
+            <button
+              type="button"
+              class="status-button late"
+              [attr.data-testid]="'attendance-late-' + item.student._id"
+              [class.active]="item.attendance.status === AttendanceStatus.LATE"
+              (click)="setStatus(item, AttendanceStatus.LATE)"
+            >
+              Di muon
+            </button>
+
+            <button
+              type="button"
               class="status-button neutral"
+              [attr.data-testid]="'attendance-unmark-' + item.student._id"
               [class.active]="item.attendance.status === null"
               (click)="setStatus(item, null)"
             >
@@ -145,11 +185,23 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .class-info { margin-bottom:20px; }
     .class-info h3 { margin:0 0 4px 0; color:#1e293b; }
     .class-info p { margin:0; color:#64748b; }
+    .permission-note {
+      margin-bottom:16px;
+      padding:12px 14px;
+      border-radius:8px;
+      border:1px solid #fed7aa;
+      background:#fff7ed;
+      color:#9a3412;
+      font-size:14px;
+      font-weight:500;
+    }
 
     .attendance-summary { margin-bottom:20px; }
     .summary-stats { display:flex; flex-wrap:wrap; gap:16px; }
     .stat { padding:8px 12px; border-radius:6px; font-size:14px; font-weight:500; }
     .stat.present { background:#dcfce7; color:#16a34a; }
+    .stat.absent { background:#fee2e2; color:#dc2626; }
+    .stat.late { background:#fef3c7; color:#d97706; }
     .stat.not-marked { background:#f1f5f9; color:#64748b; }
 
     .attendance-actions { display:flex; gap:12px; margin-bottom:24px; }
@@ -182,6 +234,8 @@ import { FlowGuideComponent } from './shared/flow-guide.component';
     .status-selector { display:flex; flex-wrap:wrap; gap:12px; }
     .status-button { border:1px solid #cbd5e1; background:#fff; color:#334155; padding:8px 14px; border-radius:999px; font-size:14px; font-weight:600; cursor:pointer; }
     .status-button.present.active { background:#dcfce7; border-color:#86efac; color:#166534; }
+    .status-button.absent.active { background:#fee2e2; border-color:#fca5a5; color:#b91c1c; }
+    .status-button.late.active { background:#fef3c7; border-color:#fcd34d; color:#b45309; }
     .status-button.neutral.active { background:#f1f5f9; border-color:#cbd5e1; color:#475569; }
 
     .no-data { text-align:center; color:#6b7280; font-style:italic; padding:32px; }
@@ -203,10 +257,33 @@ export class AttendanceComponent {
 
   private originalAttendanceData = new Map<string, AttendanceStatus | null>();
 
-  constructor(private attendanceService: AttendanceService) {
+  constructor(
+    private attendanceService: AttendanceService,
+    private authService: AuthService,
+  ) {
     this.todayString = this.formatLocalDateInput(new Date());
     this.selectedDate = this.todayString;
     this.loadClasses();
+  }
+
+  canEditAttendance(): boolean {
+    const permissions = this.attendanceData()?.permissions;
+    if (permissions) {
+      return permissions.canBulkEdit;
+    }
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS]);
+  }
+
+  canGenerateAttendanceLinks(): boolean {
+    const permissions = this.attendanceData()?.permissions;
+    if (permissions) {
+      return permissions.canGenerateLink;
+    }
+    return this.authService.hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER]);
+  }
+
+  attendanceActionBlockedReason(): string {
+    return this.attendanceData()?.permissions?.blockedReason || '';
   }
 
   async loadClasses() {
@@ -320,10 +397,7 @@ export class AttendanceComponent {
         ...item,
         attendance: {
           ...item.attendance,
-          status:
-            item.attendance.status === AttendanceStatus.PRESENT
-              ? AttendanceStatus.PRESENT
-              : null,
+          status: item.attendance.status ?? null,
           notes: '',
         },
       })),
@@ -338,6 +412,7 @@ export class AttendanceComponent {
   }
 
   setStatus(item: StudentAttendanceItem, status: AttendanceStatus | null) {
+    if (!this.canEditAttendance()) return;
     item.attendance.status = status;
     this.onStatusChange(item);
   }
@@ -348,7 +423,7 @@ export class AttendanceComponent {
 
   markAllPresent() {
     const data = this.attendanceData();
-    if (!data) return;
+    if (!data || !this.canEditAttendance()) return;
 
     data.attendanceList.forEach((item) => {
       item.attendance.status = AttendanceStatus.PRESENT;
@@ -369,7 +444,7 @@ export class AttendanceComponent {
 
   async saveAttendance() {
     const data = this.attendanceData();
-    if (!data || !this.hasChanges()) return;
+    if (!data || !this.canEditAttendance() || !this.hasChanges()) return;
 
     this.saving.set(true);
     this.error.set('');
@@ -448,6 +523,15 @@ export class AttendanceComponent {
   async generateLinkForStudent(studentId: string) {
     if (!this.selectedClassId || !this.selectedDate) {
       alert('Vui long chon lop va ngay truoc khi tao link');
+      return;
+    }
+
+    if (!this.canGenerateAttendanceLinks()) {
+      const message =
+        this.attendanceActionBlockedReason() ||
+        'Ban khong co quyen tao link diem danh cho lop hoc nay.';
+      this.error.set(message);
+      alert('Loi: ' + message);
       return;
     }
 

@@ -90,6 +90,16 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
       </select>
     </section>
 
+    <section
+      class="page-feedback"
+      *ngIf="pageFeedback() as feedback"
+      [class.page-feedback-success]="feedback.type === 'success'"
+      [class.page-feedback-error]="feedback.type === 'error'"
+      data-testid="trial-page-feedback"
+    >
+      {{ feedback.message }}
+    </section>
+
     <div class="table-wrap" *ngIf="filteredItems().length; else emptyState">
       <table class="data">
         <thead>
@@ -132,16 +142,69 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
               <span class="badge" [style.background]="statusColor(item.status) + '20'" [style.color]="statusColor(item.status)">
                 {{ statusLabel(item.status) }}
               </span>
+              <div
+                class="muted-line status-note"
+                *ngIf="item.teacherPaidOnlyDecision"
+                [attr.data-testid]="'trial-teacher-paid-only-note-' + item._id"
+              >
+                Van tra luong GV, khong charge PH
+              </div>
             </td>
             <td>
               <div>{{ item.updatedAt ? (item.updatedAt | date:'dd/MM/yyyy HH:mm') : (item.decisionAt ? (item.decisionAt | date:'dd/MM/yyyy HH:mm') : '-') }}</div>
               <div class="muted-line" *ngIf="item.notes">{{ item.notes }}</div>
             </td>
             <td class="actions-cell">
-              <button class="btn-sm" type="button" (click)="edit(item)" *ngIf="canEdit(item)">Sua</button>
-              <button class="btn-sm" type="button" (click)="markWaiting(item)" *ngIf="canEdit(item) && item.status === 'PENDING_TRIAL'">Cho chot</button>
-              <button class="btn-sm success" type="button" (click)="convert(item)" *ngIf="canApprove(item)">Chuyen doi</button>
-              <button class="btn-sm danger" type="button" (click)="reject(item)" *ngIf="canApprove(item)">Tu choi</button>
+              <button
+                class="btn-sm"
+                type="button"
+                (click)="edit(item)"
+                *ngIf="canEdit(item)"
+                [disabled]="isActionLoading(item)"
+                [attr.data-testid]="'trial-edit-' + item._id"
+              >
+                Sua
+              </button>
+              <button
+                class="btn-sm"
+                type="button"
+                (click)="markWaiting(item)"
+                *ngIf="canEdit(item) && item.status === 'PENDING_TRIAL'"
+                [disabled]="isActionLoading(item)"
+                [attr.data-testid]="'trial-waiting-' + item._id"
+              >
+                Cho chot
+              </button>
+              <button
+                class="btn-sm success"
+                type="button"
+                (click)="convert(item)"
+                *ngIf="canApprove(item)"
+                [disabled]="isActionLoading(item)"
+                [attr.data-testid]="'trial-convert-' + item._id"
+              >
+                Chuyen doi
+              </button>
+              <button
+                class="btn-sm warning"
+                type="button"
+                (click)="teacherPaidOnly(item)"
+                *ngIf="canTeacherPaidOnly(item)"
+                [disabled]="isActionLoading(item)"
+                [attr.data-testid]="'trial-teacher-paid-only-' + item._id"
+              >
+                {{ isActionLoading(item) ? 'Dang xu ly...' : 'Tra luong GV' }}
+              </button>
+              <button
+                class="btn-sm danger"
+                type="button"
+                (click)="reject(item)"
+                *ngIf="canApprove(item)"
+                [disabled]="isActionLoading(item)"
+                [attr.data-testid]="'trial-reject-' + item._id"
+              >
+                Tu choi
+              </button>
             </td>
           </tr>
         </tbody>
@@ -203,7 +266,7 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
             <label *ngIf="isSaleRole()">Sale phu trach
               <input [value]="currentUserName" disabled />
             </label>
-            <label>Trang thai
+            <label *ngIf="editingId">Trang thai
               <select name="status" [(ngModel)]="form.status">
                 <option *ngFor="let status of editableStatuses()" [value]="status">{{ statusLabel(status) }}</option>
               </select>
@@ -211,7 +274,7 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
             <label>So buoi hoc thu
               <input name="maxTrialSessions" type="number" min="1" [(ngModel)]="form.maxTrialSessions" />
             </label>
-            <label>So buoi da hoc
+            <label *ngIf="editingId">So buoi da hoc
               <input name="trialSessionsUsed" type="number" min="0" [(ngModel)]="form.trialSessionsUsed" />
             </label>
           </div>
@@ -300,6 +363,10 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
       background:#dcfce7;
       color:#166534;
     }
+    .btn-sm.warning {
+      background:#fef3c7;
+      color:#92400e;
+    }
     .btn-sm.danger {
       background:#fee2e2;
       color:#b91c1c;
@@ -376,6 +443,23 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
       grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));
       margin-bottom:18px;
     }
+    .page-feedback {
+      margin-bottom:18px;
+      padding:12px 16px;
+      border-radius:14px;
+      font-weight:700;
+      border:1px solid transparent;
+    }
+    .page-feedback-success {
+      background:#ecfdf5;
+      border-color:#bbf7d0;
+      color:#166534;
+    }
+    .page-feedback-error {
+      background:#fef2f2;
+      border-color:#fecaca;
+      color:#b91c1c;
+    }
     .filters input,
     .filters select,
     .modal input,
@@ -428,6 +512,10 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
       margin-top:4px;
       color:#64748b;
       font-size:12px;
+    }
+    .status-note {
+      font-weight:600;
+      color:#92400e;
     }
     .session-pill {
       display:inline-flex;
@@ -565,7 +653,9 @@ export class TrialEnrollmentsComponent implements OnInit {
   sales = signal<UserItem[]>([]);
   loading = signal(false);
   error = signal('');
+  pageFeedback = signal<{ type: 'success' | 'error'; message: string } | null>(null);
   showModal = signal(false);
+  actionLoadingId = signal<string | null>(null);
 
   editingId: string | null = null;
   keyword = '';
@@ -618,6 +708,14 @@ export class TrialEnrollmentsComponent implements OnInit {
 
   canApprove(item: TrialEnrollmentItem): boolean {
     return this.isDecisionRole() && item.status !== 'CONVERTED' && item.status !== 'REJECTED';
+  }
+
+  canTeacherPaidOnly(item: TrialEnrollmentItem): boolean {
+    return this.isDecisionRole() && item.status === 'WAITING_DECISION';
+  }
+
+  isActionLoading(item: TrialEnrollmentItem): boolean {
+    return this.actionLoadingId() === item._id;
   }
 
   editableStatuses(): TrialEnrollmentStatus[] {
@@ -704,6 +802,7 @@ export class TrialEnrollmentsComponent implements OnInit {
     if (!this.canCreate()) return;
     this.editingId = null;
     this.form = this.blankForm();
+    this.pageFeedback.set(null);
     if (this.isSaleRole()) {
       this.form.saleId = this.currentUserId;
     }
@@ -713,6 +812,7 @@ export class TrialEnrollmentsComponent implements OnInit {
 
   edit(item: TrialEnrollmentItem): void {
     if (!this.canEdit(item)) return;
+    this.pageFeedback.set(null);
     this.editingId = item._id;
     this.form = {
       studentName: item.studentName || '',
@@ -751,37 +851,79 @@ export class TrialEnrollmentsComponent implements OnInit {
     }
 
     this.closeModal();
+    this.pageFeedback.set({
+      type: 'success',
+      message: this.editingId ? 'Da cap nhat hoc thu' : 'Da tao hoc thu moi',
+    });
     await this.reload();
   }
 
   async markWaiting(item: TrialEnrollmentItem): Promise<void> {
     if (!this.canEdit(item)) return;
-    const result = await this.trialService.markWaitingDecision(item._id, item.notes);
-    if (!result.ok) {
-      this.error.set(result.message || 'Khong the danh dau cho quyet dinh');
-      return;
+    this.pageFeedback.set(null);
+    this.actionLoadingId.set(item._id);
+    try {
+      const result = await this.trialService.markWaitingDecision(item._id, item.notes);
+      if (!result.ok) {
+        this.pageFeedback.set({ type: 'error', message: result.message || 'Khong the danh dau cho quyet dinh' });
+        return;
+      }
+      this.pageFeedback.set({ type: 'success', message: 'Da chuyen trial sang Cho quyet dinh' });
+      await this.reload();
+    } finally {
+      this.actionLoadingId.set(null);
     }
-    await this.reload();
   }
 
   async convert(item: TrialEnrollmentItem): Promise<void> {
     if (!this.canApprove(item)) return;
-    const result = await this.trialService.convert(item._id, item.decisionNotes);
-    if (!result.ok) {
-      this.error.set(result.message || 'Khong the chuyen doi hoc thu');
-      return;
+    this.pageFeedback.set(null);
+    this.actionLoadingId.set(item._id);
+    try {
+      const result = await this.trialService.convert(item._id, item.decisionNotes);
+      if (!result.ok) {
+        this.pageFeedback.set({ type: 'error', message: result.message || 'Khong the chuyen doi hoc thu' });
+        return;
+      }
+      this.pageFeedback.set({ type: 'success', message: 'Da chuyen hoc thu thanh hoc vien chinh thuc' });
+      await this.reload();
+    } finally {
+      this.actionLoadingId.set(null);
     }
-    await this.reload();
   }
 
   async reject(item: TrialEnrollmentItem): Promise<void> {
     if (!this.canApprove(item)) return;
-    const result = await this.trialService.reject(item._id, item.decisionNotes);
-    if (!result.ok) {
-      this.error.set(result.message || 'Khong the tu choi hoc thu');
-      return;
+    this.pageFeedback.set(null);
+    this.actionLoadingId.set(item._id);
+    try {
+      const result = await this.trialService.reject(item._id, item.decisionNotes);
+      if (!result.ok) {
+        this.pageFeedback.set({ type: 'error', message: result.message || 'Khong the tu choi hoc thu' });
+        return;
+      }
+      this.pageFeedback.set({ type: 'success', message: 'Da chot hoc thu khong tiep tuc' });
+      await this.reload();
+    } finally {
+      this.actionLoadingId.set(null);
     }
-    await this.reload();
+  }
+
+  async teacherPaidOnly(item: TrialEnrollmentItem): Promise<void> {
+    if (!this.canTeacherPaidOnly(item)) return;
+    this.pageFeedback.set(null);
+    this.actionLoadingId.set(item._id);
+    try {
+      const result = await this.trialService.teacherPaidOnly(item._id, item.decisionNotes);
+      if (!result.ok) {
+        this.pageFeedback.set({ type: 'error', message: result.message || 'Khong the chot tra luong giao vien' });
+        return;
+      }
+      this.pageFeedback.set({ type: 'success', message: 'Da chot trial khong tiep tuc nhung van tra luong giao vien' });
+      await this.reload();
+    } finally {
+      this.actionLoadingId.set(null);
+    }
   }
 
   statusLabel(status: string): string {
@@ -847,11 +989,14 @@ export class TrialEnrollmentsComponent implements OnInit {
       classId: this.form.classId,
       productId: this.form.productId,
       saleId: this.isSaleRole() ? this.currentUserId : this.form.saleId || undefined,
-      status: this.form.status,
       maxTrialSessions: Number(this.form.maxTrialSessions || 2),
-      trialSessionsUsed: Number(this.form.trialSessionsUsed || 0),
       notes: this.normalizeText(this.form.notes),
     };
+
+    if (this.editingId) {
+      payload.status = this.form.status;
+      payload.trialSessionsUsed = Number(this.form.trialSessionsUsed || 0);
+    }
 
     if (!payload.studentName || !payload.parentName || !payload.parentPhone || !payload.classId || !payload.productId) {
       this.error.set('Vui long nhap day du thong tin bat buoc');

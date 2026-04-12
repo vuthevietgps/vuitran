@@ -488,15 +488,16 @@ const FLOW_DATA: Record<string, FlowInfo> = {
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="flow-guide" *ngIf="flowInfo">
-      <button class="flow-toggle" (click)="expanded = !expanded" [class.active]="expanded">
+    <div class="flow-guide" *ngIf="flowInfo" data-testid="flow-guide">
+      <button class="flow-toggle" type="button" data-testid="flow-guide-toggle" (click)="expanded = !expanded" [class.active]="expanded">
         &#9432; Mô tả luồng
         <span class="arrow">{{ expanded ? '&#9650;' : '&#9660;' }}</span>
       </button>
-      <div class="flow-content" *ngIf="expanded">
-        <p class="flow-summary">{{ flowInfo.summary }}</p>
-        <ol class="flow-steps">
-          <li *ngFor="let s of flowInfo.steps">
+      <div class="flow-content" *ngIf="expanded" data-testid="flow-guide-content">
+        <h3 class="flow-title" data-testid="flow-guide-title">{{ flowInfo.title }}</h3>
+        <p class="flow-summary" data-testid="flow-guide-summary">{{ flowInfo.summary }}</p>
+        <ol class="flow-steps" data-testid="flow-guide-steps">
+          <li *ngFor="let s of flowInfo.steps" data-testid="flow-guide-step">
             <strong>{{ s.step }}:</strong> {{ s.desc }}
           </li>
         </ol>
@@ -517,6 +518,12 @@ const FLOW_DATA: Record<string, FlowInfo> = {
     .flow-content {
       margin-top: 8px; padding: 16px; background: #f0f9ff;
       border: 1px solid #bae6fd; border-radius: 8px;
+    }
+    .flow-title {
+      margin: 0 0 10px;
+      color: #0f172a;
+      font-size: 16px;
+      font-weight: 700;
     }
     .flow-summary { margin: 0 0 12px; color: #0369a1; font-size: 14px; font-weight: 500; }
     .flow-steps {
