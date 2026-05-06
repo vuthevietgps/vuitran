@@ -29,6 +29,10 @@ export class InvoicesQueryService {
     throw new NotFoundException('Hoa don khong ton tai');
   }
 
+  private isPurchasedSessionsSourceStatus(status?: string | null): boolean {
+    return status === InvoiceStatus.APPROVED || status === InvoiceStatus.PAID;
+  }
+
   async findAll(actor: JwtPayload) {
     let filter: any = {};
     if (actor.role === Role.SALE) {
@@ -112,13 +116,13 @@ export class InvoicesQueryService {
     }));
 
     const totalPaid = invoices
-      .filter((i) => i.status === 'APPROVED')
+      .filter((i) => this.isPurchasedSessionsSourceStatus(i.status))
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     const totalPending = invoices
       .filter((i) => i.status === 'PENDING_APPROVAL')
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     const totalSessionsRemaining = invoices
-      .filter((i) => i.status === 'APPROVED')
+      .filter((i) => this.isPurchasedSessionsSourceStatus(i.status))
       .reduce((sum, i) => sum + getRemainingStudySessions(i), 0);
 
     return {

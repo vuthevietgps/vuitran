@@ -18,6 +18,7 @@ export interface OrderItem {
   teachingMode?: string;
   preferredSchedule?: string;
   selectedClassId?: string;
+  requestedClassCode?: string;
   createNewClassWhenApproved?: boolean;
   preferredTeacherId?: string;
   paymentRound?: number;

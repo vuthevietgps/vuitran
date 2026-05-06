@@ -514,7 +514,7 @@ export class ClassesCoreService {
         ...existing,
         ...update,
         pricingSnapshot: update.pricingSnapshot,
-      });
+      }, { preferPendingValues: true });
     }
 
     return { existingStudentIds, update, durationSnapshotData };
@@ -786,6 +786,10 @@ export class ClassesCoreService {
       .populate('coTeachers.assignedBy', 'fullName email role')
       .populate('pendingSaleUpdate.requestedBy', 'fullName email role')
       .populate('pendingSaleUpdate.reviewedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.studentIds', 'fullName studentCode')
+      .populate('pendingOfflineAssignments.invoiceId', 'invoiceNumber status')
+      .populate('pendingOfflineAssignments.requestedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.reviewedBy', 'fullName email role')
       .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
       .populate('students', 'fullName age parentName studentCode')
       .populate('studentConfigs.studentId', 'fullName studentCode')

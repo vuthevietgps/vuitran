@@ -121,6 +121,9 @@
             <label class="full-span">Mục tiêu học<textarea [(ngModel)]="item.learningGoals" [name]="'learningGoals_'+i" rows="2" placeholder="Mục tiêu học / yêu cầu lớp" [attr.data-testid]="'order-item-learning-goals-'+i"></textarea></label>
             <label class="full-span">Mô tả hóa đơn<textarea [(ngModel)]="item.invoiceDescription" [name]="'invoiceDescription_'+i" rows="2" placeholder="Nội dung hiển thị trên hóa đơn nếu cần" [attr.data-testid]="'order-item-invoice-description-'+i"></textarea></label>
           </div>
+          <div class="grid">
+            <label>Ma lop<input [(ngModel)]="item.requestedClassCode" [name]="'classCode_'+i" [disabled]="!!item.selectedClassId" (ngModelChange)="onRequestedClassCodeChange(item, $event)" placeholder="VD: CLS-OFF-001" [attr.data-testid]="'order-item-class-code-'+i" /></label>
+          </div>
           <p class="muted">{{ classSelectionHint(item) }}</p>
           <button type="button" class="btn-sm" *ngIf="form.items.length > 1" (click)="removeItem(i)" [attr.data-testid]="'order-item-remove-'+i">Xóa item</button>
         </div>
@@ -128,17 +131,16 @@
 
         <h4>Hóa đơn chờ duyệt</h4>
         <div class="grid">
-          <label>Kế hoạch<select name="paymentPlan" [(ngModel)]="form.paymentPlan" data-testid="order-payment-plan"><option *ngFor="let p of allPaymentPlans" [value]="p.value">{{ p.label }}</option></select></label>
           <label>Ngày thanh toán<input type="date" name="paymentDate" [(ngModel)]="form.paymentDate" data-testid="order-payment-date" /></label>
           <label>Hoa hồng sale<input type="number" name="saleCommission" [(ngModel)]="form.saleCommission" min="0" data-testid="order-sale-commission" /></label>
         </div>
-        <p class="muted section-note">Mỗi sản phẩm sẽ tạo một hóa đơn chờ duyệt. Số buổi HĐ, số hóa đơn và số tiền được nhập tại đây.</p>
+        <p class="muted section-note">Mỗi sản phẩm sẽ tạo 1 hóa đơn chờ duyệt. Ví phụ huynh được nạp theo đúng số tiền của từng hóa đơn, không chia đều theo kế hoạch.</p>
         <div class="invoice-list" data-testid="order-invoice-list">
           <div class="invoice-card" *ngFor="let item of form.items; let i = index">
             <div class="invoice-card-head">
               <div>
-                <strong>Hóa đơn {{ i + 1 }}</strong>
-                <div class="muted invoice-subtitle">{{ invoiceItemLabel(item, i) }}</div>
+                <strong>Hóa đơn</strong>
+                <div class="muted invoice-subtitle" *ngIf="invoiceCardSubtitle(item)">{{ invoiceCardSubtitle(item) }}</div>
               </div>
               <button type="button" class="btn-sm" (click)="resetInvoiceAmount(item)" [attr.data-testid]="'order-invoice-reset-'+i">Tính lại tiền</button>
             </div>
@@ -146,7 +148,7 @@
               <label>Tiền hóa đơn<input type="number" [(ngModel)]="item.amount" [name]="'invoiceAmount_'+i" min="0" (ngModelChange)="markInvoiceAmountEdited(item)" (blur)="normalizeInvoiceAmount(item)" [attr.data-testid]="'order-invoice-amount-'+i" /></label>
               <label>Số buổi HĐ<input type="number" [(ngModel)]="item.invoiceSessions" [name]="'invoiceSessions_'+i" min="0" (ngModelChange)="calcItemAmount(item)" (blur)="normalizeInvoiceSessions(item)" [attr.data-testid]="'order-invoice-sessions-'+i" /></label>
               <label>Số hóa đơn<input [(ngModel)]="item.invoiceNumber" [name]="'invoiceNumber_'+i" placeholder="VD: HD20260001" [attr.data-testid]="'order-invoice-number-'+i" /></label>
-              <label>Lần TT<input type="number" [(ngModel)]="item.paymentRound" [name]="'paymentRound_'+i" min="1" placeholder="Để trống để tự động" [attr.data-testid]="'order-invoice-payment-round-'+i" /></label>
+              <label>Lần TT<input [value]="''" [name]="'paymentRound_'+i" disabled placeholder="Tự động" [attr.data-testid]="'order-invoice-payment-round-'+i" /></label>
             </div>
           </div>
         </div>
@@ -169,7 +171,7 @@
         <div><strong>Phụ huynh:</strong> {{ o.parentName }} - {{ o.parentPhone }}</div><div><strong>Mã PH:</strong> {{ o.parentUserCode || '-' }}</div>
         <div><strong>Học sinh:</strong> {{ o.studentName }}</div><div><strong>Mã HS:</strong> {{ o.studentCode || '-' }}</div>
         <div><strong>Level:</strong> {{ o.studentLevel || '-' }}</div><div><strong>Tuổi:</strong> {{ o.studentAge || '-' }}</div>
-        <div><strong>Ngày TT:</strong> {{ o.paymentDate ? (o.paymentDate | date:'yyyy-MM-dd') : '-' }}</div><div><strong>Kế hoạch TT:</strong> {{ paymentPlanLabel(o.paymentPlan) }}</div>
+        <div><strong>Ngày TT:</strong> {{ o.paymentDate ? (o.paymentDate | date:'yyyy-MM-dd') : '-' }}</div><div><strong>Hoa hồng sale:</strong> {{ (o.saleCommission || 0) | number }}d</div>
         <div data-testid="order-detail-course-price"><strong>Giá tiền khóa học:</strong> {{ orderCoursePrice(o) | number }}d</div><div data-testid="order-detail-invoice-amount"><strong>Số tiền hóa đơn:</strong> {{ orderInvoiceAmount(o) | number }}d</div>
         <div *ngIf="showPartialPaymentStatus(o)" data-testid="order-detail-paid-amount"><strong>Đã thanh toán:</strong> {{ partialPaymentPaidAmount(o) | number }}d</div><div *ngIf="showPartialPaymentStatus(o)" data-testid="order-detail-remaining-amount"><strong>Còn thiếu:</strong> {{ partialPaymentRemainingAmount(o) | number }}d</div>
         <div *ngIf="showPartialPaymentStatus(o)" data-testid="order-detail-partial-badge"><strong>Trạng thái thanh toán:</strong> <span class="badge payment-gap-badge">Chưa thanh toán đủ</span></div><div *ngIf="showPartialPaymentStatus(o)"><strong>Tổng phải thu:</strong> {{ orderRequiredPaymentAmount(o) | number }}d</div>

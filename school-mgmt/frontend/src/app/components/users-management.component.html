@@ -15,17 +15,30 @@
 
 <section class="filters">
   <input
-    placeholder="Tim theo ma, email hoac ho ten"
+    placeholder="Tim theo ma, email, ho ten hoac so dien thoai"
     [(ngModel)]="search"
-    (ngModelChange)="onFilterChange()" />
-  <select *ngIf="canViewAllAccounts()" [(ngModel)]="roleFilter" (ngModelChange)="onFilterChange()">
+    (ngModelChange)="onFilterChange()"
+    (keyup.enter)="onPrimaryAction()" />
+  <select *ngIf="canViewAllAccounts() && !parentMode()" [(ngModel)]="roleFilter" (ngModelChange)="onFilterChange()">
     <option value="">Tat ca role</option>
     <option *ngFor="let r of roleOptions" [value]="r.value">{{ r.label }}</option>
   </select>
-  <button (click)="reload()">Lam moi</button>
+  <button type="button" class="primary" (click)="onPrimaryAction()" [disabled]="loading()">
+    {{ usesServerParentPaging() ? 'Tim kiem' : 'Lam moi' }}
+  </button>
+  <button
+    type="button"
+    class="ghost"
+    *ngIf="usesServerParentPaging()"
+    (click)="reload()"
+    [disabled]="loading()">
+    Tai lai
+  </button>
 </section>
 
-<section class="table-wrapper" *ngIf="filteredUsers.length; else empty">
+<p class="loading-text" *ngIf="loading()">Dang tai danh sach tai khoan...</p>
+
+<section class="table-wrapper" *ngIf="pagedUsers.length; else empty">
   <div class="table-scroll">
     <table class="data">
       <thead>
@@ -45,7 +58,7 @@
       </thead>
       <tbody>
         <tr
-          *ngFor="let u of pagedUsers"
+          *ngFor="let u of pagedUsers; trackBy: trackUserById"
           [attr.data-testid]="'users-row-' + u._id"
           [class.selected]="parentMode() && selectedParentId === u._id"
           (click)="selectParent(u)">
@@ -92,9 +105,9 @@
     </label>
 
     <div class="pager">
-      <button type="button" (click)="goPrevPage()" [disabled]="safeCurrentPage <= 1">Truoc</button>
-      <span>Trang {{ safeCurrentPage }}/{{ totalPages }} ({{ pageStart }}-{{ pageEnd }} / {{ filteredUsers.length }})</span>
-      <button type="button" (click)="goNextPage()" [disabled]="safeCurrentPage >= totalPages">Sau</button>
+      <button type="button" (click)="goPrevPage()" [disabled]="safeCurrentPage <= 1 || loading()">Truoc</button>
+      <span>Trang {{ safeCurrentPage }}/{{ totalPages }} ({{ pageStart }}-{{ pageEnd }} / {{ totalUserCount }})</span>
+      <button type="button" (click)="goNextPage()" [disabled]="safeCurrentPage >= totalPages || loading()">Sau</button>
     </div>
   </div>
 </section>
@@ -276,7 +289,7 @@
   </div>
 </section>
 
-<ng-template #empty><p>Khong co du lieu hoac khong trung bo loc.</p></ng-template>
+<ng-template #empty><p *ngIf="!loading()">Khong co du lieu hoac khong trung bo loc.</p></ng-template>
 
 <div class="modal-backdrop" *ngIf="showModal()">
   <div class="modal" data-testid="users-edit-modal">

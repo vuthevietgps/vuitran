@@ -817,6 +817,208 @@ describe('Trial enrollment and order propagation (e2e)', () => {
     expect(wallet).toBeNull();
   });
 
+  it('keeps approved zero-amount trial orders in trial-pending state until the parent decides to continue', async () => {
+    const trial = await createTrialEnrollment({
+      parentPhone: '0905000031',
+      parentEmail: 'trial-attendance.approve@school.local',
+      studentPhone: '0905000032',
+      notes: 'Approved trial attendance path',
+    });
+    const studentId = String(trial.studentId?._id || trial.studentId);
+
+    const order = await createSubmittedOrderForStudent(studentId, {
+      parentPhone: '0905000031',
+      parentEmail: 'trial-attendance.approve@school.local',
+      receiptImage: '',
+      items: [
+        {
+          productId: offlineProductId,
+          productName: 'Offline Trial Package',
+          sessions: 1,
+          invoiceSessions: 0,
+          trialSessions: 1,
+          sessionDuration: 90,
+          baseDuration: 90,
+          pricePerSession: 150000,
+          amount: 0,
+          teachingMode: 'OFFLINE',
+          selectedClassId: offlineClassId,
+          preferredTeacherId: String(teacherUser._id),
+          teacherPayPerSession: 0,
+          teacherPayPerStudent: 80000,
+          notes: 'Approved trial attendance path',
+        },
+      ],
+      totalAmount: 0,
+      finalAmount: 0,
+    });
+
+    const approveRes = await authedPost(opsSession, `/orders/${order.orderId}/approve`)
+      .send({})
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+    const invoiceId = String(approveRes.body.enrollment.invoiceIds[0]);
+
+    const markRes = await authedPost(opsSession, '/attendance/mark')
+      .send({
+        classId: offlineClassId,
+        studentId,
+        date: trialDay,
+        status: 'PRESENT',
+        notes: 'approved trial attendance',
+      })
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    const sessionId = String(markRes.body.sessionId);
+    const sessionAfterAttendance = await sessionModel.findById(sessionId).lean() as any;
+    expect(sessionAfterAttendance).toBeTruthy();
+    expect(sessionAfterAttendance.sessionType).toBe('TRIAL');
+    expect(sessionAfterAttendance.trialConverted).toBe(false);
+    expect(sessionAfterAttendance.trialRejectedNoPay).toBe(false);
+    expect(sessionAfterAttendance.trialTeacherPaidOnly).toBe(false);
+    expect(sessionAfterAttendance.amountCharged).toBe(150000);
+
+    await submitTeachingReportAndFinalize(
+      sessionId,
+      'Approved zero-amount trial order attendance should remain pending the final trial decision.',
+    );
+
+    const finalizedSession = await waitForValue(
+      async () => sessionModel.findById(sessionId).lean() as any,
+      'finalized approved trial session pending decision',
+      (value) =>
+        value?.status === 'FINALIZED'
+        && value?.sessionType === 'TRIAL'
+        && value?.trialConverted === false,
+    );
+    const storedInvoice = await invoiceModel.findById(invoiceId).lean() as any;
+
+    expect(finalizedSession.status).toBe('FINALIZED');
+    expect(finalizedSession.sessionType).toBe('TRIAL');
+    expect(finalizedSession.trialConverted).toBe(false);
+    expect(finalizedSession.amountCharged).toBe(150000);
+    expect(finalizedSession.isPaid).toBe(false);
+    expect(finalizedSession.invoiceConsumptionApplied).toBe(false);
+    expect(Number(finalizedSession.consumedInvoiceUnits || 0)).toBe(0);
+    expect(finalizedSession.consumedInvoiceAmount).toBe(0);
+
+    expect(storedInvoice.trialSessionsRemaining).toBe(1);
+    expect(storedInvoice.sessionsRemaining).toBe(0);
+    expect(storedInvoice.bonusSessionsRemaining).toBe(0);
+  });
+
+  it('converts an approved zero-amount trial order into negative wallet debt when the parent continues later', async () => {
+    const trial = await createTrialEnrollment({
+      parentPhone: '0905000033',
+      parentEmail: 'trial-debt.approve@school.local',
+      studentPhone: '0905000034',
+      notes: 'Approved trial should create wallet debt on conversion',
+    });
+    const trialId = String(trial._id);
+    const studentId = String(trial.studentId?._id || trial.studentId);
+
+    const order = await createSubmittedOrderForStudent(studentId, {
+      parentPhone: '0905000033',
+      parentEmail: 'trial-debt.approve@school.local',
+      receiptImage: '',
+      items: [
+        {
+          productId: offlineProductId,
+          productName: 'Offline Trial Package',
+          sessions: 1,
+          invoiceSessions: 0,
+          trialSessions: 1,
+          sessionDuration: 90,
+          baseDuration: 90,
+          pricePerSession: 150000,
+          amount: 0,
+          teachingMode: 'OFFLINE',
+          selectedClassId: offlineClassId,
+          preferredTeacherId: String(teacherUser._id),
+          teacherPayPerSession: 0,
+          teacherPayPerStudent: 80000,
+          notes: 'Approved trial should convert into wallet debt later',
+        },
+      ],
+      totalAmount: 0,
+      finalAmount: 0,
+    });
+
+    const approveRes = await authedPost(opsSession, `/orders/${order.orderId}/approve`)
+      .send({})
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+    const invoiceId = String(approveRes.body.enrollment.invoiceIds[0]);
+
+    const markRes = await authedPost(opsSession, '/attendance/mark')
+      .send({
+        classId: offlineClassId,
+        studentId,
+        date: trialDay,
+        status: 'PRESENT',
+        notes: 'approved trial attendance before conversion',
+      })
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    const sessionId = String(markRes.body.sessionId);
+    await submitTeachingReportAndFinalize(
+      sessionId,
+      'Approved trial finalized before the parent confirms continuing.',
+    );
+
+    await authedPost(saleSession, `/trial-enrollments/${trialId}/convert`)
+      .send({
+        orderId: order.orderId,
+        invoiceId,
+        decisionNotes: 'Parent continues after the trial; keep the trial as a charged attendance session.',
+      })
+      .expect((res) => {
+        expect([200, 201]).toContain(res.status);
+      });
+
+    const student = await studentModel.findById(studentId).lean() as any;
+    const convertedSession = await waitForValue(
+      async () => sessionModel.findById(sessionId).lean() as any,
+      'converted approved-trial session debt settlement',
+      (value) =>
+        value?.trialConverted === true
+        && value?.isPaid === true
+        && value?.invoiceConsumptionApplied === true,
+    );
+    const wallet = await walletModel.findOne({
+      userId: student.parentUserId,
+    }).lean() as any;
+    const convertedInvoice = await waitForValue(
+      async () => invoiceModel.findById(invoiceId).lean() as any,
+      'converted approved-trial invoice allowance consumption',
+      (value) => Number(value?.trialSessionsRemaining ?? -1) === 0,
+    );
+
+    expect(student.parentUserId).toBeTruthy();
+    expect(convertedSession.sessionType).toBe('TRIAL');
+    expect(convertedSession.trialConverted).toBe(true);
+    expect(convertedSession.trialRejectedNoPay).toBe(false);
+    expect(convertedSession.amountCharged).toBe(150000);
+    expect(convertedSession.isPaid).toBe(true);
+    expect(convertedSession.invoiceConsumptionApplied).toBe(true);
+    expect(Number(convertedSession.consumedInvoiceUnits || 0)).toBe(1);
+    expect(convertedSession.consumedInvoiceAmount).toBe(0);
+
+    expect(wallet).toBeTruthy();
+    expect(wallet.balance).toBe(-150000);
+
+    expect(convertedInvoice.amount).toBe(0);
+    expect(convertedInvoice.trialSessionsRemaining).toBe(0);
+    expect(convertedInvoice.sessionsRemaining).toBe(0);
+    expect(convertedInvoice.bonusSessionsRemaining).toBe(0);
+  });
+
   it.each([
     {
       label: 'OPS without proofs',

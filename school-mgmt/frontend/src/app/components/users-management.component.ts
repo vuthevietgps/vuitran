@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
@@ -51,14 +51,17 @@ interface UserManagementForm {
   imports: [CommonModule, FormsModule, FlowGuideComponent],
   templateUrl: './users-management.component.html',
   styleUrls: ['./users-management.component.css'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class UsersManagementComponent {
   private readonly parentRole = 'PARENT';
   private parentAdsRequestSeq = 0;
+  private appliedParentSearch = '';
 
   users = signal<UserItem[]>([]);
   showModal = signal(false);
   error = signal('');
+  loading = signal(false);
   parentMode = signal(false);
   adGroups = signal<AdGroupItem[]>([]);
   adGroupsLoading = signal(false);
@@ -72,14 +75,16 @@ export class UsersManagementComponent {
   parentOwnerSaving = signal(false);
   parentOwnerError = signal('');
   parentOwnerSuccess = signal('');
+  totalItems = signal(0);
+  serverTotalPages = signal(1);
 
   search = '';
   roleFilter = '';
   adGroupSearch = '';
   selectedParentAdGroupId = '';
   selectedParentSaleOwnerId = '';
-  pageSizeOptions: number[] = [50, 100, 200];
-  pageSize = 50;
+  pageSizeOptions: number[] = [25, 50, 100];
+  pageSize = 25;
   currentPage = 1;
   selectedParentId: string | null = null;
   editingOriginalRole: string | null = null;
@@ -116,25 +121,25 @@ export class UsersManagementComponent {
 
       if (isParentMode) this.roleFilter = this.parentRole;
       if (!isParentMode && wasParentMode && this.roleFilter === this.parentRole) this.roleFilter = '';
-      if (!isParentMode) this.selectedParentId = null;
+      if (isParentMode) {
+        this.appliedParentSearch = this.search.trim();
+      } else {
+        this.appliedParentSearch = '';
+        this.selectedParentId = null;
+      }
 
       this.currentPage = 1;
-      this.syncParentSelection();
-      if (isParentMode) {
-        if (this.canAssignParentOwner()) {
-          void this.ensureSalesLoaded();
-        }
-        if (this.canManageParentAds()) {
-          void this.ensureAdGroupsLoaded();
-        }
-      } else {
+      if (!isParentMode) {
         this.resetParentAdsState();
       }
+      void this.reload();
     });
-    this.reload();
   }
 
   get filteredUsers(): UserItem[] {
+    if (this.usesServerParentPaging()) {
+      return this.users();
+    }
     const term = this.search.trim().toLowerCase();
     return this.users().filter((u) =>
       (!this.roleFilter || u.role === this.roleFilter) &&
@@ -146,6 +151,9 @@ export class UsersManagementComponent {
   }
 
   get totalPages(): number {
+    if (this.usesServerParentPaging()) {
+      return Math.max(1, this.serverTotalPages());
+    }
     return Math.max(1, Math.ceil(this.filteredUsers.length / this.pageSize));
   }
 
@@ -154,18 +162,25 @@ export class UsersManagementComponent {
   }
 
   get pagedUsers(): UserItem[] {
+    if (this.usesServerParentPaging()) {
+      return this.users();
+    }
     const start = (this.safeCurrentPage - 1) * this.pageSize;
     return this.filteredUsers.slice(start, start + this.pageSize);
   }
 
+  get totalUserCount(): number {
+    return this.usesServerParentPaging() ? this.totalItems() : this.filteredUsers.length;
+  }
+
   get pageStart(): number {
-    if (!this.filteredUsers.length) return 0;
+    if (!this.totalUserCount) return 0;
     return (this.safeCurrentPage - 1) * this.pageSize + 1;
   }
 
   get pageEnd(): number {
-    if (!this.filteredUsers.length) return 0;
-    return Math.min(this.pageStart + this.pageSize - 1, this.filteredUsers.length);
+    if (!this.totalUserCount) return 0;
+    return Math.min(this.pageStart + this.pagedUsers.length - 1, this.totalUserCount);
   }
 
   get selectedParentDetail(): UserItem | null {
@@ -213,6 +228,10 @@ export class UsersManagementComponent {
 
   canManageParentAds(): boolean {
     return this.currentUserRole() === 'DIRECTOR';
+  }
+
+  usesServerParentPaging(): boolean {
+    return this.parentMode();
   }
 
   canEditUser(user: UserItem): boolean {
@@ -343,25 +362,58 @@ export class UsersManagementComponent {
 
   onFilterChange() {
     this.currentPage = 1;
+    if (this.usesServerParentPaging()) {
+      return;
+    }
     this.syncParentSelection();
   }
 
   onPageSizeChange(value: number) {
     this.pageSize = Number(value) || this.pageSizeOptions[0];
     this.currentPage = 1;
+    if (this.usesServerParentPaging()) {
+      void this.reload();
+      return;
+    }
     this.syncParentSelection();
   }
 
   goPrevPage() {
     if (this.safeCurrentPage <= 1) return;
     this.currentPage = this.safeCurrentPage - 1;
+    if (this.usesServerParentPaging()) {
+      void this.reload();
+      return;
+    }
     this.syncParentSelection();
   }
 
   goNextPage() {
     if (this.safeCurrentPage >= this.totalPages) return;
     this.currentPage = this.safeCurrentPage + 1;
+    if (this.usesServerParentPaging()) {
+      void this.reload();
+      return;
+    }
     this.syncParentSelection();
+  }
+
+  applyFilters() {
+    this.currentPage = 1;
+    if (this.usesServerParentPaging()) {
+      this.appliedParentSearch = this.search.trim();
+      void this.reload();
+      return;
+    }
+    this.syncParentSelection();
+  }
+
+  onPrimaryAction() {
+    if (this.usesServerParentPaging()) {
+      this.applyFilters();
+      return;
+    }
+    void this.reload();
   }
 
   selectParent(user: UserItem) {
@@ -670,17 +722,34 @@ export class UsersManagementComponent {
   }
 
   async reload() {
-    const data = this.parentMode() || this.isSaleViewer()
-      ? await this.userService.listParents()
-      : await this.userService.list();
-    this.users.set(data);
-    this.currentPage = this.safeCurrentPage;
-    this.syncParentSelection();
-    if (this.parentMode() && this.canAssignParentOwner()) {
-      void this.ensureSalesLoaded();
-    }
-    if (this.parentMode() && this.canManageParentAds()) {
-      void this.ensureAdGroupsLoaded();
+    this.loading.set(true);
+    try {
+      if (this.usesServerParentPaging()) {
+        const response = await this.userService.listParentsManagement({
+          search: this.appliedParentSearch,
+          page: this.currentPage,
+          limit: this.pageSize,
+        });
+        this.users.set(Array.isArray(response.data) ? response.data : []);
+        this.totalItems.set(Number(response.meta?.total || 0));
+        this.serverTotalPages.set(Math.max(1, Number(response.meta?.totalPages || 1)));
+        this.currentPage = Number(response.meta?.page || 1);
+      } else {
+        const data = await this.userService.list();
+        this.users.set(data);
+        this.totalItems.set(data.length);
+        this.serverTotalPages.set(Math.max(1, Math.ceil(data.length / this.pageSize)));
+        this.currentPage = this.safeCurrentPage;
+      }
+      this.syncParentSelection();
+      if (this.parentMode() && this.canAssignParentOwner()) {
+        void this.ensureSalesLoaded();
+      }
+      if (this.parentMode() && this.canManageParentAds()) {
+        void this.ensureAdGroupsLoaded();
+      }
+    } finally {
+      this.loading.set(false);
     }
   }
 
@@ -946,5 +1015,9 @@ export class UsersManagementComponent {
   isSelf(user: UserItem): boolean {
     const current = this.auth.userSignal();
     return !!current && current.sub === user._id;
+  }
+
+  trackUserById(_index: number, user: UserItem): string {
+    return user._id;
   }
 }

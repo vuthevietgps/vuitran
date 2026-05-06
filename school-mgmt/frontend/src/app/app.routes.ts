@@ -2,11 +2,18 @@ import { Routes } from '@angular/router';
 import { authGuard } from './guards/auth.guard';
 import { roleGuard } from './guards/role.guard';
 import { Role } from './models/role.enum';
+import { erpLaunchClusterContent } from './content/erp-launch';
 
 const ALL_ROLES = Object.values(Role) as Role[];
 const NON_SHAREHOLDER_ROLES = ALL_ROLES.filter((role) => role !== Role.SHAREHOLDER) as Role[];
 const INVESTOR_ROLES = [Role.DIRECTOR, Role.SHAREHOLDER];
 const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.SHAREHOLDER];
+const ERP_LAUNCH_PUBLIC_ROUTES: Routes = erpLaunchClusterContent.publicLinks.map(({ slug }) => ({
+  path: `lp/${slug}`,
+  loadComponent: () =>
+    import('./components/landing-pages/erp-launch-landing/erp-launch-landing.component').then((m) => m.ErpLaunchLandingComponent),
+  data: { erpLaunchSlug: slug },
+}));
 
 export const routes: Routes = [
   {
@@ -29,6 +36,7 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./components/landing-pages/shareholder-collaboration-landing.component').then((m) => m.ShareholderCollaborationLandingComponent),
   },
+  ...ERP_LAUNCH_PUBLIC_ROUTES,
   {
     path: 'lp/:slug',
     loadComponent: () =>

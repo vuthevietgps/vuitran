@@ -135,30 +135,12 @@ export class SessionTrialService {
     classId: string,
     actorUserId?: string,
   ): Promise<{ updated: number; excludedPayroll: number }> {
-    await this.ensureOfflineTrialClass(classId);
-
-    const trialSessions = await this.sessionModel.find({
-      studentId: new Types.ObjectId(studentId),
-      classId: new Types.ObjectId(classId),
-      sessionType: SessionType.TRIAL,
-      trialConverted: false,
-      trialTeacherPaidOnly: false,
-    });
-
-    let updated = 0;
-    for (const session of trialSessions) {
-      session.trialTeacherPaidOnly = true;
-      (session as any).trialRejectedNoPay = false;
-      session.isTeacherPaid = true;
-      await session.save();
-      updated++;
-    }
-
-    this.logger.log(
-      `Trial teacher-paid-only: student ${studentId} class ${classId} -> ${updated} sessions, 0 payroll exclusions`,
+    this.logger.warn(
+      `Trial teacher-paid-only is disabled by business rule: student ${studentId} class ${classId} actor ${actorUserId || 'unknown'}`,
     );
-
-    return { updated, excludedPayroll: 0 };
+    throw new BadRequestException(
+      'Hoc thu khong ho tro che do tra luong GV rieng; neu khong hoc tiep thi giao vien khong duoc tinh luong',
+    );
   }
 
   private async ensureOfflineTrialClass(classId: string): Promise<void> {

@@ -34,6 +34,25 @@ export class AttendanceQueryService {
     private readonly storageUrlService: StorageUrlService,
   ) {}
 
+  private buildAccessibleClassesFilter(user: JwtPayload) {
+    if (!isTeacher(user)) {
+      return {};
+    }
+
+    const teacherId = new Types.ObjectId(getUserId(user));
+    return {
+      $or: [
+        { teacher: teacherId },
+        { 'substituteTeachers.teacherId': teacherId },
+        { 'coTeachers.teacherId': teacherId },
+      ],
+    };
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   async loadStudentsForClass(
     classroom: ClassLean,
     user: JwtPayload,
@@ -199,6 +218,7 @@ export class AttendanceQueryService {
     const [data, total] = await Promise.all([
       this.attendanceModel
         .find(filter)
+        .select('date attendedAt updatedAt status imageUrl studentId classId teacherId notes')
         .populate('studentId', 'fullName age parentName faceImage studentCode totalPurchasedSessions')
         .populate('classId', 'name code')
         .populate('teacherId', 'fullName email')
@@ -218,6 +238,42 @@ export class AttendanceQueryService {
         totalPages: Math.ceil(total / limit) || 1,
       },
     });
+  }
+
+  async getAttendanceReportClasses(user: JwtPayload, search?: string, limit: number = 50) {
+    const safeLimit = Math.min(Math.max(Number(limit) || 50, 1), 100);
+    const trimmedSearch = String(search || '').trim();
+    const filters: any[] = [];
+    const accessibleClassesFilter = this.buildAccessibleClassesFilter(user);
+
+    if (Object.keys(accessibleClassesFilter).length) {
+      filters.push(accessibleClassesFilter);
+    }
+
+    if (trimmedSearch) {
+      const searchRegex = new RegExp(this.escapeRegex(trimmedSearch), 'i');
+      filters.push({
+        $or: [
+          { code: searchRegex },
+          { name: searchRegex },
+        ],
+      });
+    }
+
+    const filter = !filters.length ? {} : filters.length === 1 ? filters[0] : { $and: filters };
+    const classes = await this.classModel
+      .find(filter)
+      .select('code name students')
+      .sort({ code: 1, name: 1 })
+      .limit(safeLimit)
+      .lean();
+
+    return classes.map((cls: any) => ({
+      _id: cls._id.toString(),
+      code: cls.code || '',
+      name: cls.name || cls.code || 'Lop hoc',
+      studentCount: Array.isArray(cls.students) ? cls.students.length : 0,
+    }));
   }
 
   async getTeacherClassAssignments(user: JwtPayload) {
@@ -358,16 +414,7 @@ export class AttendanceQueryService {
   }
 
   async getClassesWithStudents(user: JwtPayload) {
-    const filter: any = {};
-
-    if (isTeacher(user)) {
-      const teacherId = new Types.ObjectId(getUserId(user));
-      filter.$or = [
-        { teacher: teacherId },
-        { 'substituteTeachers.teacherId': teacherId },
-        { 'coTeachers.teacherId': teacherId },
-      ];
-    }
+    const filter = this.buildAccessibleClassesFilter(user);
 
     const classes = await this.classModel
       .find(filter)

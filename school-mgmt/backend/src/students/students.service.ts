@@ -195,11 +195,29 @@ export class StudentsService {
     classId?: string,
     searchTerm?: string,
     actor?: JwtPayload,
+    page?: number,
+    limit?: number,
   ) {
     return this.studentReportService.getStudentReport(
       classId,
       searchTerm,
       actor,
+      page,
+      limit,
+    );
+  }
+
+  async getStudentReportClasses(
+    searchTerm?: string,
+    actor?: JwtPayload,
+    limit?: number,
+    classMode?: 'ONLINE' | 'OFFLINE',
+  ) {
+    return this.studentReportService.getStudentReportClasses(
+      searchTerm,
+      actor,
+      limit,
+      classMode,
     );
   }
 
@@ -207,11 +225,35 @@ export class StudentsService {
     classId?: string,
     searchTerm?: string,
     actor?: JwtPayload,
+    saleId?: string,
+    dataStatus?: string,
+    page?: number,
+    limit?: number,
+    classMode?: 'ONLINE' | 'OFFLINE',
   ) {
     return this.studentReportService.getComprehensiveReport(
       classId,
       searchTerm,
       actor,
+      saleId,
+      dataStatus,
+      page,
+      limit,
+      classMode,
+    );
+  }
+
+  async getComprehensiveReportClasses(
+    searchTerm?: string,
+    actor?: JwtPayload,
+    limit?: number,
+    classMode?: 'ONLINE' | 'OFFLINE',
+  ) {
+    return this.studentReportService.getComprehensiveReportClasses(
+      searchTerm,
+      actor,
+      limit,
+      classMode,
     );
   }
 

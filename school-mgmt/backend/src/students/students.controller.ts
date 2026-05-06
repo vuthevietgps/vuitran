@@ -3,7 +3,7 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
-import { StudentReportQueryDto } from './dto/student-report.dto';
+import { ComprehensiveReportClassesQueryDto, StudentReportQueryDto } from './dto/student-report.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -29,16 +29,43 @@ export class StudentsController {
     return this.studentsService.findPendingApproval();
   }
 
+  @Get('report/classes')
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
+  getStudentReportClasses(@Query() query: ComprehensiveReportClassesQueryDto, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.getStudentReportClasses(query.searchTerm, req.user, query.limit, query.classMode);
+  }
+
   @Get('report')
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
   getStudentReport(@Query() query: StudentReportQueryDto, @Req() req: AuthenticatedRequest) {
-    return this.studentsService.getStudentReport(query.classId, query.searchTerm, req.user);
+    return this.studentsService.getStudentReport(
+      query.classId,
+      query.searchTerm,
+      req.user,
+      query.page,
+      query.limit,
+    );
   }
 
   @Get('comprehensive-report')
   @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
   getComprehensiveReport(@Query() query: StudentReportQueryDto, @Req() req: AuthenticatedRequest) {
-    return this.studentsService.getComprehensiveReport(query.classId, query.searchTerm, req.user);
+    return this.studentsService.getComprehensiveReport(
+      query.classId,
+      query.searchTerm,
+      req.user,
+      query.saleId,
+      query.dataStatus,
+      query.page,
+      query.limit,
+      query.classMode,
+    );
+  }
+
+  @Get('comprehensive-report/classes')
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING)
+  getComprehensiveReportClasses(@Query() query: ComprehensiveReportClassesQueryDto, @Req() req: AuthenticatedRequest) {
+    return this.studentsService.getComprehensiveReportClasses(query.searchTerm, req.user, query.limit, query.classMode);
   }
 
   @Post()

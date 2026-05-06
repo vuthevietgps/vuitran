@@ -19,8 +19,6 @@ const STATUS_LABELS: Record<string, string> = { DRAFT: 'Nháp', SUBMITTED: 'Ch�
 const STATUS_COLORS: Record<string, string> = { DRAFT: '#64748b', SUBMITTED: '#f59e0b', APPROVED: '#10b981', REJECTED: '#ef4444', NEEDS_INFO: '#8b5cf6', COMPLETED: '#059669', CANCELLED: '#9ca3af' };
 const TYPE_LABELS: Record<string, string> = { NEW_ENROLLMENT: 'Đăng ký mới', RENEWAL: 'Gia hạn', ADDITIONAL: 'Mua thêm', PACKAGE_CHANGE: 'Đổi gói' };
 const SOURCE_LABELS: Record<string, string> = { FACEBOOK: 'Facebook', GOOGLE: 'Google', TIKTOK: 'TikTok', ZALO: 'Zalo', WEBSITE: 'Website', REFERRAL: 'Giới thiệu', WALK_IN: 'Đến trực tiếp', OTHER: 'Khác' };
-const PAYMENT_PLAN_LABELS: Record<string, string> = { FULL: 'Thanh toán 1 lần', INSTALLMENT_2: 'Chia 2 đợt', INSTALLMENT_3: 'Chia 3 đợt' };
-
 const PRODUCT_SUBJECT_LABELS: Record<string, string> = {
   ENGLISH: 'Tiếng Anh',
   MATH: 'Toán',
@@ -82,7 +80,6 @@ export class OrdersComponent implements OnInit {
   allStatuses = Object.keys(STATUS_LABELS);
   allTypes = Object.entries(TYPE_LABELS).map(([value, label]) => ({ value, label }));
   allSources = Object.entries(SOURCE_LABELS).map(([value, label]) => ({ value, label }));
-  allPaymentPlans = Object.entries(PAYMENT_PLAN_LABELS).map(([value, label]) => ({ value, label }));
   allCourseStatuses = Object.entries(INVOICE_COURSE_STATUS_LABELS).map(([value, label]) => ({ value, label }));
   orderAdGroups = signal<AdGroupItem[]>([]);
 
@@ -139,17 +136,20 @@ export class OrdersComponent implements OnInit {
   statusLabel(v: string) { return STATUS_LABELS[v] || v; }
   statusColor(v: string) { return STATUS_COLORS[v] || '#64748b'; }
   typeLabel(v: string) { return TYPE_LABELS[v] || v; }
-  paymentPlanLabel(v?: string) { return PAYMENT_PLAN_LABELS[v || ''] || '-'; }
   courseStatusLabel(v?: string) {
     return v ? ((INVOICE_COURSE_STATUS_LABELS as Record<string, string>)[v] || v) : 'Tự động';
   }
   communicationSummary(): OrderCommunicationSummary | null { return this.detailOrder()?.processedResults?.communicationSummary || null; }
   getPipeCount(s: string) { return this.pipeline()?.[s]?.count || 0; }
   getPipeValue(s: string) { return this.pipeline()?.[s]?.totalValue || 0; }
-  emptyForm() { return { orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '', parentUserId: '', parentUserCode: '', parentAddress: '', parentFacebookLink: '', studentName: '', studentCode: '', studentLevel: '', studentDob: '', studentAge: null, studentBirthMonth: null, parentBirthMonth: null, studentFaceImage: '', existingStudentId: '', leadSource: '', leadId: '', saleId: this.isSaleRole ? this.currentUserId : '', adGroupId: '', adGroupName: '', adGroupFromLead: false, paymentPlan: 'FULL', paymentDate: '', receiptImage: '', saleCommission: 0, items: [this.buildFormItem()], discountAmount: 0, discountReason: '', consultationNotes: '' }; }
-  emptyItem() { return { productId: '', productName: '', sessions: 24, invoiceSessions: 24, sessionDuration: 90, baseDuration: 90, pricePerSession: 0, amount: 0, bonusSessions: 0, trialSessions: 0, courseStatus: '', teachingMode: 'ONLINE', preferredSchedule: '', selectedClassId: '', createNewClassWhenApproved: false, preferredTeacherId: '', paymentRound: null, teacherPayPerSession: 0, teacherPayPerStudent: 0, subject: '', learningGoals: '', maxStudents: null, invoiceDescription: '', invoiceNumber: '', notes: '' }; }
+  emptyForm() { return { orderType: 'NEW_ENROLLMENT', parentName: '', parentPhone: '', parentEmail: '', parentUserId: '', parentUserCode: '', parentAddress: '', parentFacebookLink: '', studentName: '', studentCode: '', studentLevel: '', studentDob: '', studentAge: null, studentBirthMonth: null, parentBirthMonth: null, studentFaceImage: '', existingStudentId: '', leadSource: '', leadId: '', saleId: this.isSaleRole ? this.currentUserId : '', adGroupId: '', adGroupName: '', adGroupFromLead: false, paymentDate: '', receiptImage: '', saleCommission: 0, items: [this.buildFormItem()], discountAmount: 0, discountReason: '', consultationNotes: '' }; }
+  emptyItem() { return { productId: '', productName: '', sessions: 24, invoiceSessions: 24, sessionDuration: 90, baseDuration: 90, pricePerSession: 0, amount: 0, bonusSessions: 0, trialSessions: 0, courseStatus: '', teachingMode: 'ONLINE', preferredSchedule: '', selectedClassId: '', requestedClassCode: '', createNewClassWhenApproved: false, preferredTeacherId: '', teacherPayPerSession: 0, teacherPayPerStudent: 0, subject: '', learningGoals: '', maxStudents: null, invoiceDescription: '', invoiceNumber: '', notes: '' }; }
   buildFormItem(source: any = {}) {
     const item = { ...this.emptyItem(), ...source };
+    if (!this.normalizeOptionalText(item.requestedClassCode) && item.selectedClassId) {
+      item.requestedClassCode = this.findClassById(item.selectedClassId)?.code || '';
+    }
+    item.requestedClassCode = this.normalizeClassCode(item.requestedClassCode);
     if (item.selectedClassId) item.createNewClassWhenApproved = false;
     else if (source?.createNewClassWhenApproved === undefined) item.createNewClassWhenApproved = true;
     if (!this.normalizeOptionalText(item.subject)) {
@@ -169,7 +169,16 @@ export class OrdersComponent implements OnInit {
     if (!normalized) return undefined;
     return /^(https?:\/\/|\/uploads\/|data:image\/)/.test(normalized) ? normalized : undefined;
   }
+  normalizeClassCode(v: any) {
+    const normalized = this.normalizeOptionalText(v);
+    return normalized ? normalized.toUpperCase() : '';
+  }
   normalizeOptionalId(v: any) { const n = String(v ?? '').trim(); return n || undefined; }
+  normalizeOptionalEditableLinkId(v: any) {
+    const normalized = this.normalizeOptionalId(v);
+    if (normalized) return normalized;
+    return this.editingId ? null : undefined;
+  }
   normalizeOptionalNumber(v: any) { if (v === '' || v === null || v === undefined) return undefined; const n = Number(v); return Number.isFinite(n) ? n : undefined; }
   roundMoneyToThousand(v: any) { const n = Number(v || 0); return Number.isFinite(n) && n > 0 ? Math.round(n / 1000) * 1000 : 0; }
   roundMoneyDownToThousand(v: any) { const n = Number(v || 0); return Number.isFinite(n) && n > 0 ? Math.floor(n / 1000) * 1000 : 0; }
@@ -257,7 +266,16 @@ export class OrdersComponent implements OnInit {
   findParentById(id?: string | null) { return id ? this.parents().find((p) => p._id === id) : undefined; }
   findProductById(id?: string | null) { return id ? this.products().find((p) => p._id === id) : undefined; }
   findStudentById(id?: string | null) { return id ? this.students().find((s) => s._id === id) : undefined; }
-  findClassById(id?: string | null) { return id ? this.classes().find((c) => c._id === id) : undefined; }
+  findClassById(id?: string | null) {
+    if (!id) return undefined;
+    const seen = new Set<string>();
+    const merged = [...this.classes(), ...this.saleOfflineClasses()].filter((classroom) => {
+      if (!classroom?._id || seen.has(classroom._id)) return false;
+      seen.add(classroom._id);
+      return true;
+    });
+    return merged.find((c) => c._id === id);
+  }
   availableProductsForItem(item: any) {
     const selectedProductId = this.normalizeOptionalId(item?.productId);
     return this.products().filter((product) => product.isActive !== false || product._id === selectedProductId);
@@ -292,6 +310,9 @@ export class OrdersComponent implements OnInit {
   }
   plannedClassLabel(item: any) {
     if (item?.selectedClassId) return this.classLabel(item.selectedClassId);
+    const requestedClassCode = this.normalizeClassCode(item?.requestedClassCode);
+    if (requestedClassCode && item?.createNewClassWhenApproved) return `Tao/ghep lop theo ma ${requestedClassCode} khi duyet`;
+    if (requestedClassCode) return `Ma lop du kien: ${requestedClassCode}`;
     if (item?.createNewClassWhenApproved) return 'Tạo lớp mới khi duyệt';
     return 'Để xếp lớp sau';
   }
@@ -303,8 +324,15 @@ export class OrdersComponent implements OnInit {
     if (item?.selectedClassId) {
       return 'Hệ thống sẽ gắn học sinh vào lớp đã chọn ngay sau khi hóa đơn được duyệt.';
     }
+    const requestedClassCode = this.normalizeClassCode(item?.requestedClassCode);
+    if (requestedClassCode && item?.createNewClassWhenApproved) {
+      return `Hệ thống sẽ ưu tiên tìm lớp mã ${requestedClassCode}; nếu chưa có sẽ tạo lớp mới với đúng mã này ngay sau khi duyệt.`;
+    }
+    if (requestedClassCode) {
+      return `Hệ thống sẽ ưu tiên gắn học sinh vào lớp có mã ${requestedClassCode} khi duyệt hóa đơn.`;
+    }
     if (item?.createNewClassWhenApproved) {
-      return 'Hệ thống sẽ tự tạo lớp mới theo giáo viên dự kiến ngay sau khi duyệt đơn.';
+      return 'Vui lòng nhập mã lớp và chọn giáo viên dự kiến nếu muốn hệ thống tự tạo lớp mới khi duyệt.';
     }
     return 'Đơn vẫn được duyệt, nhưng lớp sẽ được xếp sau.';
   }
@@ -384,9 +412,17 @@ export class OrdersComponent implements OnInit {
     return ['APPROVED', 'COMPLETED'].includes(status) && this.partialPaymentRemainingAmount(order) > 0;
   }
   invoiceItemLabel(item: any, index: number) {
+    return this.invoiceCardSubtitle(item);
     const productName = item?.productName || this.products().find((product) => product._id === item?.productId)?.name || `Sản phẩm ${index + 1}`;
     const subject = this.normalizeOptionalText(item?.subject);
     return subject ? `${productName} - ${subject}` : productName;
+  }
+  invoiceCardSubtitle(item: any) {
+    const productName = this.normalizeOptionalText(item?.productName)
+      || this.normalizeOptionalText(this.products().find((product) => product._id === item?.productId)?.name);
+    const subject = this.normalizeOptionalText(item?.subject);
+    if (productName && subject) return `${productName} - ${subject}`;
+    return subject || productName || '';
   }
   classOptionsForItem(item: any) {
     const desiredMode = String(item?.teachingMode || 'ONLINE').toUpperCase();
@@ -394,22 +430,32 @@ export class OrdersComponent implements OnInit {
     const sourceClasses = desiredMode === 'OFFLINE' && this.isSaleRole
       ? this.saleOfflineClasses()
       : this.classes();
-    const filtered = sourceClasses.filter((classroom) => {
+    const sameModeClasses = sourceClasses.filter((classroom) => {
       const classMode = String(classroom.classMode || 'ONLINE').toUpperCase();
       if (classMode !== desiredMode) return false;
+      return true;
+    });
+    const filtered = sameModeClasses.filter((classroom) => {
+      if (desiredMode === 'OFFLINE') return true;
       const classProductId = classroom.productPackage?._id || '';
       if (desiredProductId && classProductId && classProductId !== desiredProductId) return false;
       return true;
     });
+    const prioritized = desiredMode === 'OFFLINE' && desiredProductId
+      ? [
+          ...filtered.filter((classroom) => (classroom.productPackage?._id || '') === desiredProductId),
+          ...filtered.filter((classroom) => (classroom.productPackage?._id || '') !== desiredProductId),
+        ]
+      : filtered;
     const selectedClass = this.findClassById(item?.selectedClassId);
     if (
       selectedClass
-      && !filtered.some((classroom) => classroom._id === selectedClass._id)
+      && !prioritized.some((classroom) => classroom._id === selectedClass._id)
       && String(selectedClass.classMode || 'ONLINE').toUpperCase() === desiredMode
     ) {
-      filtered.unshift(selectedClass);
+      prioritized.unshift(selectedClass);
     }
-    return filtered;
+    return prioritized;
   }
 
   startNewParent() {
@@ -547,6 +593,7 @@ export class OrdersComponent implements OnInit {
     item.createNewClassWhenApproved = false;
     const classroom = this.findClassById(classId);
     if (!classroom) return;
+    item.requestedClassCode = this.normalizeClassCode(classroom.code);
     if (classroom.classMode) item.teachingMode = classroom.classMode;
     if (classroom.productPackage?._id && !item.productId) {
       item.productId = classroom.productPackage._id;
@@ -566,18 +613,24 @@ export class OrdersComponent implements OnInit {
     this.calcItemAmount(item);
   }
   onClassSelectionChange(item: any, selection: string) {
+    const hadSelectedClass = !!item.selectedClassId;
     if (selection === '__CREATE_NEW__') {
+      if (hadSelectedClass) item.requestedClassCode = '';
       item.selectedClassId = '';
       item.createNewClassWhenApproved = true;
       return;
     }
     item.createNewClassWhenApproved = false;
     if (!selection) {
+      if (hadSelectedClass) item.requestedClassCode = '';
       item.selectedClassId = '';
       item.preferredTeacherId = '';
       return;
     }
     this.onSelectedClassChange(item, selection);
+  }
+  onRequestedClassCodeChange(item: any, value: string) {
+    item.requestedClassCode = this.normalizeClassCode(value);
   }
   onTeachingModeChange(item: any, teachingMode: string) {
     item.teachingMode = teachingMode === 'OFFLINE' ? 'OFFLINE' : 'ONLINE';
@@ -601,7 +654,7 @@ export class OrdersComponent implements OnInit {
       ...(this.normalizeOptionalText(this.form.parentUserCode) ? { parentUserCode: this.normalizeOptionalText(this.form.parentUserCode)?.toUpperCase() } : {}),
       ...(this.normalizeOptionalText(this.form.parentAddress) ? { parentAddress: this.normalizeOptionalText(this.form.parentAddress) } : {}),
       ...(this.normalizeOptionalText(this.form.parentFacebookLink) ? { parentFacebookLink: this.normalizeOptionalText(this.form.parentFacebookLink) } : {}),
-      ...((this.editingId || this.normalizeOptionalId(this.form.parentUserId)) ? { parentUserId: this.normalizeOptionalId(this.form.parentUserId) ?? '' } : {}),
+      ...(this.normalizeOptionalEditableLinkId(this.form.parentUserId) !== undefined ? { parentUserId: this.normalizeOptionalEditableLinkId(this.form.parentUserId) } : {}),
       studentName: (this.form.studentName || '').trim(),
       ...(this.normalizeOptionalText(this.form.studentCode) ? { studentCode: this.normalizeOptionalText(this.form.studentCode)?.toUpperCase() } : {}),
       ...(this.normalizeOptionalText(this.form.studentLevel) ? { studentLevel: this.normalizeOptionalText(this.form.studentLevel) } : {}),
@@ -610,13 +663,12 @@ export class OrdersComponent implements OnInit {
       ...(this.normalizeOptionalNumber(this.form.studentBirthMonth) !== undefined ? { studentBirthMonth: this.normalizeOptionalNumber(this.form.studentBirthMonth) } : {}),
       ...(this.normalizeOptionalNumber(this.form.parentBirthMonth) !== undefined ? { parentBirthMonth: this.normalizeOptionalNumber(this.form.parentBirthMonth) } : {}),
       ...(this.normalizeOptionalImageReference(this.form.studentFaceImage) ? { studentFaceImage: this.normalizeOptionalImageReference(this.form.studentFaceImage) } : {}),
-      ...((this.editingId || this.normalizeOptionalId(this.form.existingStudentId)) ? { existingStudentId: this.normalizeOptionalId(this.form.existingStudentId) ?? '' } : {}),
+      ...(this.normalizeOptionalEditableLinkId(this.form.existingStudentId) !== undefined ? { existingStudentId: this.normalizeOptionalEditableLinkId(this.form.existingStudentId) } : {}),
       ...(this.normalizeOptionalText(this.form.leadSource) ? { leadSource: this.normalizeOptionalText(this.form.leadSource) } : {}),
       ...(this.normalizeOptionalId(this.form.leadId) ? { leadId: this.normalizeOptionalId(this.form.leadId) } : {}),
       ...(this.normalizeOptionalId(this.form.saleId) ? { saleId: this.normalizeOptionalId(this.form.saleId) } : {}),
       ...(this.normalizeOptionalId(this.form.adGroupId) ? { adGroupId: this.normalizeOptionalId(this.form.adGroupId) } : {}),
       ...(this.normalizeOptionalText(this.form.adGroupName) ? { adGroupName: this.normalizeOptionalText(this.form.adGroupName) } : {}),
-      ...(this.normalizeOptionalText(this.form.paymentPlan) ? { paymentPlan: this.normalizeOptionalText(this.form.paymentPlan) } : {}),
       ...(this.normalizeOptionalText(this.form.paymentDate) ? { paymentDate: this.normalizeOptionalText(this.form.paymentDate) } : {}),
       ...(this.normalizeOptionalImageReference(this.form.receiptImage) ? { receiptImage: this.normalizeOptionalImageReference(this.form.receiptImage) } : {}),
       ...(this.normalizeOptionalNumber(this.form.saleCommission) !== undefined ? { saleCommission: this.normalizeOptionalNumber(this.form.saleCommission) } : {}),
@@ -635,9 +687,9 @@ export class OrdersComponent implements OnInit {
         teachingMode: item.teachingMode || 'ONLINE',
         ...(this.normalizeOptionalText(item.preferredSchedule) ? { preferredSchedule: this.normalizeOptionalText(item.preferredSchedule) } : {}),
         ...(this.normalizeOptionalId(item.selectedClassId) ? { selectedClassId: this.normalizeOptionalId(item.selectedClassId) } : {}),
+        ...(this.normalizeClassCode(item.requestedClassCode) ? { requestedClassCode: this.normalizeClassCode(item.requestedClassCode) } : {}),
         ...(item.createNewClassWhenApproved ? { createNewClassWhenApproved: true } : {}),
         ...(this.normalizeOptionalId(item.preferredTeacherId) ? { preferredTeacherId: this.normalizeOptionalId(item.preferredTeacherId) } : {}),
-        ...(this.normalizeOptionalNumber(item.paymentRound) !== undefined ? { paymentRound: this.normalizeOptionalNumber(item.paymentRound) } : {}),
         ...(this.normalizeOptionalNumber(item.teacherPayPerSession) !== undefined ? { teacherPayPerSession: this.roundMoneyDownToThousand(item.teacherPayPerSession) } : {}),
         ...(this.normalizeOptionalNumber(item.teacherPayPerStudent) !== undefined ? { teacherPayPerStudent: this.roundMoneyDownToThousand(item.teacherPayPerStudent) } : {}),
         ...(this.normalizeOptionalText(item.subject) ? { subject: this.normalizeOptionalText(item.subject) } : {}),
@@ -811,6 +863,15 @@ export class OrdersComponent implements OnInit {
     );
     if (missingTeacherForNewClass) {
       this.error.set('Vui lòng chọn giáo viên dự kiến nếu muốn hệ thống tạo lớp mới khi duyệt.');
+      return;
+    }
+    const missingClassCodeForNewClass = (this.form.items || []).find(
+      (item: any) =>
+        item?.createNewClassWhenApproved
+        && !this.normalizeClassCode(item?.requestedClassCode),
+    );
+    if (missingClassCodeForNewClass) {
+      this.error.set('Vui lòng nhập mã lớp nếu muốn hệ thống tạo lớp mới khi duyệt.');
       return;
     }
     if (this.hasInvalidDiscount()) {

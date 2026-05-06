@@ -278,6 +278,9 @@ Phạm vi được gom theo những màn hình và quyền thực sự đang m�
   4. Chọn product mới hoặc gói tiếp theo.
   5. Nếu phù hợp, gắn luôn lớp hiện có.
   6. Lưu nháp.
+- Ghi chú:
+  - Khi sửa order `DRAFT` hoặc `NEEDS_INFO`, có thể đưa `Phụ huynh đã có` hoặc `Học sinh đã có` về `-- Không liên kết --` để chuyển lại sang luồng tạo mới; hệ thống phải xóa link cũ thay vì giữ ID cũ hoặc trả lỗi validate.
+  - Nếu cần ghép lớp theo mã hoặc tạo lớp mới đúng mã sau khi duyệt, sale phải nhập `Mã lớp`; hệ thống sẽ ưu tiên match lớp có sẵn theo mã trước, nếu chưa có mới tạo lớp mới với đúng mã đó.
 - Caption: "Tình huống khách cũ giúp tránh trùng parent hoặc student."
 - Khoanh đỏ:
   - `parent lookup`
@@ -293,6 +296,8 @@ Phạm vi được gom theo những màn hình và quyền thực sự đang m�
   2. Với trả góp, kiểm tra invoice amount và payment plan.
   3. Với order cần chứng từ, upload receipt.
   4. Bổ sung consultation notes.
+- Rule bổ sung:
+  - Nếu chọn `Tạo lớp mới khi duyệt`, bắt buộc phải có cả `Mã lớp` và `Giáo viên dự kiến`.
 - Caption: "Validation order là chốt chặn để OPS không phải trả đơn vì lỗi cơ bản."
 - Khoanh đỏ:
   - total/final amount
@@ -382,13 +387,15 @@ Phạm vi được gom theo những màn hình và quyền thực sự đang m�
 - Phối hợp: Sale.
 - Các bước:
   1. Chuyển trial sang `WAITING_DECISION`.
-  2. Chọn `Chuyển đổi`, `Từ chối`, hoặc `Trả lương GV`.
-  3. Kiểm tra badge trạng thái và note teacher-paid-only nếu có.
+  2. Chỉ còn 2 outcome hợp lệ: `Chuyển đổi` hoặc `Từ chối`.
+  3. Nếu `Từ chối`: học thử dừng, giáo viên không được tính lương, không charge phụ huynh.
+  4. Nếu `Chuyển đổi`: buổi học thử đã điểm danh được tính như buổi thu tiền, ví phụ huynh bị trừ kể cả khi số dư thành âm; lúc phụ huynh nạp tiền sau đó thì hệ thống tự bù vào số âm.
+  5. Trial/session đã được duyệt phải hiển thị `Đã được duyệt học thử`; nhãn `Đã thanh toán` chỉ dùng cho hóa đơn đã thanh toán.
 - Caption: "Trial phải được chốt rõ outcome để không lệch tài chính hoặc lương giáo viên."
 - Khoanh đỏ:
   - nút `Chờ chốt`
   - nút `Chuyển đổi`
-  - note `Vẫn trả lương GV, không charge PH`
+  - trạng thái `Không tiếp tục`
 
 ### S23. Gửi session change request
 

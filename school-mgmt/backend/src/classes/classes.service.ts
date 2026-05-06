@@ -13,6 +13,7 @@ import {
   ClassEditHistoryAction,
   ClassUpdateRequestStatus,
   DurationSnapshotSource,
+  OfflineAssignmentRequestStatus,
   PendingClassUpdateType,
   StudentConfigSlotType,
 } from './schemas/class.schema';
@@ -20,6 +21,7 @@ import { CreateClassDto } from './dto/create-class.dto';
 import { UpdateClassDto } from './dto/update-class.dto';
 import { AssignStudentsDto } from './dto/assign-students.dto';
 import { UpdateStudentConfigDto } from './dto/update-student-config.dto';
+import { QueryClassManagementDto } from './dto/query-class-management.dto';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
 import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
@@ -34,15 +36,18 @@ import { ClassesCoreService } from './classes-core.service';
 import { ClassesDataService } from './classes-data.service';
 import {
   applyInvoicePricingDefaults,
+  assertCanReviewPendingOfflineAssignment,
   assertCanReviewPendingUpdate,
   attachPricingSnapshot,
   buildAutoClassName,
   buildDurationSnapshotRecord,
+  countReservedOfflineStudents,
   decorateClassroomForDisplay,
   filterClassStudentsByIds,
   floorSessionCount,
   getActorId,
   getClassSourceInvoice,
+  getPendingOfflineAssignmentStudentIds,
   isManagerRole,
   isClassTeacherMember,
   objectIdToString,
@@ -184,7 +189,12 @@ export class ClassesService {
     let parentStudentIdSet: Set<string> | null = null;
 
     if (actor.role === Role.SALE) {
-      filter = { sale: actorId };
+      filter = {
+        $or: [
+          { sale: actorId },
+          { classMode: 'OFFLINE', status: 'ACTIVE' },
+        ],
+      };
     } else if (actor.role === Role.TEACHER) {
       filter = {
         $or: [
@@ -219,6 +229,10 @@ export class ClassesService {
       .populate('coTeachers.assignedBy', 'fullName email role')
       .populate('pendingSaleUpdate.requestedBy', 'fullName email role')
       .populate('pendingSaleUpdate.reviewedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.studentIds', 'fullName studentCode')
+      .populate('pendingOfflineAssignments.invoiceId', 'invoiceNumber status')
+      .populate('pendingOfflineAssignments.requestedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.reviewedBy', 'fullName email role')
       .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
       .populate('students', 'fullName age parentName studentCode')
       .populate('studentConfigs.studentId', 'fullName studentCode')
@@ -259,6 +273,169 @@ export class ClassesService {
     );
   }
 
+  async findManagementPage(actor: JwtPayload, query: QueryClassManagementDto) {
+    const actorId = getActorId(actor);
+    let parentStudentIdSet: Set<string> | null = null;
+    const filters: any[] = [];
+
+    if (actor.role === Role.SALE) {
+      filters.push({
+        $or: [
+          { sale: actorId },
+          { classMode: 'OFFLINE', status: 'ACTIVE' },
+        ],
+      });
+    } else if (actor.role === Role.TEACHER) {
+      filters.push({
+        $or: [
+          { teacher: actorId },
+          { 'substituteTeachers.teacherId': actorId },
+          { 'coTeachers.teacherId': actorId },
+          { 'studentConfigs.teacherSlots.teacherId': actorId },
+        ],
+      });
+    } else if (actor.role === Role.PARENT) {
+      if (!actorId) {
+        throw new ForbiddenException('Ban khong co quyen truy cap danh sach lop hoc');
+      }
+      const parentStudentIds = await this.classesCoreService.getParentStudentIds(actorId);
+      if (!parentStudentIds.length) {
+        return {
+          data: [],
+          meta: { total: 0, page: 1, limit: 25, totalPages: 1 },
+        };
+      }
+      parentStudentIdSet = new Set(parentStudentIds);
+      filters.push({
+        students: {
+          $in: parentStudentIds.map((id) => new Types.ObjectId(id)),
+        },
+      });
+    }
+
+    if (query.classMode) {
+      filters.push({ classMode: query.classMode });
+    }
+
+    if (query.teacherId) {
+      const teacherObjectId = new Types.ObjectId(query.teacherId);
+      filters.push({
+        $or: [
+          { teacher: teacherObjectId },
+          { 'coTeachers.teacherId': teacherObjectId },
+        ],
+      });
+    }
+
+    const trimmedSearch = String(query.search || '').trim();
+    if (trimmedSearch) {
+      const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = new RegExp(escapedSearch, 'i');
+      filters.push({
+        $or: [
+          { code: searchRegex },
+          { name: searchRegex },
+        ],
+      });
+    }
+
+    const filter = !filters.length ? {} : filters.length === 1 ? filters[0] : { $and: filters };
+    const page = Math.max(Number(query.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query.limit) || 25, 1), 100);
+    const total = await this.classModel.countDocuments(filter);
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+    const safePage = total > 0 && page > totalPages ? totalPages : page;
+    const skip = (safePage - 1) * limit;
+
+    const classrooms = await this.classModel
+      .find(filter)
+      .select([
+        'code',
+        'name',
+        'classMode',
+        'teacher',
+        'sale',
+        'coTeachers',
+        'productPackage',
+        'students',
+        'studentConfigs',
+        'pricePerSession',
+        'teacherPayPerSession',
+        'teacherPayPerStudent',
+        'baseDuration',
+        'sessionDuration',
+        'actualPricePerSession',
+        'actualTeacherPayPerSession',
+        'revenuePerStudent',
+        'teacherSalaryCost',
+        'status',
+        'totalSessions',
+        'sessionsCompleted',
+        'pendingSaleUpdate',
+        'pendingOfflineAssignments',
+        'durationSnapshots',
+        'pricingSnapshot',
+      ].join(' '))
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate('teacher', 'fullName email role')
+      .populate('sale', 'fullName email role')
+      .populate('coTeachers.teacherId', 'fullName email role userCode')
+      .populate('coTeachers.assignedBy', 'fullName email role')
+      .populate('pendingSaleUpdate.requestedBy', 'fullName email role')
+      .populate('pendingSaleUpdate.reviewedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.studentIds', 'fullName studentCode')
+      .populate('pendingOfflineAssignments.invoiceId', 'invoiceNumber status')
+      .populate('pendingOfflineAssignments.requestedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.reviewedBy', 'fullName email role')
+      .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
+      .populate('students', 'fullName age parentName studentCode')
+      .populate('studentConfigs.studentId', 'fullName studentCode')
+      .populate('studentConfigs.teacherSlots.teacherId', 'fullName email role userCode')
+      .populate('studentConfigs.teacherSlots.assignedBy', 'fullName email role')
+      .lean();
+
+    const sourceInvoiceMap = await this.classesCoreService.buildClassSourceInvoiceMap(classrooms);
+    const mapped = await Promise.all(classrooms.map(async (classroom) => {
+      const projectedClassroom = await this.classesDataService.withProjectedStudentTotals(classroom);
+      return decorateClassroomForDisplay(
+        projectedClassroom,
+        getClassSourceInvoice(projectedClassroom, sourceInvoiceMap),
+      );
+    }));
+
+    let data = mapped;
+    if (actor.role === Role.TEACHER && actorId) {
+      data = mapped
+        .map((classroom) => {
+          if (isClassTeacherMember(classroom, actorId)) {
+            return classroom;
+          }
+          const allowedStudentIds = new Set(getTeacherOwnedStudentIds(classroom, actorId));
+          if (!allowedStudentIds.size) {
+            return null;
+          }
+          return filterClassStudentsByIds(classroom, allowedStudentIds);
+        })
+        .filter((classroom): classroom is NonNullable<typeof classroom> => !!classroom);
+    } else if (actor.role === Role.PARENT && parentStudentIdSet) {
+      data = mapped.map((classroom) =>
+        filterClassStudentsByIds(classroom, parentStudentIdSet!),
+      );
+    }
+
+    return {
+      data,
+      meta: {
+        total,
+        page: safePage,
+        limit,
+        totalPages,
+      },
+    };
+  }
+
   async findSaleOfflineOptions(actor: JwtPayload) {
     const actorId = getActorId(actor);
     if (actor.role !== Role.SALE || !actorId) {
@@ -275,6 +452,10 @@ export class ClassesService {
       .populate('sale', 'fullName email role')
       .populate('coTeachers.teacherId', 'fullName email role userCode')
       .populate('coTeachers.assignedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.studentIds', 'fullName studentCode')
+      .populate('pendingOfflineAssignments.invoiceId', 'invoiceNumber status')
+      .populate('pendingOfflineAssignments.requestedBy', 'fullName email role')
+      .populate('pendingOfflineAssignments.reviewedBy', 'fullName email role')
       .populate('productPackage', 'name code teachingMode pricePerSession suggestedPrice')
       .populate('students', 'fullName age parentName studentCode')
       .lean();
@@ -285,8 +466,7 @@ export class ClassesService {
         if (!classroom.maxStudents) {
           return true;
         }
-        const currentStudentCount = Array.isArray(classroom.students) ? classroom.students.length : 0;
-        return currentStudentCount < classroom.maxStudents;
+        return countReservedOfflineStudents(classroom) < classroom.maxStudents;
       })
       .map((classroom) =>
         decorateClassroomForDisplay(
@@ -343,8 +523,9 @@ export class ClassesService {
       if (!invoice) {
         throw new NotFoundException('Hoa don khong ton tai');
       }
-      if ((invoice as any).classId) {
-        return { action: 'SKIPPED', classId: objectIdToString((invoice as any).classId) || undefined };
+      const linkedClassId = objectIdToString((invoice as any).classId);
+      if (linkedClassId && linkedClassId !== requestedClassId) {
+        return { action: 'SKIPPED', classId: linkedClassId || undefined };
       }
       if ((invoice as any).classType && classroom.classMode && (invoice as any).classType !== classroom.classMode) {
         throw new BadRequestException('Loai lop duoc chon tren order khong khop voi hoa don');
@@ -524,7 +705,7 @@ export class ClassesService {
             ok: true,
             pendingApproval: true,
             message: requestType === PendingClassUpdateType.DURATION_CHANGE
-              ? 'Da cap nhat thong tin lop. Phan doi giao vien/thoi luong dang cho Director duyet'
+              ? 'Da cap nhat thong tin lop. Phan doi giao vien/thoi luong dang cho Ops/Director duyet'
               : 'Da cap nhat thong tin lop. Phan doi giao vien dang cho Director/Ops duyet',
           };
         }
@@ -533,7 +714,7 @@ export class ClassesService {
           ok: true,
           pendingApproval: true,
           message: requestType === PendingClassUpdateType.DURATION_CHANGE
-            ? 'Da gui yeu cau doi giao vien/thoi luong lop hoc cho Director duyet'
+            ? 'Da gui yeu cau doi giao vien/thoi luong lop hoc cho Ops/Director duyet'
             : 'Da gui yeu cau doi giao vien/luong GV cho Director/Ops duyet',
         };
       }
@@ -687,8 +868,18 @@ export class ClassesService {
     const classroom = await this.classModel.findById(id).lean();
     if (!classroom) throw new NotFoundException('Class not found');
     const actorId = getActorId(actor);
+    const isSaleOfflineRequest = actor.role === Role.SALE && classroom.classMode === 'OFFLINE';
 
-    if (actor.role === Role.SALE) {
+    if (isSaleOfflineRequest) {
+      if (!actorId) {
+        throw new ForbiddenException('Khong xac dinh duoc sale gui yeu cau');
+      }
+      if (!dto.invoiceId) {
+        throw new BadRequestException('Sale phai chon hoa don da duyet khi them hoc sinh vao lop offline');
+      }
+    }
+
+    if (actor.role === Role.SALE && !isSaleOfflineRequest) {
       if (!actorId || classroom.sale?.toString() !== actorId) {
         throw new ForbiddenException('Bạn không phụ trách lớp này');
       }
@@ -703,7 +894,8 @@ export class ClassesService {
       if (invoice.status !== InvoiceStatus.APPROVED && invoice.status !== InvoiceStatus.PAID) {
         throw new ForbiddenException('Hoa don chua duoc duyet');
       }
-      if (invoice.classId) {
+      const linkedClassId = objectIdToString(invoice.classId);
+      if (linkedClassId && linkedClassId !== id) {
         throw new BadRequestException('Hoa don nay da duoc gan vao lop hoc khac');
       }
       if (invoice.classType && invoice.classType !== classroom.classMode) {
@@ -734,6 +926,54 @@ export class ClassesService {
       throw new BadRequestException(`${invalidCount} học viên chưa được duyệt hoặc không hợp lệ`);
     }
     const existingStudentIds = classroom.students?.map((s: any) => s.toString()) || [];
+    if (isSaleOfflineRequest) {
+      const reservedStudentIds = new Set([
+        ...existingStudentIds,
+        ...getPendingOfflineAssignmentStudentIds(classroom),
+        ...studentIds,
+      ]);
+      if ((classroom as any).maxStudents && reservedStudentIds.size > (classroom as any).maxStudents) {
+        throw new BadRequestException(
+          `Lop chi chua toi da ${(classroom as any).maxStudents} hoc vien ke ca cho cho duyet`,
+        );
+      }
+
+      const pendingInvoiceIds = new Set(
+        (Array.isArray((classroom as any).pendingOfflineAssignments)
+          ? (classroom as any).pendingOfflineAssignments
+          : [])
+          .filter((request: any) => request?.status === OfflineAssignmentRequestStatus.PENDING)
+          .map((request: any) => objectIdToString(request?.invoiceId))
+          .filter((invoiceId: string | null): invoiceId is string => !!invoiceId),
+      );
+      if (dto.invoiceId && pendingInvoiceIds.has(dto.invoiceId)) {
+        throw new BadRequestException('Hoa don nay da co yeu cau them vao lop offline va dang cho duyet');
+      }
+
+      const pendingRequestId = new Types.ObjectId();
+      await this.classModel.findByIdAndUpdate(id, {
+        $push: {
+          pendingOfflineAssignments: {
+            _id: pendingRequestId,
+            status: OfflineAssignmentRequestStatus.PENDING,
+            studentIds: studentIds.map((studentId) => new Types.ObjectId(studentId)),
+            invoiceId: dto.invoiceId ? new Types.ObjectId(dto.invoiceId) : undefined,
+            requestedBy: new Types.ObjectId(actorId!),
+            requestedAt: new Date(),
+            reviewedBy: null,
+            reviewedAt: null,
+            rejectionReason: null,
+          },
+        },
+      });
+
+      return {
+        ok: true,
+        pendingApproval: true,
+        requestId: pendingRequestId.toHexString(),
+        message: 'Da gui yeu cau them hoc sinh vao lop offline. Director/Ops can duyet truoc khi hoc sinh duoc gan vao lop',
+      };
+    }
     const merged = Array.from(
       new Set([...existingStudentIds, ...studentIds])
     ).map((sid) => new Types.ObjectId(sid));
@@ -761,6 +1001,146 @@ export class ClassesService {
   // ══════════════════════════════════════════════════════════════════
   //  STUDENT CONFIG
   // ══════════════════════════════════════════════════════════════════
+
+  async approvePendingOfflineAssignment(id: string, requestId: string, actor?: JwtPayload) {
+    const classroom = await this.classModel.findById(id).lean();
+    if (!classroom) {
+      throw new NotFoundException('Class not found');
+    }
+    assertCanReviewPendingOfflineAssignment(actor);
+
+    const request = this.findPendingOfflineAssignment(classroom, requestId);
+    if (!request) {
+      throw new NotFoundException('Khong tim thay yeu cau them hoc sinh vao lop offline');
+    }
+    if (request.status !== OfflineAssignmentRequestStatus.PENDING) {
+      throw new BadRequestException('Yeu cau them hoc sinh vao lop offline khong con cho duyet');
+    }
+
+    const actorId = getActorId(actor);
+    if (!actorId) {
+      throw new ForbiddenException('Khong xac dinh duoc nguoi duyet');
+    }
+
+    const requestStudentIds = (Array.isArray(request.studentIds) ? request.studentIds : [])
+      .map((studentId: any) => objectIdToString(studentId))
+      .filter((studentId: string | null): studentId is string => !!studentId);
+    const existingStudentIds = ((classroom as any).students || [])
+      .map((studentId: any) => objectIdToString(studentId))
+      .filter((studentId: string | null): studentId is string => !!studentId);
+    const reservedPendingStudentIds = getPendingOfflineAssignmentStudentIds({
+      ...classroom,
+      pendingOfflineAssignments: ((classroom as any).pendingOfflineAssignments || []).filter(
+        (item: any) => item?._id?.toString?.() !== requestId,
+      ),
+    }).filter((studentId) => !existingStudentIds.includes(studentId));
+    const reservedStudentIds = new Set([
+      ...existingStudentIds,
+      ...reservedPendingStudentIds,
+      ...requestStudentIds,
+    ]);
+    if ((classroom as any).maxStudents && reservedStudentIds.size > (classroom as any).maxStudents) {
+      throw new BadRequestException(
+        `Lop chi chua toi da ${(classroom as any).maxStudents} hoc vien ke ca cho cho duyet`,
+      );
+    }
+
+    const invoiceId = objectIdToString(request.invoiceId);
+    if (invoiceId) {
+      const invoice = await this.invoiceModel.findById(invoiceId).lean();
+      if (!invoice) {
+        throw new NotFoundException('Hoa don khong ton tai');
+      }
+      if (invoice.status !== InvoiceStatus.APPROVED && invoice.status !== InvoiceStatus.PAID) {
+        throw new ForbiddenException('Hoa don chua duoc duyet');
+      }
+      const linkedClassId = objectIdToString(invoice.classId);
+      if (linkedClassId && linkedClassId !== id) {
+        throw new BadRequestException('Hoa don nay da duoc gan vao lop hoc khac');
+      }
+      if (invoice.classType && invoice.classType !== classroom.classMode) {
+        throw new BadRequestException('Loai lop cua hoa don khong khop voi lop duoc chon');
+      }
+    }
+
+    await this.classModel.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          students: Array.from(new Set([...existingStudentIds, ...requestStudentIds]))
+            .map((studentId) => new Types.ObjectId(studentId)),
+          'pendingOfflineAssignments.$[request].status': OfflineAssignmentRequestStatus.APPROVED,
+          'pendingOfflineAssignments.$[request].reviewedBy': new Types.ObjectId(actorId),
+          'pendingOfflineAssignments.$[request].reviewedAt': new Date(),
+          'pendingOfflineAssignments.$[request].rejectionReason': null,
+        },
+      },
+      {
+        arrayFilters: [{ 'request._id': new Types.ObjectId(requestId) }],
+      },
+    );
+
+    if (invoiceId) {
+      await this.invoiceModel.updateOne(
+        { _id: invoiceId },
+        { $set: { classId: new Types.ObjectId(id) } },
+      );
+      await this.classesCoreService.syncOrderProgressForInvoiceIds([invoiceId]);
+    }
+    await this.classesDataService.syncStudentConfigsOnClass(id, actorId);
+    this.classesCoreService.triggerStudentSupportSnapshotRefreshForClass(id, 'approvePendingOfflineAssignment');
+    return this.classesCoreService.findByIdPopulated(id);
+  }
+
+  async rejectPendingOfflineAssignment(
+    id: string,
+    requestId: string,
+    reason?: string,
+    actor?: JwtPayload,
+  ) {
+    const classroom = await this.classModel.findById(id).lean();
+    if (!classroom) {
+      throw new NotFoundException('Class not found');
+    }
+    assertCanReviewPendingOfflineAssignment(actor);
+
+    const request = this.findPendingOfflineAssignment(classroom, requestId);
+    if (!request) {
+      throw new NotFoundException('Khong tim thay yeu cau them hoc sinh vao lop offline');
+    }
+    if (request.status !== OfflineAssignmentRequestStatus.PENDING) {
+      throw new BadRequestException('Yeu cau them hoc sinh vao lop offline khong con cho duyet');
+    }
+
+    const actorId = getActorId(actor);
+    if (!actorId) {
+      throw new ForbiddenException('Khong xac dinh duoc nguoi duyet');
+    }
+
+    await this.classModel.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          'pendingOfflineAssignments.$[request].status': OfflineAssignmentRequestStatus.REJECTED,
+          'pendingOfflineAssignments.$[request].reviewedBy': new Types.ObjectId(actorId),
+          'pendingOfflineAssignments.$[request].reviewedAt': new Date(),
+          'pendingOfflineAssignments.$[request].rejectionReason': reason?.trim() || 'Khong dat yeu cau',
+        },
+      },
+      {
+        arrayFilters: [{ 'request._id': new Types.ObjectId(requestId) }],
+      },
+    );
+
+    return this.classesCoreService.findByIdPopulated(id);
+  }
+
+  private findPendingOfflineAssignment(classroom: any, requestId: string): any | null {
+    const requests = Array.isArray(classroom?.pendingOfflineAssignments)
+      ? classroom.pendingOfflineAssignments
+      : [];
+    return requests.find((request: any) => request?._id?.toString?.() === requestId) || null;
+  }
 
   async updateStudentConfig(
     classId: string,

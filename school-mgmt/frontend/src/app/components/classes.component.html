@@ -11,133 +11,276 @@
 
   <app-flow-guide featureKey="classes"></app-flow-guide>
 
-  <table class="data" *ngIf="classes().length; else empty">
-    <thead>
-      <tr>
-        <th>Ma lop</th>
-        <th>Ten lop</th>
-        <th>Loai</th>
-        <th>Giao vien</th>
-        <th>Hoc vien</th>
-        <th *ngIf="!isTeacher()">Gia co so (HS)</th>
-        <th>Luong co so (GV)</th>
-        <th>TL co so</th>
-        <th>TL buoi hoc</th>
-        <th *ngIf="!isTeacher()">Gia thuc/buoi</th>
-        <th>Luong thuc/buoi</th>
-        <th *ngIf="!isTeacher()">Loi nhuan/buoi</th>
-        <th>Hanh dong</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr *ngFor="let c of classes()" [attr.data-testid]="'class-row-' + c._id">
-        <td>{{c.code}}</td>
-        <td>
-          <div>{{c.name}}</div>
-          <small
-            class="request-status pending"
-            *ngIf="c.pendingSaleUpdate?.status === 'PENDING'">
-            {{ c.pendingSaleUpdate?.requestType === 'DURATION_CHANGE'
-              ? 'Sale dang cho Director duyet doi thoi luong'
-              : 'Sale dang cho duyet sua lop' }}
-          </small>
-          <small
-            class="request-status rejected"
-            *ngIf="c.pendingSaleUpdate?.status === 'REJECTED'">
-            {{ c.pendingSaleUpdate?.requestType === 'DURATION_CHANGE'
-              ? 'Yeu cau doi thoi luong da bi tu choi'
-              : 'Yeu cau sua lop da bi tu choi' }}
-          </small>
-        </td>
-        <td>
-          <span class="mode-badge" [class.offline]="isOfflineClass(c)">
-            {{isOfflineClass(c) ? 'OFFLINE' : 'ONLINE'}}
-          </span>
-        </td>
-        <td>
-          <div class="teacher-summary primary" [attr.data-testid]="'class-primary-teacher-' + c._id">
-            <strong>{{c.teacher?.fullName || '-'}}</strong>
-            <small>GV chinh</small>
-          </div>
-          <div
-            class="teacher-summary secondary"
-            *ngFor="let coTeacher of c.coTeachers || []; let i = index"
-            [attr.data-testid]="'class-co-teacher-summary-' + c._id + '-' + i">
-            <strong>{{coTeacherTeacherName(coTeacher)}}</strong>
+  <section class="list-filters" data-testid="classes-filters">
+    <label class="filter-field">
+      <span>Tim kiem lop hoc</span>
+      <input
+        name="classSearch"
+        [ngModel]="classSearch"
+        (ngModelChange)="onClassSearchChange($event)"
+        placeholder="Tim theo ma lop, ten lop"
+        data-testid="classes-search-filter" />
+    </label>
+
+    <label class="filter-field">
+      <span>Giao vien</span>
+      <select
+        name="teacherFilterId"
+        [ngModel]="teacherFilterId"
+        (ngModelChange)="onTeacherFilterChange($event)"
+        data-testid="classes-teacher-filter">
+        <option value="">Tat ca giao vien</option>
+        <option
+          *ngFor="let teacher of teacherFilterOptionsState(); trackBy: trackTeacherFilterOption"
+          [value]="teacher.id">
+          {{teacher.fullName}}
+        </option>
+      </select>
+    </label>
+
+    <label class="filter-field">
+      <span>Loai lop</span>
+      <select
+        name="classModeFilter"
+        [ngModel]="classModeFilter"
+        (ngModelChange)="onClassModeFilterChange($event)"
+        data-testid="classes-mode-filter">
+        <option value="">Tat ca loai lop</option>
+        <option value="ONLINE">ONLINE</option>
+        <option value="OFFLINE">OFFLINE</option>
+      </select>
+    </label>
+
+    <div class="filter-actions">
+      <small class="filter-summary" data-testid="classes-filter-summary">
+        {{classes().length}} / {{totalClasses()}} lop
+        <span *ngIf="totalPages() > 1">- Trang {{ currentPage() }}/{{ totalPages() }}</span>
+      </small>
+      <small class="filter-summary filter-loading" *ngIf="loadingClasses()">Dang tai...</small>
+      <button
+        type="button"
+        class="ghost"
+        data-testid="classes-reset-filters"
+        (click)="resetClassFilters()"
+        *ngIf="hasActiveClassFiltersState()">
+        Bo loc
+      </button>
+    </div>
+  </section>
+
+  <div class="data-table-shell" *ngIf="filteredClassCount() || loadingClasses(); else empty" data-testid="classes-table-shell">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Ma lop</th>
+          <th>Ten lop</th>
+          <th>Loai</th>
+          <th>Giao vien</th>
+          <th>Hoc vien</th>
+          <th *ngIf="!isTeacher()">Gia co so (HS)</th>
+          <th>Luong co so (GV)</th>
+          <th>TL co so</th>
+          <th>TL buoi hoc</th>
+          <th *ngIf="!isTeacher()">Gia thuc/buoi</th>
+          <th>Luong thuc/buoi</th>
+          <th *ngIf="!isTeacher()">Loi nhuan/buoi</th>
+          <th>Hanh dong</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr
+          *ngFor="let row of filteredClassRows(); trackBy: trackClassRow"
+          [attr.data-testid]="'class-row-' + row.item._id">
+          <td>{{row.item.code}}</td>
+          <td>
+            <div>{{row.item.name}}</div>
             <small
-              [attr.data-testid]="'class-co-teacher-role-' + c._id + '-' + i">{{coTeacherRoleLabel(coTeacher.role)}}</small>
-            <small
-              class="co-teacher-permission-line"
-              [attr.data-testid]="'class-co-teacher-permissions-' + c._id + '-' + i">
-              {{coTeacherPermissionSummary(coTeacher)}}
+              class="request-status pending"
+              *ngIf="row.item.pendingSaleUpdate?.status === 'PENDING'">
+              {{ row.item.pendingSaleUpdate?.requestType === 'DURATION_CHANGE'
+                ? 'Sale dang cho Ops/Director duyet doi thoi luong'
+                : 'Sale dang cho duyet sua lop' }}
             </small>
-          </div>
-        </td>
-        <td>
-          <div class="student-chip-list" *ngIf="c.students?.length; else emptyStudents">
-            <div class="student-chip" *ngFor="let s of c.students" [attr.data-testid]="'class-student-chip-' + c._id + '-' + s._id">
-              <div class="student-chip-content">
-                <strong>{{s.fullName}}</strong>
-                <small *ngIf="s.studentCode">{{s.studentCode}}</small>
-                <small
-                  class="student-config-summary"
-                  [attr.data-testid]="'class-student-teacher-summary-' + c._id + '-' + s._id">
-                  {{getStudentTeacherDisplay(c, s._id)}}
-                </small>
-                <small
-                  class="student-config-summary"
-                  [attr.data-testid]="'class-student-duration-summary-' + c._id + '-' + s._id">
-                  {{getStudentDurationDisplay(c, s._id)}}
-                </small>
-                <small
-                  class="student-config-history"
-                  [attr.data-testid]="'class-student-teacher-history-' + c._id + '-' + s._id"
-                  *ngIf="getStudentTeacherHistoryDisplay(c, s._id) as teacherHistory">
-                  {{teacherHistory}}
-                </small>
-                <small
-                  class="student-config-history"
-                  [attr.data-testid]="'class-student-duration-history-' + c._id + '-' + s._id"
-                  *ngIf="getStudentDurationHistoryDisplay(c, s._id) as durationHistory">
-                  {{durationHistory}}
-                </small>
-              </div>
-              <button
-                type="button"
-                class="ghost student-chip-action"
-                [attr.data-testid]="'class-student-config-' + c._id + '-' + s._id"
-                (click)="openStudentConfigModal(c, s)"
-                *ngIf="canEditStudentConfig(c)">
-                Cau hinh
-              </button>
+            <small
+              class="request-status rejected"
+              *ngIf="row.item.pendingSaleUpdate?.status === 'REJECTED'">
+              {{ row.item.pendingSaleUpdate?.requestType === 'DURATION_CHANGE'
+                ? 'Yeu cau doi thoi luong da bi tu choi'
+                : 'Yeu cau sua lop da bi tu choi' }}
+            </small>
+            <small
+              class="request-status pending"
+              *ngIf="row.pendingOfflineCount">
+              {{ row.pendingOfflineCount }} yeu cau them hoc sinh offline dang cho duyet
+            </small>
+          </td>
+          <td>
+            <span class="mode-badge" [class.offline]="row.mode === 'OFFLINE'">
+              {{row.mode}}
+            </span>
+          </td>
+          <td class="teacher-cell">
+            <div class="teacher-summary primary" [attr.data-testid]="'class-primary-teacher-' + row.item._id">
+              <strong>{{row.primaryTeacherName}}</strong>
+              <small>GV chinh</small>
             </div>
-          </div>
-          <ng-template #emptyStudents>
-            <span>Chua co</span>
-          </ng-template>
-        </td>
-        <td *ngIf="!isTeacher()">{{formatCurrency(c.pricePerSession)}}</td>
-        <td>{{formatTeacherBase(c)}}</td>
-        <td>{{c.baseDuration || 60}}p</td>
-        <td>{{c.sessionDuration || 60}}p</td>
-        <td *ngIf="!isTeacher()"><strong>{{formatCurrency(c.actualPricePerSession ?? c.pricePerSession)}}</strong></td>
-        <td>{{formatTeacherActual(c)}}</td>
-        <td *ngIf="!isTeacher()" [class]="getProfitClass(getProfit(c))">{{formatCurrency(getProfit(c))}}</td>
-        <td class="actions-cell">
-          <ng-container *ngIf="canManage()">
-            <button class="ghost" [attr.data-testid]="'class-edit-' + c._id" (click)="edit(c)">Sua</button>
-            <button class="danger" [attr.data-testid]="'class-delete-' + c._id" (click)="remove(c)" *ngIf="isDirector()">Xoa</button>
-          </ng-container>
-          <ng-container *ngIf="isSale() && canSaleAssign(c)">
-            <button class="ghost" (click)="edit(c, 'config')">Sua GV/luong</button>
-            <button class="ghost" (click)="edit(c, 'duration')">Sua thoi luong</button>
-            <button class="ghost" (click)="edit(c, 'assign')">Chon hoc vien</button>
-          </ng-container>
-        </td>
-      </tr>
-    </tbody>
-  </table>
-  <ng-template #empty><p>Chua co lop hoc.</p></ng-template>
+            <div
+              class="teacher-summary secondary"
+              *ngFor="let coTeacher of row.coTeacherSummaries; trackBy: trackCoTeacherSummary; let i = index"
+              [attr.data-testid]="'class-co-teacher-summary-' + row.item._id + '-' + i">
+              <strong>{{coTeacher.name}}</strong>
+              <small
+                [attr.data-testid]="'class-co-teacher-role-' + row.item._id + '-' + i">{{coTeacher.roleLabel}}</small>
+              <small
+                class="co-teacher-permission-line"
+                [attr.data-testid]="'class-co-teacher-permissions-' + row.item._id + '-' + i">
+                {{coTeacher.permissionSummary}}
+              </small>
+            </div>
+          </td>
+          <td>
+            <div class="student-chip-list" *ngIf="row.studentSummaries.length; else emptyStudents">
+              <div
+                class="student-chip"
+                *ngFor="let studentSummary of row.studentSummaries; trackBy: trackStudentSummary"
+                [attr.data-testid]="'class-student-chip-' + row.item._id + '-' + studentSummary.student._id">
+                <div class="student-chip-content">
+                  <strong>{{studentSummary.student.fullName}}</strong>
+                  <small *ngIf="studentSummary.student.studentCode">{{studentSummary.student.studentCode}}</small>
+                  <small
+                    class="student-config-summary"
+                    [attr.data-testid]="'class-student-teacher-summary-' + row.item._id + '-' + studentSummary.student._id">
+                    {{studentSummary.teacherDisplay}}
+                  </small>
+                  <small
+                    class="student-config-summary"
+                    [attr.data-testid]="'class-student-duration-summary-' + row.item._id + '-' + studentSummary.student._id">
+                    {{studentSummary.durationDisplay}}
+                  </small>
+                  <small
+                    class="student-config-history"
+                    [attr.data-testid]="'class-student-teacher-history-' + row.item._id + '-' + studentSummary.student._id"
+                    *ngIf="studentSummary.teacherHistory">
+                    {{studentSummary.teacherHistory}}
+                  </small>
+                  <small
+                    class="student-config-history"
+                    [attr.data-testid]="'class-student-duration-history-' + row.item._id + '-' + studentSummary.student._id"
+                    *ngIf="studentSummary.durationHistory">
+                    {{studentSummary.durationHistory}}
+                  </small>
+                </div>
+                <button
+                  type="button"
+                  class="ghost student-chip-action"
+                  [attr.data-testid]="'class-student-config-' + row.item._id + '-' + studentSummary.student._id"
+                  (click)="openStudentConfigModal(row.item, studentSummary.student)"
+                  *ngIf="canEditStudentConfig(row.item)">
+                  Cau hinh
+                </button>
+              </div>
+            </div>
+            <ng-template #emptyStudents>
+              <span>Chua co</span>
+            </ng-template>
+            <div
+              class="offline-request-list"
+              *ngIf="row.visibleOfflineRequests.length"
+              [attr.data-testid]="'class-offline-request-list-' + row.item._id">
+              <article
+                class="offline-request-card"
+                *ngFor="let request of row.visibleOfflineRequests; trackBy: trackOfflineRequest"
+                [attr.data-testid]="'class-offline-request-' + row.item._id + '-' + request._id">
+                <div class="offline-request-head">
+                  <strong>{{ pendingOfflineAssignmentStudentSummary(request) }}</strong>
+                  <span
+                    class="offline-request-badge"
+                    [ngClass]="pendingOfflineAssignmentStatusClass(request)">
+                    {{ pendingOfflineAssignmentStatusLabel(request) }}
+                  </span>
+                </div>
+                <small *ngIf="pendingOfflineAssignmentInvoiceNumber(request)">
+                  Hoa don: {{ pendingOfflineAssignmentInvoiceNumber(request) }}
+                </small>
+                <small>
+                  Sale gui: {{ pendingOfflineAssignmentRequestedByName(request) }}
+                  <span *ngIf="request.requestedAt"> - {{ formatHistoryTimestamp(request.requestedAt) }}</span>
+                </small>
+                <small
+                  class="offline-request-note rejected"
+                  *ngIf="request.status === 'REJECTED' && request.rejectionReason">
+                  Ly do tu choi: {{ request.rejectionReason }}
+                </small>
+                <small
+                  class="offline-request-note"
+                  *ngIf="request.reviewedAt && request.status !== 'PENDING'">
+                  Xu ly boi {{ pendingOfflineAssignmentReviewerName(request) }}
+                  - {{ formatHistoryTimestamp(request.reviewedAt) }}
+                </small>
+                <div class="offline-request-actions" *ngIf="canManage() && request.status === 'PENDING'">
+                  <button
+                    type="button"
+                    class="ghost"
+                    [attr.data-testid]="'class-offline-request-approve-' + row.item._id + '-' + request._id"
+                    (click)="approveOfflineAssignmentRequest(row.item, request)">
+                    Duyet
+                  </button>
+                  <button
+                    type="button"
+                    class="ghost"
+                    [attr.data-testid]="'class-offline-request-reject-' + row.item._id + '-' + request._id"
+                    (click)="rejectOfflineAssignmentRequest(row.item, request)">
+                    Tu choi
+                  </button>
+                </div>
+              </article>
+            </div>
+          </td>
+          <td *ngIf="!isTeacher()">{{formatCurrency(row.item.pricePerSession)}}</td>
+          <td>{{formatTeacherBase(row.item)}}</td>
+          <td>{{row.item.baseDuration || 60}}p</td>
+          <td>{{row.item.sessionDuration || 60}}p</td>
+          <td *ngIf="!isTeacher()"><strong>{{formatCurrency(row.item.actualPricePerSession ?? row.item.pricePerSession)}}</strong></td>
+          <td>{{formatTeacherActual(row.item)}}</td>
+          <td *ngIf="!isTeacher()" [class]="getProfitClass(getProfit(row.item))">{{formatCurrency(getProfit(row.item))}}</td>
+          <td class="actions-cell">
+            <ng-container *ngIf="canManage()">
+              <button class="ghost" [attr.data-testid]="'class-edit-' + row.item._id" (click)="edit(row.item)">Sua</button>
+              <button class="danger" [attr.data-testid]="'class-delete-' + row.item._id" (click)="remove(row.item)" *ngIf="isDirector()">Xoa</button>
+            </ng-container>
+            <ng-container *ngIf="isSale() && canSaleManageClass(row.item)">
+              <button class="ghost" (click)="edit(row.item, 'config')">Sua GV/luong</button>
+              <button class="ghost" (click)="edit(row.item, 'duration')">Sua thoi luong</button>
+              <button class="ghost" (click)="edit(row.item, 'assign')" *ngIf="row.mode !== 'OFFLINE'">Chon hoc vien</button>
+            </ng-container>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="list-loading" *ngIf="loadingClasses()">Dang tai danh sach lop...</p>
+  </div>
+  <div class="pagination" *ngIf="totalPages() > 1" data-testid="classes-pagination">
+    <button
+      type="button"
+      data-testid="classes-prev-page"
+      (click)="goToClassesPage(currentPage() - 1)"
+      [disabled]="currentPage() <= 1 || loadingClasses()">
+      &laquo; Truoc
+    </button>
+    <span>Trang {{ currentPage() }} / {{ totalPages() }}</span>
+    <button
+      type="button"
+      data-testid="classes-next-page"
+      (click)="goToClassesPage(currentPage() + 1)"
+      [disabled]="currentPage() >= totalPages() || loadingClasses()">
+      Sau &raquo;
+    </button>
+  </div>
+  <ng-template #empty>
+    <p *ngIf="loadingClasses()">Dang tai danh sach lop...</p>
+    <p *ngIf="!loadingClasses() && hasActiveClassFiltersState()">Khong tim thay lop hoc phu hop voi bo loc.</p>
+    <p *ngIf="!loadingClasses() && !hasActiveClassFiltersState()">Chua co lop hoc.</p>
+  </ng-template>
 
   <div class="modal-backdrop" *ngIf="showModal()">
     <div class="modal">
@@ -178,7 +321,7 @@
           </select>
         </label>
         <small class="field-hint" *ngIf="isSaleOfflineExistingMode()">
-          Sale chi chon lop offline da co san va them hoc sinh theo hoa don vao lop nay.
+          Sale gui yeu cau them hoc sinh theo hoa don vao lop offline da co san. Director/Ops se duyet truoc khi hoc sinh duoc gan vao lop.
         </small>
         <p class="muted sale-empty" *ngIf="isSaleOfflineExistingMode() && !saleOfflineOptions().length">
           Chua co lop offline nao san sang de them hoc sinh.
@@ -187,15 +330,34 @@
           <p><strong>Lop da chon:</strong> {{offlineClass.name}} ({{offlineClass.code}})</p>
           <p><strong>Giao vien:</strong> {{offlineClass.teacher?.fullName || 'Chua gan'}}</p>
           <p><strong>Si so hien tai:</strong> {{offlineClass.studentCount ?? offlineClass.students?.length ?? 0}}</p>
+          <p *ngIf="pendingOfflineAssignmentCount(offlineClass)"><strong>Yeu cau dang cho duyet:</strong> {{pendingOfflineAssignmentCount(offlineClass)}}</p>
         </div>
 
         <label>Ten lop
-          <input
-            name="name"
-            [(ngModel)]="form.name"
-            required
-            [readonly]="isSaleAssignMode() || isSaleDurationEditMode() || isSaleConfigEditMode() || isSaleOfflineExistingMode()" />
+          <ng-container *ngIf="canSelectOfflineClassName(); else editableClassNameInput">
+            <select
+              name="offlineNameProductId"
+              [ngModel]="selectedOfflineNameProductId()"
+              (ngModelChange)="onOfflineNameProductChange($event)"
+              required
+              data-testid="class-offline-name-select">
+              <option value="">-- Chon ten lop tu san pham offline --</option>
+              <option *ngFor="let product of availableOfflineNameProducts()" [value]="product._id">
+                {{product.name}}
+              </option>
+            </select>
+          </ng-container>
+          <ng-template #editableClassNameInput>
+            <input
+              name="name"
+              [(ngModel)]="form.name"
+              required
+              [readonly]="isSaleAssignMode() || isSaleDurationEditMode() || isSaleConfigEditMode() || isSaleOfflineExistingMode()" />
+          </ng-template>
         </label>
+        <small class="field-hint" *ngIf="canSelectOfflineClassName()">
+          Lop OFFLINE chon ten tu danh sach san pham offline va dong bo theo goi san pham da chon.
+        </small>
 
         <label *ngIf="canConfigureClassForm()">Loai lop
           <select
@@ -364,13 +526,13 @@
         <div class="financial-info" *ngIf="canConfigureClassForm()">
           <h4>Thiet lap gia theo buoi</h4>
           <p class="mode-hint" *ngIf="isSaleDurationEditMode()">
-            Sale chi duoc gui yeu cau doi thoi luong. Director duyet xong, cac buoi tao sau do se tinh theo snapshot moi cua lop nay.
+            Sale chi duoc gui yeu cau doi thoi luong. Ops hoac Director duyet xong, cac buoi tao sau do se tinh theo snapshot moi cua lop nay.
           </p>
           <p class="mode-hint" *ngIf="isSaleConfigEditMode()">
             Sale chi gui yeu cau doi giao vien phu trach va luong co so giao vien. Ma lop va du lieu diem danh cu duoc giu nguyen.
           </p>
           <p class="mode-hint" *ngIf="isSaleOfflineExistingMode()">
-            OFFLINE san co: Sale khong tao lop moi va khong sua cau hinh lop, chi them hoc sinh vao lop da chon.
+            OFFLINE san co: Sale khong tao lop moi va khong sua cau hinh lop. He thong chi tao yeu cau, hoc sinh vao lop sau khi Director/Ops phe duyet.
           </p>
           <div class="pricing-grid">
             <label>{{ form.classMode === 'OFFLINE' ? 'Don gia thu / HS / buoi (VND)' : 'Gia thu HS / buoi (VND)' }}

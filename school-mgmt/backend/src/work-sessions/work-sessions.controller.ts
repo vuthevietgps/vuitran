@@ -1,19 +1,20 @@
 import {
+  Body,
   Controller,
   Get,
-  Patch,
   Param,
+  Patch,
   Query,
-  Body,
-  UseGuards,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '../common/interfaces/role.enum';
+import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
+import { Role } from '../common/interfaces/role.enum';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
+import { QueryWorkSessionsDto } from './dto/query-work-sessions.dto';
 import { WorkSessionsService } from './work-sessions.service';
 
 @Controller('work-sessions')
@@ -21,40 +22,25 @@ import { WorkSessionsService } from './work-sessions.service';
 export class WorkSessionsController {
   constructor(private readonly workSessionsService: WorkSessionsService) {}
 
-  /** Xem lịch sử chấm công (filter by user, date range) */
   @Get()
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
-  findAll(
-    @Query('userId') userId?: string,
-    @Query('fromDate') fromDate?: string,
-    @Query('toDate') toDate?: string,
-    @Query('status') status?: any,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
-  ) {
-    return this.workSessionsService.findAll({ userId, fromDate, toDate, status, page, limit });
+  findAll(@Query() query: QueryWorkSessionsDto) {
+    return this.workSessionsService.findAll(query);
   }
 
-  /** Nhân viên xem chấm công của mình */
   @Get('my')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE)
   findMy(
     @Req() req: AuthenticatedRequest,
-    @Query('fromDate') fromDate?: string,
-    @Query('toDate') toDate?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query() query: QueryWorkSessionsDto,
   ) {
     return this.workSessionsService.findAll({
+      ...query,
       userId: req.user.sub,
-      fromDate,
-      toDate,
-      page,
-      limit,
+      search: undefined,
     });
   }
 
-  /** Tổng hợp giờ làm theo tháng cho tất cả nhân viên */
   @Get('summary')
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS)
   getMonthlySummary(
@@ -67,7 +53,6 @@ export class WorkSessionsController {
     );
   }
 
-  /** OPS/DIRECTOR chỉnh sửa thủ công (quên logout, sai giờ) */
   @Patch(':id')
   @Roles(Role.DIRECTOR, Role.OPS)
   update(

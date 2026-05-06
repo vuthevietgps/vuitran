@@ -12,6 +12,8 @@ type QueryChainResult = {
   session: jest.Mock;
   select: jest.Mock;
   sort: jest.Mock;
+  skip: jest.Mock;
+  limit: jest.Mock;
   lean: jest.Mock;
 };
 
@@ -20,6 +22,8 @@ function buildQueryChain(result: any): QueryChainResult {
   chain.session = jest.fn().mockReturnThis();
   chain.select = jest.fn().mockReturnThis();
   chain.sort = jest.fn().mockReturnThis();
+  chain.skip = jest.fn().mockReturnThis();
+  chain.limit = jest.fn().mockReturnThis();
   chain.lean = jest.fn().mockReturnThis();
   const promise = Promise.resolve(result);
   (chain as any).then = promise.then.bind(promise);
@@ -48,6 +52,7 @@ function buildUserModel() {
   UserModel.findById = jest.fn();
   UserModel.findOne = jest.fn();
   UserModel.find = jest.fn();
+  UserModel.countDocuments = jest.fn();
   UserModel.findByIdAndUpdate = jest.fn();
   UserModel.deleteOne = jest.fn();
 
@@ -607,5 +612,111 @@ describe('UsersService.createByDirector teacher onboarding salary config', () =>
     expect(salaryConfigService.remove).toHaveBeenCalledWith(savedUserId.toString());
     expect(teacherProfileModel.deleteOne).toHaveBeenCalledWith({ userId: savedUserId });
     expect(userModel.deleteOne).toHaveBeenCalledWith({ _id: savedUserId });
+  });
+});
+
+describe('UsersService.findParentsManagement', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('returns one paged slice instead of loading the full parent list', async () => {
+    const service = buildService();
+    const userModel = (service as any).userModel;
+    const pagedUsers = [
+      {
+        _id: new Types.ObjectId(),
+        userCode: 'PH0001',
+        email: 'parent.one@example.com',
+        fullName: 'Parent One',
+        role: Role.PARENT,
+        status: 'ACTIVE',
+      },
+      {
+        _id: new Types.ObjectId(),
+        userCode: 'PH0002',
+        email: 'parent.two@example.com',
+        fullName: 'Parent Two',
+        role: Role.PARENT,
+        status: 'ACTIVE',
+      },
+    ];
+    const findChain = buildQueryChain(pagedUsers);
+    userModel.countDocuments.mockResolvedValue(105);
+    userModel.find.mockReturnValue(findChain);
+
+    const adsService = (service as any).usersAdsService;
+    jest
+      .spyOn(adsService, 'enrichUsersWithAdsAttribution')
+      .mockResolvedValue(pagedUsers as any);
+
+    const result = await service.findParentsManagement({
+      page: 2,
+      limit: 25,
+    });
+
+    expect(userModel.countDocuments).toHaveBeenCalledWith({ role: Role.PARENT });
+    expect(userModel.find).toHaveBeenCalledWith({ role: Role.PARENT });
+    expect(findChain.skip).toHaveBeenCalledWith(25);
+    expect(findChain.limit).toHaveBeenCalledWith(25);
+    expect(result.meta).toEqual({
+      total: 105,
+      page: 2,
+      limit: 25,
+      totalPages: 5,
+    });
+    expect(result.data).toEqual(pagedUsers);
+  });
+
+  it('keeps sale ownership scoping while applying server-side search', async () => {
+    const saleId = new Types.ObjectId();
+    const parentId = new Types.ObjectId();
+    const service = buildService({
+      studentModel: {
+        distinct: jest.fn().mockResolvedValue([parentId]),
+      } as any,
+    });
+    const userModel = (service as any).userModel;
+    const findChain = buildQueryChain([]);
+    userModel.countDocuments.mockResolvedValue(1);
+    userModel.find.mockReturnValue(findChain);
+
+    const adsService = (service as any).usersAdsService;
+    jest
+      .spyOn(adsService, 'enrichUsersWithAdsAttribution')
+      .mockResolvedValue([] as any);
+
+    await service.findParentsManagement(
+      {
+        search: 'parent',
+        page: 1,
+        limit: 50,
+      },
+      {
+        sub: saleId.toHexString(),
+        role: Role.SALE,
+      } as any,
+    );
+
+    const scopedQuery = userModel.find.mock.calls[0][0];
+    expect(scopedQuery.$and).toBeDefined();
+    expect(scopedQuery.$and[0]).toMatchObject({
+      role: Role.PARENT,
+      $or: expect.arrayContaining([
+        { saleOwnerId: saleId },
+        {
+          _id: { $in: [parentId] },
+          $or: [{ saleOwnerId: { $exists: false } }, { saleOwnerId: null }],
+        },
+      ]),
+    });
+    expect(scopedQuery.$and[1].$or).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ userCode: expect.any(RegExp) }),
+        expect.objectContaining({ email: expect.any(RegExp) }),
+        expect.objectContaining({ fullName: expect.any(RegExp) }),
+        expect.objectContaining({ phone: expect.any(RegExp) }),
+      ]),
+    );
   });
 });

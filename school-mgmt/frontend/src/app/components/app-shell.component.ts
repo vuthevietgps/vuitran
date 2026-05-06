@@ -103,7 +103,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý học sinh" data-testid="nav-students">
               <span class="icon">&#127891;</span><span class="label">Quản lý học sinh</span>
             </a>
-            <a routerLink="/app/classes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING])" title="Quản lý lớp học" data-testid="nav-classes">
+            <a routerLink="/app/classes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING, Role.SALE])" title="Quản lý lớp học" data-testid="nav-classes">
               <span class="icon">&#127979;</span><span class="label">Quản lý lớp học</span>
             </a>
           </div>
@@ -124,6 +124,23 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             </a>
             <a routerLink="/app/commission-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.SALE, Role.ACCOUNTING])" title="Hoa hồng">
               <span class="icon">&#128178;</span><span class="label">BC hoa hồng</span>
+            </a>
+        </div>
+        </div>
+
+        <div class="menu-group" [class.open]="menuGroups['landingPages']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])">
+          <button class="menu-group-header" (click)="toggleGroup('landingPages')" *ngIf="!sidebarCollapsed">
+            <span class="group-icon">&#127760;</span>
+            <span class="group-label">Landing page</span>
+            <span class="group-arrow">{{ menuGroups['landingPages'] ? '&#9650;' : '&#9660;' }}</span>
+          </button>
+          <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
+            <a
+              routerLink="/app/landing-pages"
+              routerLinkActive="active"
+              title="Quản lý landing page"
+              data-testid="nav-landing-pages">
+              <span class="icon">&#127760;</span><span class="label">Quản lý landing page</span>
             </a>
           </div>
         </div>
@@ -537,6 +554,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     overview: true,
     management: true,
     sales: true,
+    landingPages: true,
     ads: false,
     chatbot: false,
     learning: true,

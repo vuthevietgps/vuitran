@@ -37,6 +37,7 @@ Tài liệu này hướng dẫn cách sử dụng Hệ thống Quản lý Trư�
 3. Màn hình sẽ hiển thị danh sách toàn bộ các lớp học hiện có trong trung tâm.
 4. Để mở một lớp học mới, nhấn vào nút **+ Thêm lớp học** ở góc trên bên phải màn hình.
 5. (Tuỳ chọn) Điền thông tin tạo lớp, gán giáo viên, học viên và cấu hình giá tiền theo loại lớp.
+6. Với lop ONLINE da tung doi thoi luong, preview va lich su thay doi phai doc theo snapshot da duyet moi nhat cua lop, khong doc theo field top-level cu.
 
 **Mô phỏng thao tác thực tế:**
 

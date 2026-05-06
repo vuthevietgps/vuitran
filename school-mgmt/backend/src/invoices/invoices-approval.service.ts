@@ -124,15 +124,15 @@ export class InvoicesApprovalService {
     const requestedTeacherId = normalizeObjectId(invoice?.requestedTeacherId);
 
     if (!invoiceId || !studentId) return;
-    if (classId) return;
-    if (!requestedClassId && !requestedTeacherId) return;
+    const resolvedRequestedClassId = requestedClassId || classId;
+    if (!resolvedRequestedClassId && !requestedTeacherId) return;
 
     try {
       await this.classesService.autoPlaceApprovedInvoice(
         {
           invoiceId,
           studentId,
-          requestedClassId,
+          requestedClassId: resolvedRequestedClassId,
           requestedTeacherId,
         },
         actor,

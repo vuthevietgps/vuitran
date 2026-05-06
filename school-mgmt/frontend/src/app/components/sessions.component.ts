@@ -743,6 +743,12 @@ export class SessionsComponent implements OnInit {
 
   sessionStatusLabel(session: SessionItem | null | undefined): string {
     if (!session) return '';
+
+    const trialDecisionLabel = this.trialDecisionStatusLabel(session);
+    if (trialDecisionLabel) {
+      return trialDecisionLabel;
+    }
+
     if (session.status !== 'FINALIZED') {
       return this.statusLabel(session.status);
     }
@@ -761,6 +767,26 @@ export class SessionsComponent implements OnInit {
     }
 
     return '\u0110\u00e3 x\u00e1c nh\u1eadn l\u01b0\u01a1ng';
+  }
+
+  private trialDecisionStatusLabel(session: SessionItem | null | undefined): string {
+    if (!session || session.sessionType !== 'TRIAL') {
+      return '';
+    }
+
+    if (session.trialConverted) {
+      return '\u0110\u00e3 \u0111\u01b0\u1ee3c duy\u1ec7t h\u1ecdc th\u1eed';
+    }
+
+    if (session.trialTeacherPaidOnly) {
+      return '\u0110\u00e3 ch\u1ed1t h\u1ecdc th\u1eed, tr\u1ea3 l\u01b0\u01a1ng GV';
+    }
+
+    if (session.trialRejectedNoPay) {
+      return 'H\u1ecdc th\u1eed kh\u00f4ng ti\u1ebfp t\u1ee5c';
+    }
+
+    return '';
   }
 
   shouldShowLowRatingFlag(session: SessionItem | null | undefined): boolean {

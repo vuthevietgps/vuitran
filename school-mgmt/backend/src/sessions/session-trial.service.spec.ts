@@ -15,20 +15,9 @@ function buildClassModel() {
 }
 
 describe('SessionTrialService', () => {
-  it('keeps teacher payout when trial is marked teacher-paid-only', async () => {
-    const session = {
-      _id: new Types.ObjectId(),
-      studentId: new Types.ObjectId(),
-      classId: new Types.ObjectId(),
-      sessionType: SessionType.TRIAL,
-      trialConverted: false,
-      trialTeacherPaidOnly: false,
-      trialRejectedNoPay: false,
-      isTeacherPaid: false,
-      save: jest.fn().mockResolvedValue(undefined),
-    };
+  it('rejects the legacy teacher-paid-only trial path', async () => {
     const sessionModel = {
-      find: jest.fn().mockResolvedValue([session]),
+      find: jest.fn(),
     };
     const classModel = buildClassModel();
     const payrollTxService = {
@@ -42,17 +31,15 @@ describe('SessionTrialService', () => {
       {} as any,
     );
 
-    const result = await service.markTrialTeacherPaidOnly(
-      session.studentId.toString(),
-      session.classId.toString(),
-      new Types.ObjectId().toString(),
-    );
+    await expect(
+      service.markTrialTeacherPaidOnly(
+        new Types.ObjectId().toString(),
+        new Types.ObjectId().toString(),
+        new Types.ObjectId().toString(),
+      ),
+    ).rejects.toThrowError(/khong ho tro che do tra luong gv rieng/i);
 
-    expect(result).toEqual({ updated: 1, excludedPayroll: 0 });
-    expect(session.trialTeacherPaidOnly).toBe(true);
-    expect(session.trialRejectedNoPay).toBe(false);
-    expect(session.isTeacherPaid).toBe(true);
-    expect(session.save).toHaveBeenCalledTimes(1);
+    expect(sessionModel.find).not.toHaveBeenCalled();
     expect(payrollTxService.excludeFromPayroll).not.toHaveBeenCalled();
   });
 

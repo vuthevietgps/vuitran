@@ -5,6 +5,7 @@ import { Invoice, InvoiceDocument, InvoiceStatus, InvoiceType, InvoiceCourseStat
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { ApproveInvoiceDto } from './dto/approve-invoice.dto';
+import { QueryInvoiceManagementDto } from './dto/query-invoice-management.dto';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { Role } from '../common/interfaces/role.enum';
@@ -43,6 +44,220 @@ export class InvoicesService {
       return value;
     }
     return (value as any)?._id?.toString?.() || (value as any)?.toString?.() || undefined;
+  }
+
+  private getActorObjectId(actor?: JwtPayload): Types.ObjectId | null {
+    const actorId = this.getActorId(actor);
+    return Types.ObjectId.isValid(actorId) ? new Types.ObjectId(actorId) : null;
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  private normalizeManagementPage(value?: number | null, fallback = 1): number {
+    return Math.max(1, Number(value) || fallback);
+  }
+
+  private normalizeManagementLimit(value?: number | null, fallback = 25): number {
+    return Math.min(200, Math.max(1, Number(value) || fallback));
+  }
+
+  private async buildInvoiceAccessFilter(actor: JwtPayload): Promise<any> {
+    if (actor.role !== Role.SALE) {
+      return {};
+    }
+
+    const actorObjectId = this.getActorObjectId(actor);
+    if (!actorObjectId) {
+      return { _id: { $in: [] } };
+    }
+
+    const ownStudentIds = await this.studentModel.distinct('_id', {
+      saleId: actorObjectId,
+    });
+
+    return {
+      $or: [
+        { createdBy: actorObjectId },
+        { studentId: { $in: ownStudentIds } },
+      ],
+    };
+  }
+
+  private async findStudentIdsForInvoiceKeyword(keyword: string): Promise<Types.ObjectId[]> {
+    const regex = new RegExp(this.escapeRegex(keyword), 'i');
+    return this.studentModel.distinct('_id', {
+      $or: [
+        { fullName: regex },
+        { studentCode: regex },
+      ],
+    });
+  }
+
+  private async findStudentIdsForParentKeyword(keyword: string): Promise<Types.ObjectId[]> {
+    const regex = new RegExp(this.escapeRegex(keyword), 'i');
+    return this.studentModel.distinct('_id', {
+      $or: [
+        { parentName: regex },
+        { parentPhone: regex },
+      ],
+    });
+  }
+
+  private async findSaleIdsForKeyword(keyword: string): Promise<Types.ObjectId[]> {
+    const regex = new RegExp(this.escapeRegex(keyword), 'i');
+    return this.userModel.distinct('_id', {
+      role: Role.SALE,
+      $or: [
+        { fullName: regex },
+        { userCode: regex },
+        { email: regex },
+      ],
+    });
+  }
+
+  private async buildInvoiceManagementFilter(
+    query: QueryInvoiceManagementDto,
+    actor: JwtPayload,
+  ): Promise<{ filter: any; accessFilter: any }> {
+    const accessFilter = await this.buildInvoiceAccessFilter(actor);
+    const conditions: any[] = [];
+
+    if (Object.keys(accessFilter).length) {
+      conditions.push(accessFilter);
+    }
+
+    if (query.classType) {
+      conditions.push({ classType: query.classType });
+    }
+
+    if (query.status) {
+      conditions.push({ status: query.status });
+    }
+
+    if (query.courseStatus) {
+      conditions.push({ courseStatus: query.courseStatus });
+    }
+
+    if (query.dateFrom || query.dateTo) {
+      const paymentDateFilter: Record<string, Date> = {};
+      if (query.dateFrom) {
+        paymentDateFilter.$gte = new Date(query.dateFrom);
+      }
+      if (query.dateTo) {
+        const endDate = new Date(query.dateTo);
+        endDate.setHours(23, 59, 59, 999);
+        paymentDateFilter.$lte = endDate;
+      }
+      conditions.push({ paymentDate: paymentDateFilter });
+    }
+
+    const keyword = query.keyword?.trim();
+    if (keyword) {
+      const invoiceNumberRegex = new RegExp(this.escapeRegex(keyword), 'i');
+      const studentIds = await this.findStudentIdsForInvoiceKeyword(keyword);
+      const keywordBranches: any[] = [{ invoiceNumber: invoiceNumberRegex }];
+      if (studentIds.length) {
+        keywordBranches.push({ studentId: { $in: studentIds } });
+      }
+      conditions.push({ $or: keywordBranches });
+    }
+
+    const parentKeyword = query.parentKeyword?.trim();
+    if (parentKeyword) {
+      const studentIds = await this.findStudentIdsForParentKeyword(parentKeyword);
+      if (!studentIds.length) {
+        return { filter: { _id: { $in: [] } }, accessFilter };
+      }
+      conditions.push({ studentId: { $in: studentIds } });
+    }
+
+    const saleKeyword = query.saleKeyword?.trim();
+    if (saleKeyword) {
+      const saleIds = await this.findSaleIdsForKeyword(saleKeyword);
+      if (!saleIds.length) {
+        return { filter: { _id: { $in: [] } }, accessFilter };
+      }
+      conditions.push({ saleId: { $in: saleIds } });
+    }
+
+    if (!conditions.length) {
+      return { filter: {}, accessFilter };
+    }
+
+    if (conditions.length === 1) {
+      return { filter: conditions[0], accessFilter };
+    }
+
+    return { filter: { $and: conditions }, accessFilter };
+  }
+
+  private async buildInvoiceSessionTotalsForPage(
+    invoices: any[],
+    accessFilter: any,
+  ): Promise<Map<string, number>> {
+    const pairs = Array.from(
+      new Set(
+        (invoices || [])
+          .map((invoice) => {
+            const studentId = this.normalizeObjectId(invoice?.studentId);
+            const classId = this.normalizeObjectId(invoice?.classId);
+            return studentId && classId ? `${studentId}::${classId}` : '';
+          })
+          .filter(Boolean),
+      ),
+    );
+
+    if (!pairs.length) {
+      return new Map<string, number>();
+    }
+
+    const pairConditions = pairs.map((pair) => {
+      const [studentId, classId] = pair.split('::');
+      return {
+        studentId: new Types.ObjectId(studentId),
+        classId: new Types.ObjectId(classId),
+      };
+    });
+
+    const aggregateConditions = [
+      Object.keys(accessFilter).length ? accessFilter : null,
+      { status: { $in: [InvoiceStatus.APPROVED, InvoiceStatus.PAID] } },
+      { $or: pairConditions },
+    ].filter(Boolean);
+
+    const matchStage = aggregateConditions.length === 1
+      ? aggregateConditions[0]
+      : { $and: aggregateConditions };
+
+    const rows = await this.invoiceModel.aggregate([
+      { $match: matchStage },
+      {
+        $group: {
+          _id: {
+            studentId: '$studentId',
+            classId: '$classId',
+          },
+          totalSessions: {
+            $sum: {
+              $add: [
+                { $ifNull: ['$sessions', 0] },
+                { $ifNull: ['$bonusSessions', 0] },
+                { $ifNull: ['$trialSessions', 0] },
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    return new Map<string, number>(
+      rows.map((row: any) => [
+        `${row._id.studentId.toString()}::${row._id.classId.toString()}`,
+        Number(row.totalSessions || 0),
+      ]),
+    );
   }
 
   private isOfflineTrialZeroAmountInvoice(invoice: Partial<InvoiceDocument> | any): boolean {
@@ -352,6 +567,106 @@ export class InvoicesService {
       .lean();
   }
 
+  async findManagement(query: QueryInvoiceManagementDto, actor: JwtPayload) {
+    const page = this.normalizeManagementPage(query.page, 1);
+    const limit = this.normalizeManagementLimit(query.limit, 25);
+    const { filter, accessFilter } = await this.buildInvoiceManagementFilter(query, actor);
+
+    const [summaryRow] = await this.invoiceModel.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          onlineAmount: {
+            $sum: {
+              $cond: [
+                { $eq: ['$classType', 'ONLINE'] },
+                { $ifNull: ['$amount', 0] },
+                0,
+              ],
+            },
+          },
+          offlineAmount: {
+            $sum: {
+              $cond: [
+                { $eq: ['$classType', 'OFFLINE'] },
+                { $ifNull: ['$amount', 0] },
+                0,
+              ],
+            },
+          },
+          approvedAmount: {
+            $sum: {
+              $cond: [
+                { $in: ['$status', [InvoiceStatus.APPROVED, InvoiceStatus.PAID]] },
+                { $ifNull: ['$amount', 0] },
+                0,
+              ],
+            },
+          },
+          pendingCount: {
+            $sum: {
+              $cond: [
+                { $eq: ['$status', InvoiceStatus.PENDING_APPROVAL] },
+                1,
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const total = Number(summaryRow?.total || 0);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const skip = (safePage - 1) * limit;
+
+    const invoices = await this.invoiceModel
+      .find(filter)
+      .select(
+        'invoiceNumber studentId classType sessions bonusSessions trialSessions paymentRound courseStatus amount paymentDate receiptImage approvalImage description classId status createdBy createdAt updatedAt saleId',
+      )
+      .populate('studentId', 'fullName parentName parentPhone studentCode')
+      .populate('classId', 'name code pricePerSession')
+      .populate('createdBy', 'fullName email')
+      .populate('approvedBy', 'fullName email')
+      .populate('saleId', 'fullName email')
+      .sort({ createdAt: -1, _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const totalsByPair = await this.buildInvoiceSessionTotalsForPage(invoices, accessFilter);
+    const rows = invoices.map((invoice: any) => {
+      const studentId = this.normalizeObjectId(invoice.studentId);
+      const classId = this.normalizeObjectId(invoice.classId);
+      const pairKey = studentId && classId ? `${studentId}::${classId}` : '';
+      return {
+        ...invoice,
+        totalSessionsByStudentClass: pairKey ? (totalsByPair.get(pairKey) ?? null) : null,
+      };
+    });
+
+    return {
+      data: rows,
+      meta: {
+        total,
+        page: safePage,
+        limit,
+        totalPages,
+      },
+      summary: {
+        total,
+        onlineAmount: Number(summaryRow?.onlineAmount || 0),
+        offlineAmount: Number(summaryRow?.offlineAmount || 0),
+        approvedAmount: Number(summaryRow?.approvedAmount || 0),
+        pendingCount: Number(summaryRow?.pendingCount || 0),
+      },
+    };
+  }
+
   async findOne(id: string, actor?: JwtPayload) {
     const invoice = await this.invoiceModel.findById(id)
       .populate('studentId', 'fullName parentName parentPhone studentCode parentUserId')
@@ -497,7 +812,7 @@ export class InvoicesService {
     const existingInvoice = await this.invoiceModel
       .findById(id)
       .select(
-        '_id invoiceNumber status receiptImage studentId invoiceType sessions bonusSessions trialSessions amount classType classId requestedClassId requestedTeacherId orderId paymentRound',
+        '_id invoiceNumber status receiptImage studentId invoiceType sessions bonusSessions trialSessions amount classType classId requestedClassId requestedClassCode requestedTeacherId orderId paymentRound',
       )
       .lean();
     if (!existingInvoice) {
@@ -673,21 +988,22 @@ export class InvoicesService {
     const studentId = this.normalizeObjectId(invoice?.studentId);
     const classId = this.normalizeObjectId(invoice?.classId);
     const requestedClassId = this.normalizeObjectId(invoice?.requestedClassId);
+    const requestedClassCode = String(invoice?.requestedClassCode || '').trim().toUpperCase() || null;
     const requestedTeacherId = this.normalizeObjectId(invoice?.requestedTeacherId);
     const createNewClassWhenApproved = !!invoice?.createNewClassWhenApproved;
 
     if (!invoiceId || !studentId) return;
-    // Da gan lop roi -> khong can auto-place
-    if (classId) return;
+    const resolvedRequestedClassId = requestedClassId || classId;
     // Khong co yeu cau lop/GV -> khong auto-place
-    if (!requestedClassId && !requestedTeacherId && !createNewClassWhenApproved) return;
+    if (!resolvedRequestedClassId && !requestedClassCode && !requestedTeacherId && !createNewClassWhenApproved) return;
 
     try {
       await this.classesService.autoPlaceApprovedInvoice(
         {
           invoiceId,
           studentId,
-          requestedClassId,
+          requestedClassId: resolvedRequestedClassId,
+          requestedClassCode,
           createNewClassWhenApproved,
           requestedTeacherId,
         },
@@ -758,13 +1074,13 @@ export class InvoicesService {
 
     // Summary
     const totalPaid = invoices
-      .filter((i) => i.status === 'APPROVED')
+      .filter((i) => this.isPurchasedSessionsSourceStatus(i.status))
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     const totalPending = invoices
       .filter((i) => i.status === 'PENDING_APPROVAL')
       .reduce((sum, i) => sum + (i.amount || 0), 0);
     const totalSessionsRemaining = invoices
-      .filter((i) => i.status === 'APPROVED')
+      .filter((i) => this.isPurchasedSessionsSourceStatus(i.status))
       .reduce((sum, i) => sum + this.getRemainingStudySessions(i), 0);
 
     return {
@@ -990,30 +1306,22 @@ export class InvoicesService {
       (item.invoiceNumber && String(item.invoiceNumber).trim()) ||
       (await this.generateInvoiceNumber(mongoSession));
 
-    // Payment round: explicit or auto from existing invoices
-    let paymentRound = item.paymentRound;
-    if (!paymentRound) {
-      const countQuery = this.invoiceModel.countDocuments({
-        studentId: new Types.ObjectId(studentId),
-        status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
-      });
-      paymentRound = (await countQuery) + 1;
-    }
+    // Payment round is always auto-assigned from existing active invoices.
+    const countQuery = this.invoiceModel.countDocuments({
+      studentId: new Types.ObjectId(studentId),
+      status: { $nin: [InvoiceStatus.CANCELLED, InvoiceStatus.REJECTED] },
+    });
+    const paymentRound = (await countQuery) + 1;
 
     const courseStatus = item.courseStatus || this.mapPaymentRoundToCourseStatus(paymentRound);
 
     // Amount distribution: single-item → finalAmount, multi-item → item.amount ratio
-    const isInstallmentOrder = ['INSTALLMENT_2', 'INSTALLMENT_3'].includes(
-      String(order.paymentPlan || '').toUpperCase(),
-    );
     const explicitItemAmount = Number(item.amount || 0);
     const isSingleItem = items.length === 1;
     const totalAmount = Number(order.totalAmount || 0);
     const finalAmount = Number(order.finalAmount || 0);
     let invoiceAmount: number;
-    if (isInstallmentOrder && Number.isFinite(explicitItemAmount)) {
-      invoiceAmount = explicitItemAmount;
-    } else if (isSingleItem) {
+    if (isSingleItem) {
       invoiceAmount = finalAmount;
     } else {
       const ratio = totalAmount > 0 ? explicitItemAmount / totalAmount : 1 / items.length;
@@ -1023,10 +1331,7 @@ export class InvoicesService {
     // Commission distribution
     const totalCommission = Number(order.saleCommission || 0);
     let saleCommission: number;
-    if (isInstallmentOrder && Number.isFinite(explicitItemAmount)) {
-      const ratio = finalAmount > 0 ? explicitItemAmount / finalAmount : 0;
-      saleCommission = Math.round(totalCommission * ratio);
-    } else if (isSingleItem) {
+    if (isSingleItem) {
       saleCommission = totalCommission;
     } else {
       const ratio = totalAmount > 0 ? explicitItemAmount / totalAmount : 1 / items.length;
@@ -1059,6 +1364,10 @@ export class InvoicesService {
       saleCommission,
       classId: item.selectedClassId ? new Types.ObjectId(String(item.selectedClassId)) : undefined,
       requestedClassId: item.selectedClassId ? new Types.ObjectId(String(item.selectedClassId)) : undefined,
+      requestedClassCode:
+        typeof item.requestedClassCode === 'string' && item.requestedClassCode.trim()
+          ? item.requestedClassCode.trim().toUpperCase()
+          : undefined,
       requestedTeacherId: item.preferredTeacherId ? new Types.ObjectId(String(item.preferredTeacherId)) : undefined,
       createNewClassWhenApproved: !!item.createNewClassWhenApproved,
       classType,

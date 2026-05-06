@@ -150,10 +150,6 @@ export class EnrollmentService {
     trialSessions?: number;
     pricePerSession?: number;
   }> {
-    const drafts = this.buildInstallmentInvoiceDrafts(order, item);
-    if (drafts.length) {
-      return drafts;
-    }
     return [{}];
   }
 

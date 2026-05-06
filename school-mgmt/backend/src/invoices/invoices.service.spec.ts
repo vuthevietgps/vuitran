@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { Types } from "mongoose";
 import { InvoicesService } from "./invoices.service";
 import { InvoiceStatus, InvoiceType } from "./schemas/invoice.schema";
+import { Role } from "../common/interfaces/role.enum";
 
 jest.mock("../wallets/wallets.service", () => ({
   WalletsService: class WalletsService {},
@@ -12,6 +13,9 @@ function buildQueryChain(result: any) {
     select: jest.fn().mockReturnThis(),
     populate: jest.fn().mockReturnThis(),
     session: jest.fn().mockReturnThis(),
+    sort: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
     lean: jest.fn().mockResolvedValue(result),
   };
   return chain;
@@ -29,8 +33,10 @@ function buildService(
   }> = {},
 ) {
   const invoiceModel = overrides.invoiceModel ?? {
+    find: jest.fn().mockImplementation(() => buildQueryChain([])),
     findById: jest.fn().mockImplementation(() => buildQueryChain(null)),
     findOneAndUpdate: jest.fn(),
+    aggregate: jest.fn().mockResolvedValue([]),
     updateOne: jest.fn(),
   };
   const studentModel = overrides.studentModel ?? {
@@ -71,6 +77,7 @@ function buildService(
   ) as any;
 
   // Expose sub-service internals for test assertions
+  service.classesService = classesService;
   service.walletsService = walletsService;
 
   return service;
@@ -304,6 +311,127 @@ describe("InvoicesService approveInvoice", () => {
     expect(result.status).toBe(InvoiceStatus.APPROVED);
     expect(result.approvalImage).toBe(approvalImage);
   });
+
+  it("forwards requestedClassCode to class auto-placement after approval", async () => {
+    const invoiceId = new Types.ObjectId().toHexString();
+    const requestedClassCode = "CLS-OFF-009";
+    const service = buildService();
+    const existingInvoice = {
+      _id: invoiceId,
+      invoiceNumber: "INV-CLASS-CODE-001",
+      status: InvoiceStatus.PENDING_APPROVAL,
+      receiptImage: "/uploads/invoices/sale-proof-class-code.png",
+      studentId: new Types.ObjectId(),
+      invoiceType: InvoiceType.TUITION,
+      sessions: 12,
+      bonusSessions: 0,
+      trialSessions: 0,
+      amount: 0,
+      classType: "OFFLINE",
+      classId: null,
+      requestedClassId: null,
+      requestedClassCode,
+      requestedTeacherId: null,
+    };
+    const approvedInvoice = {
+      ...existingInvoice,
+      status: InvoiceStatus.APPROVED,
+      approvedBy: new Types.ObjectId(),
+      approvedAt: new Date(),
+      approvalImage: "/uploads/invoices/counterpart-class-code.png",
+      toObject() {
+        return this;
+      },
+    };
+    service.invoiceModel.findById = jest
+      .fn()
+      .mockImplementationOnce(() => buildQueryChain(existingInvoice))
+      .mockImplementationOnce(() => buildQueryChain(approvedInvoice));
+    service.invoiceModel.findOneAndUpdate = jest.fn().mockResolvedValue(approvedInvoice);
+    service.connection.startSession = jest.fn().mockResolvedValue({
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      abortTransaction: jest.fn(),
+      endSession: jest.fn(),
+    });
+
+    await service.approveInvoice(
+      invoiceId,
+      {
+        action: "APPROVE",
+        approvalImage: "/uploads/invoices/counterpart-class-code.png",
+      } as any,
+      { sub: new Types.ObjectId().toHexString(), role: "DIRECTOR" } as any,
+    );
+
+    expect(service.classesService.autoPlaceApprovedInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invoiceId,
+        requestedClassCode,
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("reuses the linked classId for auto-placement when an approved order invoice already points at a class", async () => {
+    const invoiceId = new Types.ObjectId().toHexString();
+    const linkedClassId = new Types.ObjectId().toHexString();
+    const service = buildService();
+    const existingInvoice = {
+      _id: invoiceId,
+      invoiceNumber: "INV-LINKED-CLASS-001",
+      status: InvoiceStatus.PENDING_APPROVAL,
+      receiptImage: "",
+      studentId: new Types.ObjectId(),
+      invoiceType: InvoiceType.TUITION,
+      sessions: 0,
+      bonusSessions: 0,
+      trialSessions: 1,
+      amount: 0,
+      classType: "OFFLINE",
+      classId: new Types.ObjectId(linkedClassId),
+      requestedClassId: null,
+      requestedClassCode: null,
+      requestedTeacherId: null,
+    };
+    const approvedInvoice = {
+      ...existingInvoice,
+      status: InvoiceStatus.APPROVED,
+      approvedBy: new Types.ObjectId(),
+      approvedAt: new Date(),
+      toObject() {
+        return this;
+      },
+    };
+
+    service.invoiceModel.findById = jest
+      .fn()
+      .mockImplementationOnce(() => buildQueryChain(existingInvoice))
+      .mockImplementationOnce(() => buildQueryChain(approvedInvoice));
+    service.invoiceModel.findOneAndUpdate = jest.fn().mockResolvedValue(approvedInvoice);
+    service.connection.startSession = jest.fn().mockResolvedValue({
+      startTransaction: jest.fn(),
+      commitTransaction: jest.fn(),
+      abortTransaction: jest.fn(),
+      endSession: jest.fn(),
+    });
+
+    await service.approveInvoice(
+      invoiceId,
+      {
+        action: "APPROVE",
+      } as any,
+      { sub: new Types.ObjectId().toHexString(), role: "DIRECTOR" } as any,
+    );
+
+    expect(service.classesService.autoPlaceApprovedInvoice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invoiceId,
+        requestedClassId: linkedClassId,
+      }),
+      expect.any(Object),
+    );
+  });
 });
 
 describe("InvoicesService cancelInvoice", () => {
@@ -463,6 +591,48 @@ describe("InvoicesService createInvoiceForOrder", () => {
     expect(invoiceModel.mock.calls[0][0].saleCommission).toBe(150_000);
   });
 
+  it("ignores an explicit paymentRound from the order item and auto-assigns the next round", async () => {
+    const invoiceModel = buildOrderInvoiceModel();
+    invoiceModel.countDocuments = jest.fn().mockResolvedValue(2);
+    const service = buildService({ invoiceModel }) as any;
+
+    await service.createInvoiceForOrder(
+      {
+        _id: new Types.ObjectId(),
+        orderCode: "ORD-2026-0003",
+        finalAmount: 1_500_000,
+        totalAmount: 1_600_000,
+        saleCommission: 150_000,
+        saleId: new Types.ObjectId(),
+        items: [
+          {
+            productName: "Goi hoc",
+            sessions: 8,
+            sessionDuration: 90,
+            baseDuration: 70,
+            pricePerSession: 200_000,
+            amount: 1_600_000,
+            paymentRound: 99,
+          },
+        ],
+      },
+      {
+        productName: "Goi hoc",
+        sessions: 8,
+        sessionDuration: 90,
+        baseDuration: 70,
+        pricePerSession: 200_000,
+        amount: 1_600_000,
+        paymentRound: 99,
+      },
+      new Types.ObjectId().toHexString(),
+      { _id: new Types.ObjectId().toHexString() } as any,
+    );
+
+    expect(invoiceModel.mock.calls[0][0].paymentRound).toBe(3);
+    expect(invoiceModel.mock.calls[0][0].courseStatus).toBe("CONTINUE_2");
+  });
+
   it("preserves explicit zero amount and zero sessions for offline trial invoices", async () => {
     const invoiceModel = buildOrderInvoiceModel();
     const service = buildService({ invoiceModel }) as any;
@@ -554,6 +724,49 @@ describe("InvoicesService createInvoiceForOrder", () => {
     );
 
     expect(invoiceModel.mock.calls[0][0].createNewClassWhenApproved).toBe(true);
+  });
+
+  it("persists requestedClassCode from the order item onto the invoice in uppercase", async () => {
+    const invoiceModel = buildOrderInvoiceModel();
+    const service = buildService({ invoiceModel }) as any;
+
+    await service.createInvoiceForOrder(
+      {
+        _id: new Types.ObjectId(),
+        orderCode: "ORD-2026-CLASS-CODE-001",
+        orderType: "NEW_ENROLLMENT",
+        finalAmount: 1_600_000,
+        totalAmount: 1_600_000,
+        items: [
+          {
+            productName: "Offline moi",
+            sessions: 8,
+            invoiceSessions: 8,
+            sessionDuration: 90,
+            baseDuration: 90,
+            pricePerSession: 200_000,
+            amount: 1_600_000,
+            teachingMode: "OFFLINE",
+            requestedClassCode: " cls-off-001 ",
+          },
+        ],
+      },
+      {
+        productName: "Offline moi",
+        sessions: 8,
+        invoiceSessions: 8,
+        sessionDuration: 90,
+        baseDuration: 90,
+        pricePerSession: 200_000,
+        amount: 1_600_000,
+        teachingMode: "OFFLINE",
+        requestedClassCode: " cls-off-001 ",
+      },
+      new Types.ObjectId().toHexString(),
+      { _id: new Types.ObjectId().toHexString() } as any,
+    );
+
+    expect(invoiceModel.mock.calls[0][0].requestedClassCode).toBe("CLS-OFF-001");
   });
 
   it("creates one invoice with the expected metadata for a single-item order", async () => {
@@ -704,5 +917,230 @@ describe("InvoicesService createInvoiceForOrder", () => {
     expect(invoiceModel.mock.calls[0][0].courseStatus).toBe(
       "CONTINUE_2",
     );
+  });
+});
+
+describe("InvoicesService.findManagement", () => {
+  it("returns one paged slice with summary and server-computed total sessions", async () => {
+    const actorId = new Types.ObjectId();
+    const studentId = new Types.ObjectId();
+    const classId = new Types.ObjectId();
+    const pageRows = [
+      {
+        _id: new Types.ObjectId(),
+        invoiceNumber: "INV-0002",
+        studentId: {
+          _id: studentId,
+          fullName: "Student One",
+          parentName: "Parent One",
+          parentPhone: "0901000001",
+        },
+        classId: {
+          _id: classId,
+          name: "Lop A",
+          code: "CLS-A",
+        },
+        createdBy: {
+          _id: actorId,
+          fullName: "Sale Demo",
+          email: "sale@example.com",
+        },
+        saleId: {
+          _id: actorId,
+          fullName: "Sale Demo",
+          email: "sale@example.com",
+        },
+        amount: 1200000,
+        status: InvoiceStatus.APPROVED,
+        sessions: 8,
+        bonusSessions: 2,
+        trialSessions: 0,
+      },
+    ];
+    const findChain = buildQueryChain(pageRows);
+    const invoiceModel = {
+      find: jest.fn().mockReturnValue(findChain),
+      aggregate: jest
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            total: 120,
+            onlineAmount: 5000000,
+            offlineAmount: 3100000,
+            approvedAmount: 6400000,
+            pendingCount: 7,
+          },
+        ])
+        .mockResolvedValueOnce([
+          {
+            _id: { studentId, classId },
+            totalSessions: 26,
+          },
+        ]),
+    };
+    const service = buildService({ invoiceModel }) as any;
+
+    const result = await service.findManagement(
+      {
+        page: 2,
+        limit: 25,
+      } as any,
+      {
+        sub: actorId.toHexString(),
+        role: Role.DIRECTOR,
+      } as any,
+    );
+
+    expect(invoiceModel.find).toHaveBeenCalledWith({});
+    expect(findChain.sort).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
+    expect(findChain.skip).toHaveBeenCalledWith(25);
+    expect(findChain.limit).toHaveBeenCalledWith(25);
+    expect(result.meta).toEqual({
+      total: 120,
+      page: 2,
+      limit: 25,
+      totalPages: 5,
+    });
+    expect(result.summary).toEqual({
+      total: 120,
+      onlineAmount: 5000000,
+      offlineAmount: 3100000,
+      approvedAmount: 6400000,
+      pendingCount: 7,
+    });
+    const totalSessionsMatch = invoiceModel.aggregate.mock.calls[1][0][0].$match;
+    expect(totalSessionsMatch.$and).toEqual(
+      expect.arrayContaining([
+        {
+          status: { $in: [InvoiceStatus.APPROVED, InvoiceStatus.PAID] },
+        },
+      ]),
+    );
+    expect(result.data[0].totalSessionsByStudentClass).toBe(26);
+  });
+
+  it("keeps sale scoping and invoice/student filters inside the management query", async () => {
+    const actorId = new Types.ObjectId();
+    const ownedStudentId = new Types.ObjectId();
+    const matchedStudentId = new Types.ObjectId();
+    const matchedSaleId = new Types.ObjectId();
+    const invoiceModel = {
+      find: jest.fn().mockReturnValue(buildQueryChain([])),
+      aggregate: jest.fn().mockResolvedValue([]),
+    };
+    const service = buildService({
+      invoiceModel,
+      studentModel: {
+        distinct: jest
+          .fn()
+          .mockResolvedValueOnce([ownedStudentId])
+          .mockResolvedValueOnce([matchedStudentId])
+          .mockResolvedValueOnce([matchedStudentId]),
+      } as any,
+      userModel: {
+        distinct: jest.fn().mockResolvedValue([matchedSaleId]),
+      } as any,
+    }) as any;
+
+    await service.findManagement(
+      {
+        keyword: "INV-2026",
+        parentKeyword: "Parent Demo",
+        saleKeyword: "Sale Demo",
+        classType: "OFFLINE",
+        status: InvoiceStatus.PENDING_APPROVAL,
+        page: 1,
+        limit: 25,
+      } as any,
+      {
+        sub: actorId.toHexString(),
+        role: Role.SALE,
+      } as any,
+    );
+
+    const summaryMatch = invoiceModel.aggregate.mock.calls[0][0][0].$match;
+    expect(summaryMatch.$and).toEqual(
+      expect.arrayContaining([
+        {
+          $or: [
+            { createdBy: actorId },
+            { studentId: { $in: [ownedStudentId] } },
+          ],
+        },
+        { classType: "OFFLINE" },
+        { status: InvoiceStatus.PENDING_APPROVAL },
+        {
+          $or: [
+            { invoiceNumber: expect.any(RegExp) },
+            { studentId: { $in: [matchedStudentId] } },
+          ],
+        },
+        { studentId: { $in: [matchedStudentId] } },
+        { saleId: { $in: [matchedSaleId] } },
+      ]),
+    );
+  });
+});
+
+describe("InvoicesService.getParentInvoices", () => {
+  it("treats APPROVED and legacy PAID invoices as paid in parent summaries", async () => {
+    const parentId = new Types.ObjectId();
+    const studentId = new Types.ObjectId();
+    const invoiceModel = {
+      find: jest.fn().mockImplementation(() => buildQueryChain([
+        {
+          _id: new Types.ObjectId(),
+          studentId,
+          amount: 1_500_000,
+          status: InvoiceStatus.APPROVED,
+          sessionsRemaining: 6,
+          bonusSessionsRemaining: 1,
+          trialSessionsRemaining: 0,
+        },
+        {
+          _id: new Types.ObjectId(),
+          studentId,
+          amount: 900_000,
+          status: InvoiceStatus.PAID,
+          sessionsRemaining: 2,
+          bonusSessionsRemaining: 0,
+          trialSessionsRemaining: 1,
+        },
+        {
+          _id: new Types.ObjectId(),
+          studentId,
+          amount: 500_000,
+          status: InvoiceStatus.PENDING_APPROVAL,
+          sessionsRemaining: 4,
+          bonusSessionsRemaining: 0,
+          trialSessionsRemaining: 0,
+        },
+      ])),
+    };
+    const studentModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([
+          {
+            _id: studentId,
+            fullName: "Hoc sinh Parent",
+            studentCode: "HS-P-001",
+          },
+        ]),
+      }),
+    };
+    const service = buildService({ invoiceModel, studentModel }) as any;
+
+    const result = await service.getParentInvoices(parentId.toHexString());
+
+    expect(studentModel.find).toHaveBeenCalledWith({ parentUserId: parentId });
+    expect(invoiceModel.find).toHaveBeenCalledWith({ studentId: { $in: [studentId] } });
+    expect(result.summary).toEqual({
+      totalPaid: 2_400_000,
+      totalPending: 500_000,
+      totalSessionsRemaining: 10,
+    });
+    expect(result.children).toHaveLength(1);
+    expect(result.children[0].invoices).toHaveLength(3);
   });
 });

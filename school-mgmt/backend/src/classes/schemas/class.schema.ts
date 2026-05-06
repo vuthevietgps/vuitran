@@ -41,6 +41,12 @@ export enum PendingClassUpdateType {
   DURATION_CHANGE = 'DURATION_CHANGE',
 }
 
+export enum OfflineAssignmentRequestStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
 export enum ClassEditHistoryAction {
   SALE_DIRECT_UPDATED = 'SALE_DIRECT_UPDATED',
   SALE_REQUESTED = 'SALE_REQUESTED',
@@ -476,6 +482,36 @@ export class PendingSaleUpdate {
 
 export const PendingSaleUpdateSchema = SchemaFactory.createForClass(PendingSaleUpdate);
 
+@Schema({ _id: true })
+export class PendingOfflineAssignment {
+  @Prop({ type: String, enum: OfflineAssignmentRequestStatus, default: OfflineAssignmentRequestStatus.PENDING })
+  status!: OfflineAssignmentRequestStatus;
+
+  @Prop({ type: [SchemaTypes.ObjectId], ref: Student.name, default: [] })
+  studentIds!: Types.ObjectId[];
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'Invoice' })
+  invoiceId?: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name, required: true })
+  requestedBy!: Types.ObjectId;
+
+  @Prop({ type: Date, required: true })
+  requestedAt!: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: User.name })
+  reviewedBy?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  reviewedAt?: Date;
+
+  @Prop({ type: String, trim: true })
+  rejectionReason?: string;
+}
+
+export const PendingOfflineAssignmentSchema =
+  SchemaFactory.createForClass(PendingOfflineAssignment);
+
 @Schema({ timestamps: true })
 export class Classroom {
   @Prop({ required: true, trim: true })
@@ -589,6 +625,9 @@ export class Classroom {
   @Prop({ type: PendingSaleUpdateSchema, required: false })
   pendingSaleUpdate?: PendingSaleUpdate;
 
+  @Prop({ type: [PendingOfflineAssignmentSchema], default: [] })
+  pendingOfflineAssignments!: PendingOfflineAssignment[];
+
   @Prop({ type: [DurationSnapshotSchema], default: [] })
   durationSnapshots!: DurationSnapshot[];
 
@@ -611,4 +650,5 @@ ClassroomSchema.index({ 'studentConfigs.studentId': 1 });
 ClassroomSchema.index({ 'studentConfigs.teacherSlots.teacherId': 1 });
 ClassroomSchema.index({ 'coTeachers.teacherId': 1 });
 ClassroomSchema.index({ 'pendingSaleUpdate.status': 1, sale: 1 });
+ClassroomSchema.index({ classMode: 1, 'pendingOfflineAssignments.status': 1 });
 

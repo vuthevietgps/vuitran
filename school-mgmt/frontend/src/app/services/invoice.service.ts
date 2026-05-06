@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -75,6 +75,39 @@ export interface InvoiceItem {
   };
   createdAt: string;
   updatedAt: string;
+  totalSessionsByStudentClass?: number | null;
+}
+
+export interface InvoiceManagementSummary {
+  total: number;
+  onlineAmount: number;
+  offlineAmount: number;
+  approvedAmount: number;
+  pendingCount: number;
+}
+
+export interface InvoiceManagementQuery {
+  keyword?: string;
+  parentKeyword?: string;
+  saleKeyword?: string;
+  classType?: 'ONLINE' | 'OFFLINE';
+  status?: InvoiceStatus;
+  courseStatus?: InvoiceCourseStatus;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface InvoiceManagementResponse {
+  data: InvoiceItem[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+  summary: InvoiceManagementSummary;
 }
 
 export interface InvoiceUpsertPayload {
@@ -110,6 +143,16 @@ export interface ReceiptUploadResult extends InvoiceMutationResult {
 @Injectable({ providedIn: 'root' })
 export class InvoiceService {
   private http = inject(HttpClient);
+
+  private buildParams(params: Record<string, unknown>): HttpParams {
+    let httpParams = new HttpParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        httpParams = httpParams.set(key, String(value));
+      }
+    });
+    return httpParams;
+  }
 
   async list(): Promise<InvoiceItem[]> {
     try {
@@ -162,6 +205,35 @@ export class InvoiceService {
       return { ok: true };
     } catch (error: any) {
       return this.fail(error);
+    }
+  }
+
+  async listManagement(query: InvoiceManagementQuery = {}): Promise<InvoiceManagementResponse> {
+    try {
+      return await firstValueFrom(
+        this.http.get<InvoiceManagementResponse>(`${environment.apiBase}/invoices/management`, {
+          params: this.buildParams(query as any),
+          withCredentials: true,
+        }),
+      );
+    } catch (error) {
+      console.error('Failed to load invoice management list', error);
+      return {
+        data: [],
+        meta: {
+          total: 0,
+          page: Number(query.page) || 1,
+          limit: Number(query.limit) || 25,
+          totalPages: 1,
+        },
+        summary: {
+          total: 0,
+          onlineAmount: 0,
+          offlineAmount: 0,
+          approvedAmount: 0,
+          pendingCount: 0,
+        },
+      };
     }
   }
 

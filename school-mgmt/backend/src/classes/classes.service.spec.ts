@@ -47,6 +47,7 @@ describe('ClassesService', () => {
       syncStudentConfigsOnClass: jest.fn().mockResolvedValue(undefined),
       buildClassHistoryArtifacts: jest.fn().mockResolvedValue({}),
       buildProjectedStudentTotalSessionsMap: jest.fn(),
+      withProjectedStudentTotals: jest.fn().mockImplementation(async (classroom: any) => classroom),
     };
     return service;
   }
@@ -164,5 +165,355 @@ describe('ClassesService', () => {
     expect(result).toEqual({ action: 'SKIPPED' });
     expect(service.logger.warn).toHaveBeenCalled();
     expect(service.classesCoreService.generateAutoClassCode).not.toHaveBeenCalled();
+  });
+
+  it('assigns an existing class when requestedClassCode matches a class code', async () => {
+    const service = buildService();
+    const invoiceId = new Types.ObjectId().toHexString();
+    const studentId = new Types.ObjectId().toHexString();
+    const matchedClassId = new Types.ObjectId();
+
+    service.invoiceModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({
+        _id: invoiceId,
+        classId: null,
+        classType: 'ONLINE',
+      }),
+    });
+    service.classModel.findOne = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({
+        _id: matchedClassId,
+        classMode: 'ONLINE',
+      }),
+    });
+    service.assignStudentsBySale = jest.fn().mockResolvedValue({
+      _id: matchedClassId,
+    });
+
+    const result = await service.autoPlaceApprovedInvoice(
+      {
+        invoiceId,
+        studentId,
+        requestedClassCode: 'cls-online-001',
+      },
+      { role: 'DIRECTOR', sub: new Types.ObjectId().toHexString() } as any,
+    );
+
+    expect(service.classModel.findOne).toHaveBeenCalledWith({ code: 'CLS-ONLINE-001' });
+    expect(service.assignStudentsBySale).toHaveBeenCalledWith(
+      matchedClassId.toHexString(),
+      { studentIds: [studentId], invoiceId },
+      expect.any(Object),
+    );
+    expect(result).toEqual({
+      action: 'ASSIGNED_EXISTING',
+      classId: matchedClassId.toHexString(),
+    });
+  });
+
+  it('keeps auto-placement running when the approved invoice is already linked to the requested class', async () => {
+    const service = buildService();
+    const invoiceId = new Types.ObjectId().toHexString();
+    const studentId = new Types.ObjectId().toHexString();
+    const classId = new Types.ObjectId().toHexString();
+
+    service.classModel.findById = jest
+      .fn()
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({
+          _id: classId,
+          classMode: 'OFFLINE',
+        }),
+      })
+      .mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue({
+          _id: classId,
+          classMode: 'OFFLINE',
+          students: [],
+          maxStudents: 5,
+        }),
+      });
+    service.classModel.findByIdAndUpdate = jest.fn().mockResolvedValue(undefined);
+    service.invoiceModel.findById = jest
+      .fn()
+      .mockReturnValueOnce({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({
+          _id: invoiceId,
+          classId: new Types.ObjectId(classId),
+          classType: 'OFFLINE',
+        }),
+      })
+      .mockReturnValueOnce({
+        lean: jest.fn().mockResolvedValue({
+          _id: invoiceId,
+          status: 'APPROVED',
+          classId: new Types.ObjectId(classId),
+          classType: 'OFFLINE',
+          studentId: new Types.ObjectId(studentId),
+        }),
+      });
+    service.invoiceModel.updateOne = jest.fn().mockResolvedValue(undefined);
+    service.studentModel.find = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{ _id: new Types.ObjectId(studentId) }]),
+    });
+    service.classesCoreService.findByIdPopulated.mockResolvedValue({ _id: classId });
+
+    const result = await service.autoPlaceApprovedInvoice(
+      {
+        invoiceId,
+        studentId,
+        requestedClassId: classId,
+      },
+      { role: 'DIRECTOR', sub: new Types.ObjectId().toHexString() } as any,
+    );
+
+    expect(service.classModel.findByIdAndUpdate).toHaveBeenCalledWith(
+      classId,
+      expect.objectContaining({
+        students: [expect.any(Types.ObjectId)],
+      }),
+    );
+    expect(service.invoiceModel.updateOne).toHaveBeenCalledWith(
+      { _id: invoiceId },
+      { $set: { classId: expect.any(Types.ObjectId) } },
+    );
+    expect(service.classesDataService.syncStudentConfigsOnClass).toHaveBeenCalledWith(
+      classId,
+      expect.any(String),
+    );
+    expect(result).toEqual({
+      action: 'ASSIGNED_EXISTING',
+      classId,
+    });
+  });
+
+  it('allows ops to approve a pending duration change requested by sale', async () => {
+    const service = buildService();
+    const classId = new Types.ObjectId().toHexString();
+    const actorId = new Types.ObjectId().toHexString();
+
+    service.classModel.findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: classId,
+        pendingSaleUpdate: {
+          status: 'PENDING',
+          requestType: 'DURATION_CHANGE',
+          requestedChanges: {
+            baseDuration: 70,
+            sessionDuration: 90,
+          },
+        },
+      }),
+    });
+    service.classesCoreService.prepareClassUpdate.mockResolvedValue({
+      update: { baseDuration: 70, sessionDuration: 90 },
+      durationSnapshotData: {
+        baseDuration: 70,
+        sessionDuration: 90,
+      },
+    });
+    service.classesCoreService.applyPreparedClassUpdate.mockResolvedValue(undefined);
+    service.classesDataService.buildClassHistoryArtifacts.mockResolvedValue({
+      historyEntry: { action: 'APPROVED' },
+    });
+    service.classesCoreService.findByIdPopulated.mockResolvedValue({ _id: classId });
+
+    const result = await service.approvePendingSaleUpdate(
+      classId,
+      { role: 'OPS', sub: actorId } as any,
+    );
+
+    expect(service.classesCoreService.applyPreparedClassUpdate).toHaveBeenCalledWith(
+      classId,
+      expect.objectContaining({
+        update: expect.objectContaining({
+          baseDuration: 70,
+          sessionDuration: 90,
+        }),
+      }),
+      'approvePendingSaleUpdate',
+      expect.objectContaining({
+        clearPendingSaleUpdate: true,
+        effectiveById: actorId,
+        requestType: 'DURATION_CHANGE',
+      }),
+    );
+    expect(result).toEqual({ _id: classId });
+  });
+
+  it('creates a pending offline assignment request when sale adds a student to a shared offline class', async () => {
+    const service = buildService();
+    const classId = new Types.ObjectId().toHexString();
+    const saleId = new Types.ObjectId().toHexString();
+    const ownerSaleId = new Types.ObjectId().toHexString();
+    const studentId = new Types.ObjectId().toHexString();
+    const invoiceId = new Types.ObjectId().toHexString();
+
+    service.classModel.findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: classId,
+        classMode: 'OFFLINE',
+        sale: new Types.ObjectId(ownerSaleId),
+        students: [],
+        pendingOfflineAssignments: [],
+        maxStudents: 5,
+      }),
+    });
+    service.classModel.findByIdAndUpdate = jest.fn().mockResolvedValue(undefined);
+    service.invoiceModel.findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: invoiceId,
+        status: 'APPROVED',
+        classId: null,
+        classType: 'OFFLINE',
+        studentId: new Types.ObjectId(studentId),
+        saleId: new Types.ObjectId(saleId),
+      }),
+    });
+    service.studentModel.find = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue([{ _id: new Types.ObjectId(studentId) }]),
+    });
+
+    const result = await service.assignStudentsBySale(
+      classId,
+      { studentIds: [studentId], invoiceId } as any,
+      { role: 'SALE', sub: saleId } as any,
+    );
+
+    expect(service.classModel.findByIdAndUpdate).toHaveBeenCalledWith(
+      classId,
+      expect.objectContaining({
+        $push: {
+          pendingOfflineAssignments: expect.objectContaining({
+            status: 'PENDING',
+            requestedBy: expect.any(Types.ObjectId),
+            invoiceId: expect.any(Types.ObjectId),
+          }),
+        },
+      }),
+    );
+    expect(service.invoiceModel.updateOne).not.toHaveBeenCalled();
+    expect(service.classesDataService.syncStudentConfigsOnClass).not.toHaveBeenCalled();
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: true,
+        pendingApproval: true,
+      }),
+    );
+  });
+
+  it('approves a pending offline assignment and links the invoice to the class', async () => {
+    const service = buildService();
+    const classId = new Types.ObjectId().toHexString();
+    const requestId = new Types.ObjectId().toHexString();
+    const studentId = new Types.ObjectId().toHexString();
+    const invoiceId = new Types.ObjectId().toHexString();
+    const actorId = new Types.ObjectId().toHexString();
+
+    service.classModel.findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: classId,
+        classMode: 'OFFLINE',
+        students: [],
+        pendingOfflineAssignments: [
+          {
+            _id: new Types.ObjectId(requestId),
+            status: 'PENDING',
+            studentIds: [new Types.ObjectId(studentId)],
+            invoiceId: new Types.ObjectId(invoiceId),
+          },
+        ],
+        maxStudents: 5,
+      }),
+    });
+    service.classModel.findByIdAndUpdate = jest.fn().mockResolvedValue(undefined);
+    service.invoiceModel.findById = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: invoiceId,
+        status: 'APPROVED',
+        classId: null,
+        classType: 'OFFLINE',
+      }),
+    });
+    service.invoiceModel.updateOne = jest.fn().mockResolvedValue(undefined);
+    service.classesCoreService.findByIdPopulated.mockResolvedValue({ _id: classId });
+
+    const result = await service.approvePendingOfflineAssignment(
+      classId,
+      requestId,
+      { role: 'OPS', sub: actorId } as any,
+    );
+
+    expect(service.classModel.findByIdAndUpdate).toHaveBeenCalledWith(
+      classId,
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          'pendingOfflineAssignments.$[request].status': 'APPROVED',
+        }),
+      }),
+      expect.objectContaining({
+        arrayFilters: [{ 'request._id': expect.any(Types.ObjectId) }],
+      }),
+    );
+    expect(service.invoiceModel.updateOne).toHaveBeenCalledWith(
+      { _id: invoiceId },
+      { $set: { classId: expect.any(Types.ObjectId) } },
+    );
+    expect(service.classesDataService.syncStudentConfigsOnClass).toHaveBeenCalledWith(classId, actorId);
+    expect(service.classesCoreService.triggerStudentSupportSnapshotRefreshForClass).toHaveBeenCalledWith(
+      classId,
+      'approvePendingOfflineAssignment',
+    );
+    expect(result).toEqual({ _id: classId });
+  });
+
+  it('returns paged class management data instead of loading the full list', async () => {
+    const service = buildService();
+    const actorId = new Types.ObjectId().toHexString();
+    const classRow = {
+      _id: new Types.ObjectId('64b5f29f8d6b6d30f2b8d301'),
+      code: 'CLS-ON-001',
+      name: 'Lop Online 1',
+      classMode: 'ONLINE',
+      teacher: null,
+      sale: null,
+      students: [],
+      coTeachers: [],
+      studentConfigs: [],
+      pendingOfflineAssignments: [],
+    };
+
+    const queryChain: any = {
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      limit: jest.fn().mockReturnThis(),
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([classRow]),
+    };
+
+    service.classModel.countDocuments = jest.fn().mockResolvedValue(42);
+    service.classModel.find = jest.fn().mockReturnValue(queryChain);
+
+    const result = await service.findManagementPage(
+      { role: 'DIRECTOR', sub: actorId } as any,
+      { page: 2, limit: 10, classMode: 'ONLINE' } as any,
+    );
+
+    expect(service.classModel.countDocuments).toHaveBeenCalledWith({ classMode: 'ONLINE' });
+    expect(queryChain.skip).toHaveBeenCalledWith(10);
+    expect(queryChain.limit).toHaveBeenCalledWith(10);
+    expect(service.classesDataService.withProjectedStudentTotals).toHaveBeenCalledWith(classRow);
+    expect(result.meta).toEqual({
+      total: 42,
+      page: 2,
+      limit: 10,
+      totalPages: 5,
+    });
+    expect(result.data).toHaveLength(1);
   });
 });

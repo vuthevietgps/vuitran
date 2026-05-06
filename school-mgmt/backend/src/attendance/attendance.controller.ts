@@ -17,6 +17,7 @@ import {
   AttendanceByClassQueryDto,
   AttendanceStatsQueryDto,
   AttendanceReportQueryDto,
+  AttendanceReportClassesQueryDto,
   ParentAttendanceQueryDto,
 } from './dto/attendance-query.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -145,6 +146,15 @@ export class AttendanceController {
   }
 
   // Lấy báo cáo điểm danh tổng hợp
+  @Get('report/classes')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
+  getAttendanceReportClasses(
+    @Req() req: AuthenticatedRequest,
+    @Query() query: AttendanceReportClassesQueryDto,
+  ) {
+    return this.attendanceService.getAttendanceReportClasses(req.user, query.search, query.limit);
+  }
+
   @Get('report')
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER)
   getAttendanceReport(

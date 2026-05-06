@@ -366,6 +366,60 @@ describe('OrdersComponent', () => {
       expect(payload.receiptImage).toBe('data:image/png;base64,abc123');
     });
 
+    it('khong gui paymentPlan va paymentRound trong payload tao order', () => {
+      component.form = {
+        ...component.emptyForm(),
+        parentName: 'Parent Demo',
+        parentPhone: '0901000001',
+        studentName: 'Student Demo',
+        paymentDate: '2026-04-13',
+        items: [component.buildFormItem({
+          productId: 'P1',
+          productName: 'English',
+          amount: 2_000_000,
+          sessions: 10,
+          invoiceSessions: 10,
+          sessionDuration: 60,
+          pricePerSession: 200_000,
+          paymentRound: 7,
+          createNewClassWhenApproved: false,
+        })],
+      } as any;
+
+      const payload = component.buildPayload() as any;
+
+      expect('paymentPlan' in payload).toBeFalse();
+      expect(payload.paymentDate).toBe('2026-04-13');
+      expect('paymentRound' in payload.items[0]).toBeFalse();
+    });
+
+    it('gui null cho parentUserId va existingStudentId khi sua order de clear lien ket cu', () => {
+      component.editingId = 'OD-001';
+      component.form = {
+        ...component.emptyForm(),
+        parentName: 'Parent Demo',
+        parentPhone: '0901000001',
+        studentName: 'Student Demo',
+        parentUserId: '',
+        existingStudentId: '',
+        items: [component.buildFormItem({
+          productId: 'P1',
+          productName: 'English',
+          amount: 2_000_000,
+          sessions: 10,
+          invoiceSessions: 10,
+          sessionDuration: 60,
+          pricePerSession: 200_000,
+          createNewClassWhenApproved: false,
+        })],
+      } as any;
+
+      const payload = component.buildPayload() as any;
+
+      expect(payload.parentUserId).toBeNull();
+      expect(payload.existingStudentId).toBeNull();
+    });
+
     it('applyStudentSelection chi giu image reference hop le', () => {
       component.form = {
         ...component.emptyForm(),
@@ -391,6 +445,145 @@ describe('OrdersComponent', () => {
         parentPhone: '0901000002',
       } as any);
       expect(component.form.studentFaceImage).toBe('data:image/png;base64,new');
+    });
+  });
+
+  describe('requested class code flow', () => {
+    beforeEach(async () => await createComponent(Role.SALE));
+
+    it('render class code input trong form tao order', () => {
+      component.openCreate();
+      fixture.detectChanges();
+
+      expect(
+        fixture.nativeElement.querySelector('[data-testid="order-item-class-code-0"]'),
+      ).toBeTruthy();
+    });
+
+    it('buildPayload gui requestedClassCode da duoc normalize uppercase', () => {
+      component.form = {
+        ...component.emptyForm(),
+        parentName: 'Parent Demo',
+        parentPhone: '0901000001',
+        studentName: 'Student Demo',
+        items: [component.buildFormItem({
+          productId: 'P1',
+          productName: 'English',
+          amount: 2_000_000,
+          sessions: 10,
+          invoiceSessions: 10,
+          sessionDuration: 60,
+          pricePerSession: 200_000,
+          requestedClassCode: ' cls-off-001 ',
+          createNewClassWhenApproved: false,
+        })],
+      } as any;
+
+      const payload = component.buildPayload() as any;
+
+      expect(payload.items[0].requestedClassCode).toBe('CLS-OFF-001');
+    });
+
+    it('classSelectionHint hien thi tieng Viet dung cho ma lop du kien', () => {
+      expect(
+        component.classSelectionHint({
+          requestedClassCode: 'A45',
+          createNewClassWhenApproved: true,
+        } as any),
+      ).toBe('Hệ thống sẽ ưu tiên tìm lớp mã A45; nếu chưa có sẽ tạo lớp mới với đúng mã này ngay sau khi duyệt.');
+    });
+
+    it('submitForm chan tao lop moi khi chua nhap requestedClassCode', async () => {
+      component.form = {
+        ...component.emptyForm(),
+        parentName: 'Parent Demo',
+        parentPhone: '0901000001',
+        studentName: 'Student Demo',
+        items: [component.buildFormItem({
+          productId: 'P1',
+          productName: 'English',
+          amount: 2_000_000,
+          sessions: 10,
+          invoiceSessions: 10,
+          sessionDuration: 60,
+          pricePerSession: 200_000,
+          createNewClassWhenApproved: true,
+          preferredTeacherId: 'teacher-1',
+          requestedClassCode: '',
+        })],
+      } as any;
+
+      await component.submitForm();
+
+      expect(orderStub.create).not.toHaveBeenCalled();
+      expect(component.error()).not.toBe('');
+    });
+  });
+
+  describe('offline class dropdown in orders', () => {
+    beforeEach(async () => await createComponent(Role.SALE));
+
+    it('hien thi danh sach lop offline tu quan ly lop hoc cho sale khi tao order offline', () => {
+      component.saleOfflineClasses.set([
+        {
+          _id: 'CLS-OFF-1',
+          code: 'A45',
+          name: 'Offline A45',
+          classMode: 'OFFLINE',
+          productPackage: { _id: 'PROD-1', name: 'English Offline' },
+        },
+        {
+          _id: 'CLS-OFF-2',
+          code: 'B12',
+          name: 'Offline B12',
+          classMode: 'OFFLINE',
+          productPackage: { _id: 'PROD-2', name: 'Math Offline' },
+        },
+      ] as any);
+      component.classes.set([
+        {
+          _id: 'CLS-ON-1',
+          code: 'ON-01',
+          name: 'Online 01',
+          classMode: 'ONLINE',
+        },
+      ] as any);
+
+      const options = component.classOptionsForItem({
+        teachingMode: 'OFFLINE',
+        productId: 'PROD-1',
+      } as any);
+
+      expect(options.map((item: any) => item._id)).toEqual(['CLS-OFF-1', 'CLS-OFF-2']);
+    });
+
+    it('findClassById tim duoc lop offline nam trong saleOfflineClasses', () => {
+      component.classes.set([] as any);
+      component.saleOfflineClasses.set([
+        {
+          _id: 'CLS-OFF-9',
+          code: 'C09',
+          name: 'Offline C09',
+          classMode: 'OFFLINE',
+        },
+      ] as any);
+
+      expect(component.findClassById('CLS-OFF-9')?.code).toBe('C09');
+    });
+  });
+
+  describe('invoiceCardSubtitle()', () => {
+    beforeEach(async () => await createComponent(Role.SALE));
+
+    it('khong fallback ve "San pham 1" khi item khong co ten', () => {
+      expect(component.invoiceCardSubtitle({} as any)).toBe('');
+    });
+
+    it('ghep ten san pham va mon hoc khi co du du lieu', () => {
+      expect(component.invoiceCardSubtitle({
+        productName: 'English Online',
+        subject: 'Tieng Anh',
+      } as any)).toBe('English Online - Tieng Anh');
     });
   });
 

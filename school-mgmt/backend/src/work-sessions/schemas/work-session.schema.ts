@@ -70,3 +70,4 @@ export const WorkSessionSchema = SchemaFactory.createForClass(WorkSession);
 WorkSessionSchema.index({ userId: 1, date: 1 });
 WorkSessionSchema.index({ userId: 1, status: 1 });
 WorkSessionSchema.index({ date: -1 });
+WorkSessionSchema.index({ date: -1, loginTime: -1 });

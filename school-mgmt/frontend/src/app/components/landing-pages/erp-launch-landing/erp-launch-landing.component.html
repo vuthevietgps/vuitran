@@ -1,0 +1,267 @@
+<div class="launch-shell" [ngClass]="themeClass()">
+  <section class="hero-card">
+    <div class="hero-header">
+      <div class="hero-header-copy">
+        <p class="eyebrow">{{ isHub() ? 'Cụm landing page ERP' : 'Landing page chuyên đề' }}</p>
+        <div class="context-strip">
+          <span class="context-pill">{{ pageSequenceText() }}</span>
+          <span class="context-pill">{{ page().sections.length }} mục triển khai</span>
+          <span class="context-pill route-pill">Link công khai · {{ page().publicPath }}</span>
+        </div>
+      </div>
+
+      <div class="hero-jump-links">
+        <button class="jump-link" type="button" (click)="scrollTo('cluster-grid')">Bản đồ cụm</button>
+        <button class="jump-link" type="button" (click)="scrollTo('sections')">Nội dung chính</button>
+        <button class="jump-link" type="button" (click)="scrollTo('roadmap-board')">Điều hướng cuối trang</button>
+      </div>
+    </div>
+
+    <div class="hero-main">
+      <div class="hero-copy">
+        <div class="role-badges">
+          <span class="role-pill" *ngFor="let badge of page().roleBadges">{{ roleLabel(badge) }}</span>
+        </div>
+
+        <h1>{{ page().title }}</h1>
+        <p class="hero-summary">{{ page().summary }}</p>
+
+        <div class="hero-actions">
+          <button class="btn btn-primary" type="button" (click)="scrollTo(isHub() ? 'cluster-grid' : 'sections')">
+            {{ page().ctaLabels[0] }}
+          </button>
+          <a class="btn btn-secondary" [routerLink]="secondaryRoute().publicPath">
+            {{ page().ctaLabels[1] }}
+          </a>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card" *ngFor="let metric of metricCards()">
+            <span class="meta-label">{{ metric.label }}</span>
+            <strong>{{ metric.value }}</strong>
+            <p>{{ metric.detail }}</p>
+          </article>
+        </div>
+
+        <div class="bullet-strip">
+          <article class="bullet-card" *ngFor="let item of page().bullets">
+            <span class="bullet-dot"></span>
+            <p>{{ item }}</p>
+          </article>
+        </div>
+      </div>
+
+      <aside class="hero-sidebar">
+        <figure class="hero-image-card">
+          <button
+            type="button"
+            class="image-button"
+            (click)="openImage(page().imageAssets[0], page().title, 'Ảnh mở đầu của trang hiện tại')">
+            <img [src]="page().imageAssets[0]" [alt]="page().title" loading="eager" />
+          </button>
+
+          <div class="support-grid">
+            <figure class="support-card" *ngFor="let image of supportingImages(); let index = index">
+              <button
+                type="button"
+                class="image-button"
+                (click)="openImage(image, imageTitleForPage(index), page().title)">
+                <img [src]="image" [alt]="imageTitleForPage(index)" loading="lazy" />
+              </button>
+            </figure>
+          </div>
+
+          <figcaption>
+            Ảnh minh họa được lấy từ asset thật trong repo để nội dung bám đúng chức năng ERP, không dùng mockup chung chung.
+          </figcaption>
+        </figure>
+
+        <div class="sidebar-stack">
+          <article class="sidebar-card">
+            <span class="meta-label">Đối tượng đọc</span>
+            <strong>{{ audienceText() }}</strong>
+            <p>Trang công khai nhưng được viết theo đúng logic vai trò thật của ERP.</p>
+          </article>
+
+          <article class="sidebar-card">
+            <span class="meta-label">Phạm vi nội dung</span>
+            <strong>{{ scopeHeadline() }}</strong>
+            <p>{{ boundaryText() }}</p>
+          </article>
+
+          <article class="sidebar-card">
+            <span class="meta-label">Bước nên xem tiếp</span>
+            <strong>{{ secondaryRoute().title }}</strong>
+            <p>{{ nextStepText() }}</p>
+            <a class="text-link" [routerLink]="secondaryRoute().publicPath">
+              {{ isHub() ? 'Đi tới trang thử nghiệm' : 'Mở trang kế tiếp' }}
+            </a>
+          </article>
+        </div>
+      </aside>
+    </div>
+
+    <div class="hero-roadmap">
+      <article class="milestone-card" *ngFor="let milestone of page().milestones">
+        <span class="milestone-label">Mốc {{ milestone.label }}</span>
+        <h2>{{ milestone.title }}</h2>
+        <p>{{ milestone.summary }}</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="cluster-section" id="cluster-grid">
+    <div class="section-heading">
+      <div>
+        <p class="section-kicker">Bản đồ cụm</p>
+        <h2>{{ isHub() ? '7 trang chi tiết để chốt mô hình' : 'Toàn bộ lộ trình triển khai trong cùng một cụm' }}</h2>
+        <p class="section-intro">{{ clusterIntroText() }}</p>
+      </div>
+      <a class="text-link" [routerLink]="clusterCards()[0].publicPath">
+        {{ isHub() ? 'Bạn đang ở trang trung tâm' : 'Quay về trang trung tâm' }}
+      </a>
+    </div>
+
+    <div class="cluster-grid">
+      <article class="cluster-card" *ngFor="let card of clusterCards(); let index = index" [class.active]="card.isActive">
+        <div class="cluster-media">
+          <img [src]="card.coverImage" [alt]="card.title" loading="lazy" />
+          <span class="cluster-index">{{ clusterIndexLabel(index) }}</span>
+        </div>
+
+        <div class="cluster-copy">
+          <p class="card-kicker">{{ card.isActive ? 'Trang hiện tại' : 'Trang công khai' }}</p>
+          <h3>{{ card.title }}</h3>
+          <p>{{ card.summary }}</p>
+
+          <div class="cluster-meta">
+            <span>{{ card.roleBadges.length }} vai trò</span>
+            <span>{{ card.sections.length }} mục</span>
+            <span>{{ card.milestones.length }} mốc</span>
+          </div>
+
+          <a class="text-link" [routerLink]="card.publicPath">
+            {{ card.isActive ? 'Bạn đang ở đây' : 'Mở trang' }}
+          </a>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section-grid" id="sections">
+    <article
+      class="section-card"
+      *ngFor="let section of highlightSections(); let sectionIndex = index"
+      [attr.id]="sectionAnchor(sectionIndex)">
+      <div class="section-copy">
+        <p class="section-kicker">Mục 0{{ sectionIndex + 1 }}</p>
+        <h2>{{ section.title }}</h2>
+        <p class="section-summary">{{ section.summary }}</p>
+        <ul>
+          <li *ngFor="let item of section.bullets">{{ item }}</li>
+        </ul>
+      </div>
+
+      <div class="section-stage">
+        <div class="section-images">
+          <figure class="section-image-card" *ngFor="let image of section.imageAssets; let imageIndex = index">
+            <button
+              type="button"
+              class="image-button"
+              (click)="openImage(image, imageTitleForSection(section, imageIndex), section.summary)">
+              <img [src]="image" [alt]="imageTitleForSection(section, imageIndex)" loading="lazy" />
+            </button>
+          </figure>
+        </div>
+
+        <article class="section-note">
+          <span class="meta-label">Ý chính cần nhìn thấy</span>
+          <strong>{{ section.bullets[0] }}</strong>
+          <p>{{ section.summary }}</p>
+        </article>
+      </div>
+    </article>
+  </section>
+
+  <section class="gallery-section">
+    <div class="section-heading">
+      <div>
+        <p class="section-kicker">Thư viện minh chứng</p>
+        <h2>Ảnh minh họa các chức năng liên quan</h2>
+        <p class="section-intro">
+          Mỗi ảnh được dùng như một bằng chứng trực quan cho đúng màn hình, đúng vai trò và đúng bước đang được nhắc tới.
+        </p>
+      </div>
+      <button class="btn btn-ghost" type="button" (click)="scrollTo('roadmap-board')">Đi tới điều hướng cuối trang</button>
+    </div>
+
+    <div class="gallery-grid">
+      <article class="gallery-card" *ngFor="let image of page().imageAssets; let index = index">
+        <button
+          type="button"
+          class="image-button"
+          (click)="openImage(image, imageTitleForPage(index), page().summary)">
+          <img [src]="image" [alt]="imageTitleForPage(index)" loading="lazy" />
+        </button>
+        <div class="gallery-copy">
+          <h3>{{ imageTitleForPage(index) }}</h3>
+          <p>Asset được lấy trực tiếp từ repo hiện có, khớp với vai trò và màn hình mà trang này đang nói đến.</p>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section class="navigator-section" id="roadmap-board">
+    <div class="section-heading">
+      <div>
+        <p class="section-kicker">Điều hướng cuối trang</p>
+        <h2>Chốt bước tiếp theo trước khi rời trang</h2>
+        <p class="section-intro">{{ navigatorIntroText() }}</p>
+      </div>
+      <a class="text-link" [routerLink]="clusterCards()[0].publicPath">
+        {{ isHub() ? 'Bạn đang ở trang trung tâm' : 'Quay lại trang trung tâm' }}
+      </a>
+    </div>
+
+    <div class="navigator-grid">
+      <a class="navigator-card" [routerLink]="previousPage().publicPath">
+        <span class="navigator-label">{{ isHub() ? 'Trang khởi đầu' : 'Trang trước' }}</span>
+        <h3>{{ previousPage().title }}</h3>
+        <p>{{ previousPage().summary }}</p>
+      </a>
+
+      <article class="navigator-card current">
+        <span class="navigator-label">Bạn đang đọc</span>
+        <h3>{{ page().title }}</h3>
+        <p>{{ page().summary }}</p>
+      </article>
+
+      <a class="navigator-card next" [routerLink]="secondaryRoute().publicPath">
+        <span class="navigator-label">{{ isHub() ? 'Trang chốt thử nghiệm' : 'Trang kế tiếp' }}</span>
+        <h3>{{ secondaryRoute().title }}</h3>
+        <p>{{ nextStepText() }}</p>
+      </a>
+    </div>
+
+    <div class="roadmap-grid">
+      <article class="roadmap-card" *ngFor="let milestone of page().milestones">
+        <span class="roadmap-label">{{ milestone.label }}</span>
+        <h3>{{ milestone.title }}</h3>
+        <p>{{ milestone.summary }}</p>
+      </article>
+    </div>
+  </section>
+
+  <div class="image-lightbox" *ngIf="imagePreview() as preview" (click)="closeImage()">
+    <div class="lightbox-dialog" (click)="$event.stopPropagation()">
+      <button type="button" class="lightbox-close" (click)="closeImage()" aria-label="Đóng ảnh minh họa">
+        ×
+      </button>
+      <img [src]="preview.src" [alt]="preview.alt" />
+      <div class="lightbox-copy">
+        <h3>{{ preview.title }}</h3>
+        <p>{{ preview.description }}</p>
+      </div>
+    </div>
+  </div>
+</div>

@@ -9,6 +9,7 @@ import { Role } from '../common/interfaces/role.enum';
 import { AssignStudentsDto } from './dto/assign-students.dto';
 import { UpdateCurriculumDto } from './dto/update-curriculum.dto';
 import { UpdateStudentConfigDto } from './dto/update-student-config.dto';
+import { QueryClassManagementDto } from './dto/query-class-management.dto';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 
@@ -27,6 +28,12 @@ export class ClassesController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.TEACHER, Role.ACCOUNTING)
   findAll(@Req() req: AuthenticatedRequest) {
     return this.classesService.findAll(req.user);
+  }
+
+  @Get('management')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.TEACHER, Role.ACCOUNTING)
+  findManagementPage(@Query() query: QueryClassManagementDto, @Req() req: AuthenticatedRequest) {
+    return this.classesService.findManagementPage(req.user, query);
   }
 
   @Get('sale-offline-options')
@@ -110,6 +117,27 @@ export class ClassesController {
   // ── CURRICULUM (Chương trình học) ──────────────────────────────────
 
   /** Xem tiến độ chương trình học */
+  @Post(':id/pending-offline-assignments/:requestId/approve')
+  @Roles(Role.DIRECTOR, Role.OPS)
+  approvePendingOfflineAssignment(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Param('requestId', ParseMongoIdPipe) requestId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.classesService.approvePendingOfflineAssignment(id, requestId, req.user);
+  }
+
+  @Post(':id/pending-offline-assignments/:requestId/reject')
+  @Roles(Role.DIRECTOR, Role.OPS)
+  rejectPendingOfflineAssignment(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Param('requestId', ParseMongoIdPipe) requestId: string,
+    @Body() body: { reason?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.classesService.rejectPendingOfflineAssignment(id, requestId, body?.reason, req.user);
+  }
+
   @Get(':id/curriculum')
   @Roles(Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.PARENT)
   getCurriculumProgress(@Param('id', ParseMongoIdPipe) id: string, @Req() req: AuthenticatedRequest) {

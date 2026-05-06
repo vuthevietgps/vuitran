@@ -15,10 +15,22 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { OrderType, PaymentPlan, LeadSource } from '../schemas/order.schema';
 import { TrackingAttributionDto } from '../../marketing-attribution/dto/tracking-attribution.dto';
 import { InvoiceCourseStatus } from '../../invoices/schemas/invoice.schema';
+
+const normalizeOptionalIdInput = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim();
+  return normalized || null;
+};
+
+const normalizeOptionalCodeInput = ({ value }: { value: unknown }) => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toUpperCase();
+  return normalized || undefined;
+};
 
 export class OrderItemDto {
   @IsString()
@@ -80,7 +92,13 @@ export class OrderItemDto {
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   selectedClassId?: string;
+
+  @IsString()
+  @IsOptional()
+  @Transform(normalizeOptionalCodeInput)
+  requestedClassCode?: string;
 
   @IsBoolean()
   @IsOptional()
@@ -88,6 +106,7 @@ export class OrderItemDto {
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   preferredTeacherId?: string;
 
   @IsInt()
@@ -150,8 +169,9 @@ export class CreateOrderDto {
   @IsOptional()
   parentEmail?: string;
 
-  @IsString()
+  @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   parentUserId?: string;
 
   @IsString()
@@ -213,10 +233,12 @@ export class CreateOrderDto {
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   existingStudentId?: string;
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   saleId?: string;
 
   @IsArray()
@@ -268,14 +290,17 @@ export class CreateOrderDto {
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   leadId?: string;
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   adGroupId?: string;
 
   @IsMongoId()
   @IsOptional()
+  @Transform(normalizeOptionalIdInput)
   referredByUserId?: string;
 
   @IsString()

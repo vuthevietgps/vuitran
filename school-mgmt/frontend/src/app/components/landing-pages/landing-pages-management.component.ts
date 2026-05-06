@@ -10,11 +10,16 @@ import {
 import { AuthService } from '../../services/auth.service';
 import { Role } from '../../models/role.enum';
 import { FlowGuideComponent } from '../shared/flow-guide.component';
+import {
+  erpLaunchClusterContent,
+  ErpLaunchPageContent,
+  ErpLaunchRoleBadge,
+} from '../../content/erp-launch';
 
 const STATUS_LABELS: Record<string, string> = {
-  DRAFT: 'Nhap',
-  ACTIVE: 'Hoat dong',
-  ARCHIVED: 'Luu tru',
+  DRAFT: 'Nháp',
+  ACTIVE: 'Hoạt động',
+  ARCHIVED: 'Lưu trữ',
 };
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -24,10 +29,31 @@ const PLATFORM_LABELS: Record<string, string> = {
 };
 
 const MATCH_LABELS: Record<string, string> = {
-  NONE: 'Chua match',
-  USER_PHONE: 'Match user theo phone',
-  USER_EMAIL: 'Match user theo email',
-  STUDENT_PARENT: 'Match qua hoc sinh',
+  NONE: 'Chưa ghép',
+  USER_PHONE: 'Ghép người dùng theo số điện thoại',
+  USER_EMAIL: 'Ghép người dùng theo email',
+  STUDENT_PARENT: 'Ghép qua hồ sơ học sinh',
+};
+
+const SYSTEM_ROLE_LABELS: Record<ErpLaunchRoleBadge, string> = {
+  PUBLIC: 'Công khai',
+  DIRECTOR: 'Giám đốc',
+  SALE: 'Tư vấn tuyển sinh',
+  OPS: 'Vận hành',
+  ACCOUNTING: 'Kế toán',
+  TEACHER: 'Giáo viên',
+};
+
+type SystemLandingPageItem = {
+  slug: string;
+  title: string;
+  summary: string;
+  publicPath: string;
+  sourceCode: 'ERP_CLUSTER';
+  roleSummary: string;
+  sectionCount: number;
+  milestoneCount: number;
+  primaryCta: string;
 };
 
 @Component({
@@ -42,22 +68,30 @@ export class LandingPagesManagementComponent implements OnInit {
   readonly pages = signal<LandingPageItem[]>([]);
   readonly submissions = signal<LandingPageSubmissionItem[]>([]);
   readonly allGroups = signal<AdGroupItem[]>([]);
+  readonly systemPages = computed<SystemLandingPageItem[]>(() =>
+    [erpLaunchClusterContent.hubPage, ...erpLaunchClusterContent.detailPages].map((page) =>
+      this.toSystemPage(page),
+    ),
+  );
   readonly error = signal('');
   readonly loading = signal(false);
   readonly showModal = signal(false);
 
   editingPage: LandingPageItem | null = null;
 
-  pageSearch = '';
-  pageStatus = '';
-  submissionSearch = '';
-  submissionLandingPageId = '';
+readonly pageSearch = signal('');
+  readonly pageStatus = signal('');
+  readonly submissionSearch = signal('');
+  readonly submissionLandingPageId = signal('');
+  readonly totalLandingLinks = computed(
+    () => this.filteredSystemPages().length + this.filteredPages().length,
+  );
 
   form: any = this.createEmptyForm();
 
   readonly filteredPages = computed(() => {
-    const keyword = this.pageSearch.trim().toLowerCase();
-    const status = this.pageStatus;
+    const keyword = this.pageSearch().trim().toLowerCase();
+    const status = this.pageStatus();
 
     return this.pages().filter((page) => {
       const matchesStatus = !status || page.status === status;
@@ -67,9 +101,21 @@ export class LandingPagesManagementComponent implements OnInit {
     });
   });
 
+  readonly filteredSystemPages = computed(() => {
+    const keyword = this.pageSearch().trim().toLowerCase();
+    const status = this.pageStatus();
+
+    return this.systemPages().filter((page) => {
+      const matchesStatus = !status || status === 'ACTIVE';
+      const haystack = `${page.title} ${page.slug} ${page.sourceCode} ${page.roleSummary}`.toLowerCase();
+      const matchesKeyword = !keyword || haystack.includes(keyword);
+      return matchesStatus && matchesKeyword;
+    });
+  });
+
   readonly filteredSubmissions = computed(() => {
-    const keyword = this.submissionSearch.trim().toLowerCase();
-    const landingPageId = this.submissionLandingPageId;
+    const keyword = this.submissionSearch().trim().toLowerCase();
+    const landingPageId = this.submissionLandingPageId();
 
     return this.submissions().filter((submission) => {
       const matchesPage = !landingPageId || submission.landingPageId === landingPageId;
@@ -108,10 +154,10 @@ export class LandingPagesManagementComponent implements OnInit {
       heroSubtitle: '',
       formTitle: '',
       formDescription: '',
-      submitButtonText: 'Nhan tu van ngay',
-      privacyNotice: 'Thong tin chi duoc dung de tu van va lien he phu huynh.',
-      successTitle: 'Da ghi nhan',
-      successMessage: 'Chung toi se lien he voi phu huynh trong thoi gian som nhat.',
+      submitButtonText: 'Nhận tư vấn ngay',
+      privacyNotice: 'Thông tin chỉ được dùng để tư vấn và liên hệ phụ huynh.',
+      successTitle: 'Đã ghi nhận',
+      successMessage: 'Chúng tôi sẽ liên hệ với phụ huynh trong thời gian sớm nhất.',
       bodyHtml: '',
       defaultPlatform: '',
       defaultAdGroupId: '',
@@ -205,7 +251,7 @@ export class LandingPagesManagementComponent implements OnInit {
 
     this.loading.set(false);
     if (!result.ok) {
-      this.error.set(result.message || 'Khong luu duoc landing page');
+      this.error.set(result.message || 'Không lưu được landing page');
       return;
     }
 
@@ -215,11 +261,11 @@ export class LandingPagesManagementComponent implements OnInit {
 
   async removePage(page: LandingPageItem) {
     if (!this.canDelete()) return;
-    if (!confirm(`Xoa landing page "${page.name}"?`)) return;
+    if (!confirm(`Xóa landing page "${page.name}"?`)) return;
 
     const result = await this.landingPageService.remove(page._id);
     if (!result.ok) {
-      alert(result.message || 'Khong xoa duoc landing page');
+      alert(result.message || 'Không xóa được landing page');
       return;
     }
 
@@ -227,10 +273,14 @@ export class LandingPagesManagementComponent implements OnInit {
   }
 
   async copyPublicUrl(page: LandingPageItem) {
-    const url = this.publicUrl(page.slug);
+    await this.copyPublicUrlBySlug(page.slug);
+  }
+
+  async copyPublicUrlBySlug(slug: string) {
+    const url = this.publicUrl(slug);
     try {
       await navigator.clipboard.writeText(url);
-      alert(`Da copy: ${url}`);
+      alert(`Đã copy: ${url}`);
     } catch {
       prompt('Copy link landing page', url);
     }
@@ -267,7 +317,17 @@ export class LandingPagesManagementComponent implements OnInit {
       page.tiktokPixelId ? `TikTok ${page.tiktokPixelId}` : '',
     ].filter(Boolean);
 
-    return parts.length > 0 ? parts.join(' | ') : 'Chua cau hinh';
+    return parts.length > 0 ? parts.join(' | ') : 'Chưa cấu hình';
+  }
+
+  dynamicPageSummary(page: LandingPageItem): string {
+    return (
+      page.heroSubtitle?.trim()
+      || page.formDescription?.trim()
+      || page.heroTitle?.trim()
+      || page.notes?.trim()
+      || 'Landing page động có tracking, submit form và attribution riêng.'
+    );
   }
 
   formatDate(value?: string): string {
@@ -275,5 +335,19 @@ export class LandingPagesManagementComponent implements OnInit {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return date.toLocaleString('vi-VN');
+  }
+
+  private toSystemPage(page: ErpLaunchPageContent): SystemLandingPageItem {
+    return {
+      slug: page.slug,
+      title: page.title,
+      summary: page.summary,
+      publicPath: page.publicPath,
+      sourceCode: 'ERP_CLUSTER',
+      roleSummary: page.roleBadges.map((badge) => SYSTEM_ROLE_LABELS[badge]).join(' | '),
+      sectionCount: page.sections.length,
+      milestoneCount: page.milestones.length,
+      primaryCta: page.ctaLabels[0],
+    };
   }
 }

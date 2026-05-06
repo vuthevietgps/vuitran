@@ -70,6 +70,9 @@ export class Invoice {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom', required: false })
   requestedClassId?: Types.ObjectId;
 
+  @Prop({ type: String, trim: true, uppercase: true, required: false })
+  requestedClassCode?: string;
+
   /** Tự tạo lớp mới khi duyệt hóa đơn nếu sale không chọn lớp có sẵn */
   @Prop({ type: Boolean, default: false })
   createNewClassWhenApproved?: boolean;
@@ -214,7 +217,10 @@ export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
 // ─── Indexes ─────────────────────────────────────────────────────────
 InvoiceSchema.index({ studentId: 1, createdAt: -1 });
 InvoiceSchema.index({ studentId: 1, classId: 1, status: 1 }); // Attendance + wallet deduction lookups
+InvoiceSchema.index({ classId: 1, studentId: 1, createdAt: -1 });
 InvoiceSchema.index({ saleId: 1 });
+InvoiceSchema.index({ createdAt: -1 });
+InvoiceSchema.index({ paymentDate: -1 });
 InvoiceSchema.index({ status: 1 });
 InvoiceSchema.index({ classId: 1 });
 InvoiceSchema.index({ courseStatus: 1 });

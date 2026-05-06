@@ -89,6 +89,9 @@ export class OrderItem {
   @Prop({ type: SchemaTypes.ObjectId, ref: 'Classroom' })
   selectedClassId?: Types.ObjectId;
 
+  @Prop({ type: String, trim: true, uppercase: true })
+  requestedClassCode?: string;
+
   @Prop({ type: Boolean, default: false })
   createNewClassWhenApproved?: boolean;
 

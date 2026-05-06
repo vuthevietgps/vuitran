@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, signal } from '@angular/core';
+import { Component, OnDestroy, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import {
   ClassItem,
@@ -9,6 +9,7 @@ import {
   ClassMember,
   ClassPayload,
   ClassService,
+  PendingOfflineAssignment,
   StudentClassConfig,
   StudentDurationSlot,
   StudentTeacherSlot,
@@ -62,6 +63,38 @@ type CoTeacherFormRow = {
   note: string;
 };
 
+type TeacherFilterOption = {
+  id: string;
+  fullName: string;
+};
+
+type ClassStudentSummaryView = {
+  key: string;
+  student: ClassMember & { studentCode?: string };
+  teacherDisplay: string;
+  durationDisplay: string;
+  teacherHistory: string;
+  durationHistory: string;
+};
+
+type ClassCoTeacherSummaryView = {
+  key: string;
+  name: string;
+  roleLabel: string;
+  permissionSummary: string;
+};
+
+type ClassTableRowView = {
+  key: string;
+  item: ClassItem;
+  mode: 'ONLINE' | 'OFFLINE';
+  primaryTeacherName: string;
+  pendingOfflineCount: number;
+  coTeacherSummaries: ClassCoTeacherSummaryView[];
+  studentSummaries: ClassStudentSummaryView[];
+  visibleOfflineRequests: PendingOfflineAssignment[];
+};
+
 @Component({
   selector: 'app-classes',
   standalone: true,
@@ -69,8 +102,9 @@ type CoTeacherFormRow = {
   templateUrl: './classes.component.html',
   styleUrls: ['./classes.component.css'],
 })
-export class ClassesComponent {
+export class ClassesComponent implements OnDestroy {
   readonly defaultBaseDuration = 70;
+  readonly classesPageSize = 25;
   classes = signal<ClassItem[]>([]);
   saleOfflineOptions = signal<ClassItem[]>([]);
   teachers = signal<UserItem[]>([]);
@@ -79,7 +113,16 @@ export class ClassesComponent {
   students = signal<StudentItem[]>([]);
   products = signal<ProductItem[]>([]);
   invoices = signal<InvoiceItem[]>([]);
+  totalClasses = signal(0);
+  totalPages = signal(1);
+  currentPage = signal(1);
+  loadingClasses = signal(false);
   studentSearch = '';
+  private readonly classSearchState = signal('');
+  private readonly teacherFilterIdState = signal('');
+  private readonly classModeFilterState = signal<'' | 'ONLINE' | 'OFFLINE'>('');
+  private classSearchReloadTimer: ReturnType<typeof setTimeout> | null = null;
+  private latestListRequestId = 0;
   codeSearch = '';
   showCodeDropdown = false;
   showModal = signal(false);
@@ -114,6 +157,25 @@ export class ClassesComponent {
   getProfit = getClassProfit;
   pendingClassChanges = pendingClassChanges;
   classEditHistory = classEditHistory;
+  readonly teacherFilterOptionsState = computed<TeacherFilterOption[]>(() => {
+    return this.teachers()
+      .filter((teacher) => !!teacher?._id && !!teacher.fullName?.trim())
+      .map((teacher) => ({ id: teacher._id, fullName: teacher.fullName.trim() }))
+      .sort((left, right) => left.fullName.localeCompare(right.fullName, 'vi'));
+  });
+  readonly filteredClassRows = computed<ClassTableRowView[]>(() => {
+    const teachers = this.teachers();
+    const canManage = this.canManage();
+    const saleMode = this.isSale();
+    const currentUserId = this.currentUserId();
+
+    return this.classes()
+      .map((classItem) => this.buildClassTableRow(classItem, teachers, canManage, saleMode, currentUserId));
+  });
+  readonly filteredClassCount = computed(() => this.filteredClassRows().length);
+  readonly hasActiveClassFiltersState = computed(() =>
+    Boolean(this.classSearchState().trim() || this.teacherFilterIdState() || this.classModeFilterState()),
+  );
 
   constructor(
     private classService: ClassService,
@@ -124,8 +186,39 @@ export class ClassesComponent {
     private teacherService: TeacherService,
     private auth: AuthService,
   ) {
-    this.loadLookups();
-    this.reload();
+    void this.loadLookups();
+    void this.reload();
+  }
+
+  ngOnDestroy() {
+    if (this.classSearchReloadTimer) {
+      clearTimeout(this.classSearchReloadTimer);
+      this.classSearchReloadTimer = null;
+    }
+  }
+
+  get classSearch(): string {
+    return this.classSearchState();
+  }
+
+  set classSearch(value: string) {
+    this.classSearchState.set(String(value || ''));
+  }
+
+  get teacherFilterId(): string {
+    return this.teacherFilterIdState();
+  }
+
+  set teacherFilterId(value: string) {
+    this.teacherFilterIdState.set(String(value || '').trim());
+  }
+
+  get classModeFilter(): '' | 'ONLINE' | 'OFFLINE' {
+    return this.classModeFilterState();
+  }
+
+  set classModeFilter(value: '' | 'ONLINE' | 'OFFLINE') {
+    this.classModeFilterState.set(value || '');
   }
 
   blankForm() {
@@ -185,20 +278,98 @@ export class ClassesComponent {
     this.invoices.set(invoicesList);
   }
 
-  async reload() {
-    const [data, invoicesList, saleOfflineOpts] = await Promise.all([
-      this.classService.list(),
-      this.isSale() ? this.invoiceService.list() : Promise.resolve([] as InvoiceItem[]),
-      this.isSale() ? this.classService.listSaleOfflineOptions() : Promise.resolve([] as ClassItem[]),
-    ]);
-    this.classes.set(data);
-    this.saleOfflineOptions.set(saleOfflineOpts);
+  async reload(page: number = this.currentPage()) {
+    const requestId = ++this.latestListRequestId;
+    const safePage = Math.max(Number(page) || 1, 1);
+
+    this.loadingClasses.set(true);
+    const result = await this.classService.listManagement({
+      search: this.classSearchState().trim() || undefined,
+      teacherId: this.teacherFilterIdState().trim() || undefined,
+      classMode: this.classModeFilterState() || undefined,
+      page: safePage,
+      limit: this.classesPageSize,
+    });
+
+    if (requestId !== this.latestListRequestId) {
+      return;
+    }
+
+    this.classes.set(result.data || []);
+    this.totalClasses.set(result.meta?.total || 0);
+    this.totalPages.set(Math.max(result.meta?.totalPages || 1, 1));
+    this.currentPage.set(result.meta?.page || safePage);
     if (this.editingId) {
-      this.editingClass.set(data.find((item) => item._id === this.editingId) || null);
+      const currentEditingClass = (result.data || []).find((item) => item._id === this.editingId);
+      if (currentEditingClass) {
+        this.editingClass.set(currentEditingClass);
+      }
     }
-    if (this.isSale()) {
-      this.invoices.set(invoicesList);
+    this.loadingClasses.set(false);
+  }
+
+  filteredClasses(): ClassItem[] {
+    return this.filteredClassRows().map((row) => row.item);
+  }
+
+  teacherFilterOptions(): TeacherFilterOption[] {
+    return this.teacherFilterOptionsState();
+  }
+
+  hasActiveClassFilters(): boolean {
+    return this.hasActiveClassFiltersState();
+  }
+
+  resetClassFilters() {
+    this.classSearch = '';
+    this.teacherFilterId = '';
+    this.classModeFilter = '';
+    if (this.classSearchReloadTimer) {
+      clearTimeout(this.classSearchReloadTimer);
+      this.classSearchReloadTimer = null;
     }
+    void this.reload(1);
+  }
+
+  onClassSearchChange(value: string) {
+    this.classSearch = String(value || '');
+    if (this.classSearchReloadTimer) {
+      clearTimeout(this.classSearchReloadTimer);
+    }
+    this.classSearchReloadTimer = setTimeout(() => {
+      this.classSearchReloadTimer = null;
+      void this.reload(1);
+    }, 250);
+  }
+
+  onTeacherFilterChange(value: string) {
+    if (this.classSearchReloadTimer) {
+      clearTimeout(this.classSearchReloadTimer);
+      this.classSearchReloadTimer = null;
+    }
+    this.teacherFilterId = String(value || '').trim();
+    void this.reload(1);
+  }
+
+  onClassModeFilterChange(value: '' | 'ONLINE' | 'OFFLINE') {
+    if (this.classSearchReloadTimer) {
+      clearTimeout(this.classSearchReloadTimer);
+      this.classSearchReloadTimer = null;
+    }
+    this.classModeFilter = value || '';
+    void this.reload(1);
+  }
+
+  goToClassesPage(page: number) {
+    if (this.classSearchReloadTimer) {
+      clearTimeout(this.classSearchReloadTimer);
+      this.classSearchReloadTimer = null;
+    }
+    const safePage = Math.min(Math.max(Number(page) || 1, 1), this.totalPages());
+    if (safePage === this.currentPage() || this.loadingClasses()) {
+      return;
+    }
+    void this.reload(safePage);
   }
 
   filteredCodeOptions(): { label: string; value: string }[] {
@@ -251,7 +422,7 @@ export class ClassesComponent {
 
   onSaleOfflineClassChange(classId: string) {
     this.form.existingOfflineClassId = classId || '';
-    this.submitLabel = this.isSaleOfflineExistingMode() ? 'Them vao lop' : 'Luu';
+    this.submitLabel = this.isSaleOfflineExistingMode() ? 'Gui yeu cau' : 'Luu';
     const selectedClass = this.saleOfflineOptions().find((item) => item._id === classId);
     if (!selectedClass) {
       this.resetSaleOfflineSelection();
@@ -394,6 +565,10 @@ export class ClassesComponent {
     this.error.set('');
 
     if (this.isSaleAssignMode()) {
+      if (this.editingClass() && isOfflineClass(this.editingClass()!)) {
+        this.error.set('Voi lop offline, sale them hoc sinh bang yeu cau tu hoa don da duyet');
+        return;
+      }
       if (!this.form.studentIds.length) {
         this.error.set('Vui long chon it nhat mot hoc vien');
         return;
@@ -404,7 +579,7 @@ export class ClassesComponent {
         return;
       }
       this.closeModal();
-      this.reload();
+      await this.reload();
       return;
     }
 
@@ -425,7 +600,7 @@ export class ClassesComponent {
       }
 
       this.closeModal();
-      this.reload();
+      await this.reload();
       return;
     }
 
@@ -452,7 +627,7 @@ export class ClassesComponent {
       }
 
       this.closeModal();
-      this.reload();
+      await this.reload();
       return;
     }
 
@@ -480,8 +655,12 @@ export class ClassesComponent {
         return;
       }
 
+      if (saleResult.message) {
+        alert(saleResult.message);
+      }
+
       this.closeModal();
-      this.reload();
+      await this.reload();
       return;
     }
 
@@ -565,21 +744,23 @@ export class ClassesComponent {
     }
 
     this.closeModal();
-    this.reload();
+    await this.reload();
   }
 
-  edit(classItem: ClassItem, mode: 'config' | 'assign' | 'duration' = 'config') {
-    if (this.isSale() && !this.canSaleAssign(classItem)) return;
-    this.editingId = classItem._id;
-    this.editingClass.set(classItem);
+  async edit(classItem: ClassItem, mode: 'config' | 'assign' | 'duration' = 'config') {
+    if (this.isSale() && !this.canSaleOpenMode(classItem, mode)) return;
+    const classDetail = await this.classService.findOne(classItem._id) || classItem;
+    this.editingId = classDetail._id;
+    this.editingClass.set(classDetail);
     this.editMode = this.isSale() ? mode : 'config';
-    const classStudentIds = classItem.students?.map((s) => s._id) || [];
+    const classStudentIds = classDetail.students?.map((s) => s._id) || [];
     const myStudents = new Set(this.students().map((s) => s._id));
-    const pendingConfigChanges = this.isSale() && mode === 'config' && classItem.pendingSaleUpdate?.requestType !== 'DURATION_CHANGE'
-      ? classItem.pendingSaleUpdate?.requestedChanges || {}
+    const pendingConfigChanges =
+      this.isSale() && mode === 'config' && classDetail.pendingSaleUpdate?.requestType !== 'DURATION_CHANGE'
+        ? classDetail.pendingSaleUpdate?.requestedChanges || {}
       : {};
     const pendingDurationChanges = this.isSale() && mode === 'duration'
-      ? classItem.pendingSaleUpdate?.requestedChanges || {}
+      ? classDetail.pendingSaleUpdate?.requestedChanges || {}
       : {};
     const pendingTeacherId = String(pendingConfigChanges['teacherId'] || '');
     const pendingTeacherPayPerSession = Number(pendingConfigChanges['teacherPayPerSession']);
@@ -588,41 +769,42 @@ export class ClassesComponent {
     const pendingSessionDuration = Number(pendingDurationChanges['sessionDuration']);
 
     this.form = {
-      name: classItem.name,
-      code: classItem.code,
-      teacherId: pendingTeacherId || classItem.teacher?._id || '',
-      coTeachers: this.normalizeCoTeachers(classItem.coTeachers),
-      saleId: classItem.sale?._id || '',
+      name: classDetail.name,
+      code: classDetail.code,
+      teacherId: pendingTeacherId || classDetail.teacher?._id || '',
+      coTeachers: this.normalizeCoTeachers(classDetail.coTeachers),
+      saleId: classDetail.sale?._id || '',
       invoiceId: '',
       existingOfflineClassId: '',
-      productPackageId: classItem.productPackage?._id || '',
-      classMode: classItem.classMode || 'ONLINE',
+      productPackageId: classDetail.productPackage?._id || '',
+      classMode: classDetail.classMode || 'ONLINE',
       studentIds: this.isSale() ? classStudentIds.filter((id) => myStudents.has(id)) : classStudentIds,
-      pricePerSession: classItem.pricePerSession || 0,
+      pricePerSession: classDetail.pricePerSession || 0,
       teacherPayPerSession: Number.isFinite(pendingTeacherPayPerSession) && pendingTeacherPayPerSession >= 0
         ? pendingTeacherPayPerSession
-        : (classItem.teacherPayPerSession || 0),
+        : (classDetail.teacherPayPerSession || 0),
       teacherPayPerStudent: Number.isFinite(pendingTeacherPayPerStudent) && pendingTeacherPayPerStudent >= 0
         ? pendingTeacherPayPerStudent
-        : (classItem.teacherPayPerStudent || 0),
+        : (classDetail.teacherPayPerStudent || 0),
       baseDuration: Number.isFinite(pendingBaseDuration) && pendingBaseDuration > 0
         ? pendingBaseDuration
-        : (classItem.baseDuration || this.defaultBaseDuration),
+        : (classDetail.baseDuration || this.defaultBaseDuration),
       sessionDuration: Number.isFinite(pendingSessionDuration) && pendingSessionDuration > 0
         ? pendingSessionDuration
-        : (classItem.sessionDuration || this.defaultBaseDuration),
-      revenuePerStudent: classItem.revenuePerStudent || 0,
-      teacherSalaryCost: classItem.teacherSalaryCost || 0,
+        : (classDetail.sessionDuration || this.defaultBaseDuration),
+      revenuePerStudent: classDetail.revenuePerStudent || 0,
+      teacherSalaryCost: classDetail.teacherSalaryCost || 0,
     };
 
     this.error.set('');
     this.studentSearch = '';
-    this.codeSearch = classItem.code;
+    this.codeSearch = classDetail.code;
+    this.syncProductPackageSelection();
     this.showCodeDropdown = false;
     this.submitLabel = this.isSaleAssignMode()
       ? 'Them hoc vien'
       : this.isSaleDurationEditMode()
-        ? 'Gui Director duyet'
+        ? 'Gui Ops/Director duyet'
         : this.isSaleConfigEditMode()
           ? 'Gui duyet'
         : 'Cap nhat';
@@ -636,7 +818,7 @@ export class ClassesComponent {
       alert(result.message || 'Khong the xoa lop');
       return;
     }
-    this.reload();
+    await this.reload();
   }
 
   availableStudents(): StudentItem[] {
@@ -674,9 +856,20 @@ export class ClassesComponent {
   }
   canCreateClass() { return this.canManage() || this.isSale(); }
 
-  canSaleAssign(classItem: ClassItem) {
+  canSaleManageClass(classItem: ClassItem) {
     const current = this.auth.userSignal();
     return current?.role === 'SALE' && classItem.sale?._id === current.sub;
+  }
+
+  canSaleAssign(classItem: ClassItem) {
+    return this.canSaleManageClass(classItem) && !isOfflineClass(classItem);
+  }
+
+  canSaleOpenMode(classItem: ClassItem, mode: 'config' | 'assign' | 'duration') {
+    if (mode === 'assign') {
+      return this.canSaleAssign(classItem);
+    }
+    return this.canSaleManageClass(classItem);
   }
 
   isSaleCreateMode() { return this.isSale() && !this.editingId; }
@@ -781,6 +974,67 @@ export class ClassesComponent {
 
   coTeacherTeacherName(coTeacher: Pick<ClassCoTeacherConfig, 'teacherId'>): string {
     return resolveMemberName(coTeacher.teacherId, this.teachers()) || 'Chua gan giao vien';
+  }
+
+  private classModeLabel(classItem: ClassItem): 'ONLINE' | 'OFFLINE' {
+    return isOfflineClass(classItem) ? 'OFFLINE' : 'ONLINE';
+  }
+
+  private buildClassTableRow(
+    classItem: ClassItem,
+    teachers: UserItem[],
+    canManage: boolean,
+    saleMode: boolean,
+    currentUserId: string,
+  ): ClassTableRowView {
+    return {
+      key: classItem._id,
+      item: classItem,
+      mode: this.classModeLabel(classItem),
+      primaryTeacherName: resolveMemberName(classItem.teacher, teachers) || classItem.teacher?.fullName || '-',
+      pendingOfflineCount: this.buildPendingOfflineAssignmentCount(classItem),
+      coTeacherSummaries: (classItem.coTeachers || []).map((coTeacher, index) => ({
+        key: `${resolveMemberId(coTeacher.teacherId) || 'co-teacher'}-${index}`,
+        name: resolveMemberName(coTeacher.teacherId, teachers) || 'Chua gan giao vien',
+        roleLabel: this.coTeacherRoleLabel(coTeacher.role),
+        permissionSummary: this.coTeacherPermissionSummary(coTeacher),
+      })),
+      studentSummaries: (classItem.students || []).map((student) => ({
+        key: student._id,
+        student,
+        teacherDisplay: _getStudentTeacherDisplay(classItem, student._id, teachers),
+        durationDisplay: _getStudentDurationDisplay(classItem, student._id, this.defaultBaseDuration),
+        teacherHistory: this.buildStudentTeacherHistoryDisplay(classItem, student._id, teachers),
+        durationHistory: this.buildStudentDurationHistoryDisplay(classItem, student._id),
+      })),
+      visibleOfflineRequests: this.buildVisibleOfflineAssignmentRequests(classItem, canManage, saleMode, currentUserId),
+    };
+  }
+
+  private buildVisibleOfflineAssignmentRequests(
+    classItem: ClassItem,
+    canManage: boolean,
+    saleMode: boolean,
+    currentUserId: string,
+  ): PendingOfflineAssignment[] {
+    const requests = [...(classItem.pendingOfflineAssignments || [])]
+      .filter((request) => request.status !== 'APPROVED')
+      .sort((left, right) =>
+        new Date(right.requestedAt || '').getTime() - new Date(left.requestedAt || '').getTime(),
+      );
+    if (canManage) {
+      return requests;
+    }
+    if (saleMode) {
+      return requests.filter((request) => this.pendingOfflineAssignmentRequestedById(request) === currentUserId);
+    }
+    return [];
+  }
+
+  private buildPendingOfflineAssignmentCount(classItem: ClassItem): number {
+    return (classItem.pendingOfflineAssignments || [])
+      .filter((request) => request.status === 'PENDING')
+      .length;
   }
 
   coTeacherPermissionLabels(
@@ -908,7 +1162,7 @@ export class ClassesComponent {
   }
 
   canEditStudentConfig(classItem: ClassItem) {
-    return this.canManage() || this.canSaleAssign(classItem);
+    return this.canManage() || this.canSaleManageClass(classItem);
   }
 
   getSelectedStudentCurrentDuration(): StudentDurationSlot {
@@ -969,14 +1223,22 @@ export class ClassesComponent {
   }
 
   getStudentTeacherHistoryDisplay(classItem: ClassItem, studentId: string): string {
+    return this.buildStudentTeacherHistoryDisplay(classItem, studentId, this.teachers());
+  }
+
+  private buildStudentTeacherHistoryDisplay(classItem: ClassItem, studentId: string, teachers: UserItem[]): string {
     const slots = sortTeacherSlots(getStudentConfig(classItem, studentId)?.teacherSlots);
     if (slots.length < 2) return '';
     return slots
-      .map((slot) => `GV${slot.slotIndex}: ${this.getTeacherSlotDisplay(slot)}`)
+      .map((slot) => `GV${slot.slotIndex}: ${_getTeacherSlotDisplay(slot, teachers)}`)
       .join(' -> ');
   }
 
   getStudentDurationHistoryDisplay(classItem: ClassItem, studentId: string): string {
+    return this.buildStudentDurationHistoryDisplay(classItem, studentId);
+  }
+
+  private buildStudentDurationHistoryDisplay(classItem: ClassItem, studentId: string): string {
     const slots = sortDurationSlots(getStudentConfig(classItem, studentId)?.durationSlots);
     if (slots.length < 2) return '';
     return slots
@@ -1026,15 +1288,145 @@ export class ClassesComponent {
     if (this.isSaleDurationEditMode()) return 'Gui yeu cau doi thoi luong lop hoc';
     if (this.isSaleConfigEditMode()) return 'Gui yeu cau doi giao vien va luong GV';
     if (this.isSaleAssignMode()) return 'Chon hoc vien vao lop';
-    if (this.isSaleOfflineExistingMode()) return 'Them hoc sinh vao lop offline co san';
+    if (this.isSaleOfflineExistingMode()) return 'Gui yeu cau them hoc sinh vao lop offline';
     return this.editingId ? 'Chinh sua lop hoc' : 'Them lop hoc';
   }
 
   availableSaleInvoices(): InvoiceItem[] {
+    const pendingOfflineInvoiceIds = new Set(
+      this.saleOfflineOptions()
+        .flatMap((classItem) => classItem.pendingOfflineAssignments || [])
+        .filter((request) =>
+          request.status === 'PENDING' && this.pendingOfflineAssignmentRequestedById(request) === this.currentUserId(),
+        )
+        .map((request) => this.pendingOfflineAssignmentInvoiceId(request))
+        .filter((invoiceId): invoiceId is string => !!invoiceId),
+    );
     return this.invoices().filter((invoice) => {
       const isApproved = invoice.status === 'APPROVED' || invoice.status === 'PAID';
-      return isApproved && !getInvoiceClassId(invoice);
+      return isApproved && !getInvoiceClassId(invoice) && !pendingOfflineInvoiceIds.has(invoice._id);
     });
+  }
+
+  visibleOfflineAssignmentRequests(classItem: ClassItem): PendingOfflineAssignment[] {
+    return this.buildVisibleOfflineAssignmentRequests(
+      classItem,
+      this.canManage(),
+      this.isSale(),
+      this.currentUserId(),
+    );
+  }
+
+  pendingOfflineAssignmentCount(classItem: ClassItem): number {
+    return this.buildPendingOfflineAssignmentCount(classItem);
+  }
+
+  trackTeacherFilterOption(_index: number, teacher: TeacherFilterOption): string {
+    return teacher.id;
+  }
+
+  trackClassRow(_index: number, row: ClassTableRowView): string {
+    return row.key;
+  }
+
+  trackCoTeacherSummary(_index: number, coTeacher: ClassCoTeacherSummaryView): string {
+    return coTeacher.key;
+  }
+
+  trackStudentSummary(_index: number, studentSummary: ClassStudentSummaryView): string {
+    return studentSummary.key;
+  }
+
+  trackOfflineRequest(_index: number, request: PendingOfflineAssignment): string {
+    return request._id;
+  }
+
+  pendingOfflineAssignmentRequestedById(request: PendingOfflineAssignment): string {
+    return resolveMemberId(request.requestedBy);
+  }
+
+  pendingOfflineAssignmentRequestedByName(request: PendingOfflineAssignment): string {
+    return resolveMemberName(request.requestedBy, this.sales()) || 'Sale';
+  }
+
+  pendingOfflineAssignmentReviewerName(request: PendingOfflineAssignment): string {
+    return resolveMemberName(request.reviewedBy, [...this.sales(), ...this.teachers()]) || 'Quan ly';
+  }
+
+  pendingOfflineAssignmentInvoiceId(request: PendingOfflineAssignment): string {
+    const invoice = request.invoiceId;
+    if (!invoice) return '';
+    return typeof invoice === 'string' ? invoice : invoice._id || '';
+  }
+
+  pendingOfflineAssignmentInvoiceNumber(request: PendingOfflineAssignment): string {
+    const invoice = request.invoiceId;
+    if (!invoice) return '';
+    return typeof invoice === 'string' ? invoice : invoice.invoiceNumber || '';
+  }
+
+  pendingOfflineAssignmentStudentSummary(request: PendingOfflineAssignment): string {
+    const students = request.studentIds || [];
+    if (!students.length) {
+      return 'Khong ro hoc sinh';
+    }
+    return students
+      .map((student: any) => {
+        if (typeof student === 'string') {
+          return student;
+        }
+        return `${student.fullName}${student.studentCode ? ` (${student.studentCode})` : ''}`;
+      })
+      .join(', ');
+  }
+
+  pendingOfflineAssignmentStatusLabel(request: PendingOfflineAssignment): string {
+    switch (request.status) {
+      case 'REJECTED':
+        return 'Da tu choi';
+      case 'APPROVED':
+        return 'Da duyet';
+      case 'PENDING':
+      default:
+        return 'Cho duyet';
+    }
+  }
+
+  pendingOfflineAssignmentStatusClass(request: PendingOfflineAssignment): string {
+    switch (request.status) {
+      case 'REJECTED':
+        return 'rejected';
+      case 'APPROVED':
+        return 'approved';
+      case 'PENDING':
+      default:
+        return 'pending';
+    }
+  }
+
+  async approveOfflineAssignmentRequest(classItem: ClassItem, request: PendingOfflineAssignment) {
+    if (!confirm(`Duyet yeu cau them hoc sinh vao lop ${classItem.name}?`)) {
+      return;
+    }
+    const result = await this.classService.approvePendingOfflineAssignment(classItem._id, request._id);
+    if (!result.ok) {
+      alert(result.message || 'Khong the duyet yeu cau them hoc sinh');
+      return;
+    }
+    await this.reload();
+  }
+
+  async rejectOfflineAssignmentRequest(classItem: ClassItem, request: PendingOfflineAssignment) {
+    const reason = prompt('Ly do tu choi yeu cau (co the bo trong):', request.rejectionReason || '');
+    if (reason === null) {
+      return;
+    }
+    const result = await this.classService.rejectPendingOfflineAssignment(classItem._id, request._id, reason || undefined);
+    if (!result.ok) {
+      alert(result.message || 'Khong the tu choi yeu cau them hoc sinh');
+      return;
+    }
+    await this.reload();
   }
 
   selectedInvoice(): InvoiceItem | undefined {
@@ -1046,9 +1438,37 @@ export class ClassesComponent {
     return this.products().filter((product) => matchesProductMode(product, this.form.classMode));
   }
 
+  availableOfflineNameProducts(): ProductItem[] {
+    return this.products().filter((product) => matchesProductMode(product, 'OFFLINE'));
+  }
+
+  canSelectOfflineClassName(): boolean {
+    return this.form.classMode === 'OFFLINE'
+      && !this.isSaleAssignMode()
+      && !this.isSaleDurationEditMode()
+      && !this.isSaleConfigEditMode()
+      && !this.isSaleOfflineExistingMode();
+  }
+
+  selectedOfflineNameProductId(): string {
+    if (this.form.classMode !== 'OFFLINE') {
+      return '';
+    }
+    if (this.findOfflineNameProductById(this.form.productPackageId)) {
+      return this.form.productPackageId;
+    }
+    return this.findOfflineNameProductByName(this.form.name)?._id || '';
+  }
+
+  onOfflineNameProductChange(productId: string) {
+    const selectedProduct = this.findOfflineNameProductById(productId);
+    this.form.productPackageId = selectedProduct?._id || '';
+    this.form.name = selectedProduct?.name || '';
+  }
+
   onInvoiceChange(invoiceId: string) {
     this.form.invoiceId = invoiceId || '';
-    this.submitLabel = this.isSaleOfflineExistingMode() ? 'Them vao lop' : 'Luu';
+    this.submitLabel = this.isSaleOfflineExistingMode() ? 'Gui yeu cau' : 'Luu';
     const invoice = this.invoices().find((item) => item._id === invoiceId);
     if (!invoice) {
       this.form.studentIds = [];
@@ -1060,7 +1480,7 @@ export class ClassesComponent {
     const studentCode = invoice.studentId?.studentCode?.trim() || '';
     this.form.saleId = this.currentUserId();
     this.form.classMode = invoice.classType || 'ONLINE';
-    this.submitLabel = this.form.classMode === 'OFFLINE' ? 'Them vao lop' : 'Luu';
+    this.submitLabel = this.form.classMode === 'OFFLINE' ? 'Gui yeu cau' : 'Luu';
     this.form.studentIds = invoice.studentId?._id ? [invoice.studentId._id] : [];
 
     if (this.form.classMode === 'OFFLINE') {
@@ -1101,12 +1521,27 @@ export class ClassesComponent {
   private syncProductPackageSelection() {
     const selectedProduct = this.products().find((product) => product._id === this.form.productPackageId);
     if (matchesProductMode(selectedProduct, this.form.classMode)) {
+      if (this.form.classMode === 'OFFLINE') {
+        this.form.name = selectedProduct.name || this.form.name;
+      }
+      return;
+    }
+
+    const namedOfflineProduct = this.form.classMode === 'OFFLINE'
+      ? this.findOfflineNameProductByName(this.form.name)
+      : undefined;
+    if (namedOfflineProduct) {
+      this.form.productPackageId = namedOfflineProduct._id;
+      this.form.name = namedOfflineProduct.name || this.form.name;
       return;
     }
 
     const invoiceProduct = this.products().find((product) => product._id === this.selectedInvoice()?.productId);
     if (matchesProductMode(invoiceProduct, this.form.classMode)) {
       this.form.productPackageId = invoiceProduct._id;
+      if (this.form.classMode === 'OFFLINE') {
+        this.form.name = invoiceProduct.name || this.form.name;
+      }
       return;
     }
 
@@ -1115,6 +1550,23 @@ export class ClassesComponent {
       .find((product): product is ProductItem => matchesProductMode(product, this.form.classMode));
 
     this.form.productPackageId = studentProduct?._id || '';
+    if (this.form.classMode === 'OFFLINE' && studentProduct?.name) {
+      this.form.name = studentProduct.name;
+    }
+  }
+
+  private findOfflineNameProductById(productId?: string | null): ProductItem | undefined {
+    return this.availableOfflineNameProducts().find((product) => product._id === String(productId || ''));
+  }
+
+  private findOfflineNameProductByName(name?: string | null): ProductItem | undefined {
+    const normalizedName = String(name || '').trim().toLowerCase();
+    if (!normalizedName) {
+      return undefined;
+    }
+    return this.availableOfflineNameProducts().find(
+      (product) => String(product.name || '').trim().toLowerCase() === normalizedName,
+    );
   }
 
   teacherBaseForForm(): number {

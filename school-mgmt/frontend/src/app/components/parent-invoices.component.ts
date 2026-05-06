@@ -34,12 +34,14 @@ interface ParentInvoicesResponse {
 
 const STATUS_LABELS: Record<string, string> = {
   APPROVED: 'Đã thanh toán',
+  PAID: 'Đã thanh toán',
   PENDING_APPROVAL: 'Chờ duyệt',
   REJECTED: 'Từ chối',
 };
 
 const STATUS_COLORS: Record<string, string> = {
   APPROVED: '#10b981',
+  PAID: '#10b981',
   PENDING_APPROVAL: '#f59e0b',
   REJECTED: '#ef4444',
 };

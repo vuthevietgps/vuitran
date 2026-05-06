@@ -471,7 +471,7 @@ describe("EnrollmentService.processApprovedOrder", () => {
     expect(result.success).toBe(true);
   });
 
-  it("splits an INSTALLMENT_3 order into three invoice-create calls for a single item", async () => {
+  it("creates exactly one invoice per item even when a legacy installment plan exists on the order", async () => {
     const mockOrder = {
       _id: "order-id",
       orderCode: "ORD-2026-INSTALL-001",
@@ -510,17 +510,9 @@ describe("EnrollmentService.processApprovedOrder", () => {
         isNew: true,
       }),
     };
-    const invoiceIds = [
-      new Types.ObjectId().toHexString(),
-      new Types.ObjectId().toHexString(),
-      new Types.ObjectId().toHexString(),
-    ];
+    const invoiceId = new Types.ObjectId().toHexString();
     const invoicesService = {
-      createInvoiceForOrder: jest
-        .fn()
-        .mockResolvedValueOnce(invoiceIds[0])
-        .mockResolvedValueOnce(invoiceIds[1])
-        .mockResolvedValueOnce(invoiceIds[2]),
+      createInvoiceForOrder: jest.fn().mockResolvedValue(invoiceId),
     };
     const eventEmitter = { emit: jest.fn() };
     const mockSession = {
@@ -541,22 +533,20 @@ describe("EnrollmentService.processApprovedOrder", () => {
     const result = await service.processApprovedOrder("order-id", approver);
 
     expect(result.success).toBe(true);
-    expect(invoicesService.createInvoiceForOrder).toHaveBeenCalledTimes(3);
-    expect(
-      invoicesService.createInvoiceForOrder.mock.calls.map((call: any[]) => call[1].paymentRound),
-    ).toEqual([1, 2, 3]);
-    expect(
-      invoicesService.createInvoiceForOrder.mock.calls.map((call: any[]) => call[1].invoiceNumber),
-    ).toEqual([
-      "INV-INSTALL-001-1",
-      "INV-INSTALL-001-2",
-      "INV-INSTALL-001-3",
-    ]);
-    expect(
-      invoicesService.createInvoiceForOrder.mock.calls.map((call: any[]) => call[1].amount),
-    ).toEqual([1_000_000, 1_000_000, 1_000_000]);
-    expect(
-      invoicesService.createInvoiceForOrder.mock.calls.map((call: any[]) => call[0].paymentDate.toISOString().slice(0, 10)),
-    ).toEqual(["2026-04-11", "2026-05-11", "2026-06-11"]);
+    expect(invoicesService.createInvoiceForOrder).toHaveBeenCalledTimes(1);
+    expect(invoicesService.createInvoiceForOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        _id: "order-id",
+      }),
+      expect.objectContaining({
+        invoiceNumber: "INV-INSTALL-001",
+        amount: 3_000_000,
+      }),
+      expect.any(String),
+      approver,
+      mockSession,
+    );
+    expect(invoicesService.createInvoiceForOrder.mock.calls[0][1].paymentRound).toBeUndefined();
+    expect(result.invoiceIds).toEqual([invoiceId]);
   });
 });

@@ -70,27 +70,39 @@ interface AttendanceInfo {
 
         <div class="webcam-section">
           <h3>Camera</h3>
-          <div class="video-container">
-            <video #videoElement autoplay playsinline></video>
+          <div class="video-container" [class.video-live]="cameraStarted() && !capturedImage()">
+            <video #videoElement autoplay playsinline muted></video>
             <canvas #canvasElement style="display: none;"></canvas>
+
+            <div
+              *ngIf="cameraStarted() && !capturedImage()"
+              class="live-capture-panel"
+              data-testid="attendance-live-actions"
+            >
+              <p class="live-capture-copy">
+                Ảnh sẽ được chụp ngay từ khung camera đang mở, không cần thoát ra trước.
+              </p>
+              <button
+                class="btn btn-success live-capture-button"
+                data-testid="attendance-capture-button"
+                [disabled]="submitting()"
+                (click)="captureAndSubmit()"
+              >
+                {{ submitting() ? 'Đang gửi điểm danh...' : '✅ Điểm danh ngay' }}
+              </button>
+            </div>
           </div>
           
           <div *ngIf="!cameraStarted()" class="camera-controls">
-            <button class="btn btn-primary" (click)="startCamera()">
+            <button class="btn btn-primary" data-testid="attendance-start-camera-button" (click)="startCamera()">
               📷 Bật camera
-            </button>
-          </div>
-
-          <div *ngIf="cameraStarted() && !capturedImage()" class="camera-controls">
-            <button class="btn btn-success" (click)="captureAndSubmit()">
-              ✅ Điểm danh ngay
             </button>
           </div>
 
           <div *ngIf="capturedImage()" class="preview-section">
             <h3>Ảnh đã chụp</h3>
             <img [src]="capturedImage()" alt="Captured" />
-            <p class="submitting-text">Đang gửi điểm danh...</p>
+            <p class="submitting-text">Đang chụp và gửi điểm danh...</p>
           </div>
         </div>
       </div>
@@ -216,19 +228,23 @@ interface AttendanceInfo {
 
     .video-container {
       position: relative;
-      background: #000;
-      border-radius: 12px;
+      background: #020617;
+      border-radius: 16px;
       overflow: hidden;
       margin-bottom: 1.5rem;
       max-width: 640px;
       margin-left: auto;
       margin-right: auto;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.22);
     }
 
     video {
       width: 100%;
+      min-height: 360px;
       height: auto;
       display: block;
+      object-fit: cover;
+      background: #000;
     }
 
     .camera-controls {
@@ -254,6 +270,13 @@ interface AttendanceInfo {
       box-shadow: 0 6px 12px rgba(0,0,0,0.15);
     }
 
+    .btn:disabled {
+      cursor: wait;
+      opacity: 0.8;
+      transform: none;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
     .btn-primary {
       background: #667eea;
       color: white;
@@ -264,6 +287,33 @@ interface AttendanceInfo {
       color: white;
       font-size: 1.5rem;
       padding: 1.5rem 3rem;
+    }
+
+    .live-capture-panel {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 2;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 2rem 1rem 1rem;
+      background: linear-gradient(180deg, rgba(2, 6, 23, 0) 0%, rgba(2, 6, 23, 0.9) 70%);
+    }
+
+    .live-capture-copy {
+      margin: 0;
+      color: white;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      max-width: 420px;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.45);
+    }
+
+    .live-capture-button {
+      width: min(100%, 320px);
     }
 
     .preview-section {
@@ -303,6 +353,35 @@ interface AttendanceInfo {
       background: white;
       border-radius: 8px;
     }
+
+    @media (max-width: 768px) {
+      .student-attendance-container {
+        padding: 1rem;
+      }
+
+      .attendance-header h1 {
+        font-size: 2rem;
+      }
+
+      .loading, .error-message, .success-message, .attendance-content {
+        padding: 1.5rem;
+      }
+
+      .info-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+      }
+
+      video {
+        min-height: 260px;
+      }
+
+      .btn-success {
+        font-size: 1.125rem;
+        padding: 1rem 1.5rem;
+      }
+    }
   `]
 })
 export class StudentAttendanceComponent implements OnInit {
@@ -314,6 +393,7 @@ export class StudentAttendanceComponent implements OnInit {
   attendanceInfo = signal<AttendanceInfo | null>(null);
   cameraStarted = signal(false);
   capturedImage = signal('');
+  submitting = signal(false);
   submitted = signal(false);
   submittedAt = signal<Date | null>(null);
 
@@ -348,6 +428,12 @@ export class StudentAttendanceComponent implements OnInit {
   }
 
   async startCamera() {
+    const video = this.videoElement.nativeElement;
+    this.error.set('');
+    this.cameraStarted.set(false);
+    this.capturedImage.set('');
+    this.submitting.set(false);
+    this.stopCameraStream();
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ 
         video: { 
@@ -357,16 +443,30 @@ export class StudentAttendanceComponent implements OnInit {
         } 
       });
       
-      this.videoElement.nativeElement.srcObject = this.stream;
+      this.prepareInlineVideo(video);
+      video.srcObject = this.stream;
+      await video.play();
+      await this.waitForVideoReady(video);
       this.cameraStarted.set(true);
     } catch (error) {
+      this.stopCameraStream();
+      this.cameraStarted.set(false);
       this.error.set('Không thể truy cập camera. Vui lòng cho phép quyền truy cập camera.');
     }
   }
 
   async captureAndSubmit() {
+    if (this.submitting()) {
+      return;
+    }
+
     const video = this.videoElement.nativeElement;
     const canvas = this.canvasElement.nativeElement;
+    if (!video.videoWidth || !video.videoHeight) {
+      return;
+    }
+
+    this.submitting.set(true);
     
     // Giảm kích thước ảnh xuống tối đa 800px width để giảm dung lượng
     const maxWidth = 800;
@@ -385,13 +485,14 @@ export class StudentAttendanceComponent implements OnInit {
       this.capturedImage.set(imageBase64);
       
       // Stop camera
-      if (this.stream) {
-        this.stream.getTracks().forEach(track => track.stop());
-      }
+      this.stopCameraStream();
       
       // Submit attendance
       await this.submitAttendance(imageBase64);
+      return;
     }
+
+    this.submitting.set(false);
   }
 
   async submitAttendance(imageBase64: string) {
@@ -408,6 +509,8 @@ export class StudentAttendanceComponent implements OnInit {
       this.error.set(error?.error?.message || error?.message || 'Có lỗi xảy ra khi gửi điểm danh');
       this.capturedImage.set(''); // Reset to allow retry
       this.cameraStarted.set(false);
+    } finally {
+      this.submitting.set(false);
     }
   }
 
@@ -434,9 +537,39 @@ export class StudentAttendanceComponent implements OnInit {
   }
 
   ngOnDestroy() {
-    // Clean up camera stream
+    this.stopCameraStream();
+  }
+
+  private prepareInlineVideo(video: HTMLVideoElement) {
+    video.muted = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute('autoplay', 'true');
+    video.setAttribute('muted', 'true');
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+  }
+
+  private async waitForVideoReady(video: HTMLVideoElement) {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      return;
+    }
+
+    await new Promise<void>(resolve => {
+      const timeoutId = window.setTimeout(() => resolve(), 800);
+      const handleLoadedData = () => {
+        window.clearTimeout(timeoutId);
+        resolve();
+      };
+
+      video.addEventListener('loadeddata', handleLoadedData, { once: true });
+    });
+  }
+
+  private stopCameraStream() {
     if (this.stream) {
       this.stream.getTracks().forEach(track => track.stop());
+      this.stream = null;
     }
   }
 }

@@ -216,3 +216,74 @@ describe('OrdersService payment frames', () => {
     expect((service as any).buildPaymentFrames('FULL', 3_000_000, '2026-04-11')).toEqual([]);
   });
 });
+
+describe('OrdersService update owner resolution', () => {
+  it('keeps current sale owner and clears linked parent/student when edit payload sends null', async () => {
+    const currentSaleId = new Types.ObjectId();
+    const existingParentId = new Types.ObjectId();
+    const existingStudentId = new Types.ObjectId();
+    const order = {
+      _id: new Types.ObjectId().toHexString(),
+      orderCode: 'ORD-2026-0002',
+      status: OrderStatus.DRAFT,
+      saleId: currentSaleId,
+      saleName: 'Sale A',
+      parentUserId: existingParentId,
+      existingStudentId,
+    };
+    const orderModel = {
+      findById: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(order),
+      }),
+      findByIdAndUpdate: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          ...order,
+          parentUserId: null,
+          existingStudentId: null,
+        }),
+      }),
+    };
+    const userModel = {
+      findOne: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue({
+            _id: currentSaleId,
+            fullName: 'Sale A',
+            email: 'sale.a@school.local',
+          }),
+        }),
+      }),
+    };
+    const marketingAttributionService = {
+      upsertParentAttribution: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = buildService({
+      orderModel,
+      userModel,
+      marketingAttributionService,
+    });
+
+    await service.update(
+      order._id,
+      {
+        parentUserId: null,
+        existingStudentId: null,
+      } as any,
+      {
+        sub: new Types.ObjectId().toHexString(),
+        role: 'OPS',
+        email: 'ops@school.local',
+        fullName: 'Ops',
+      } as any,
+    );
+
+    expect(userModel.findOne).toHaveBeenCalledWith({
+      _id: currentSaleId.toHexString(),
+      role: 'SALE',
+    });
+    const updatePayload = orderModel.findByIdAndUpdate.mock.calls[0][1];
+    expect(updatePayload.parentUserId).toBeNull();
+    expect(updatePayload.existingStudentId).toBeNull();
+    expect(updatePayload.saleName).toBe('Sale A');
+  });
+});

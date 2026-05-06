@@ -65,7 +65,7 @@ const STATUS_OPTIONS: TrialEnrollmentStatus[] = ['PENDING_TRIAL', 'WAITING_DECIS
         <strong>{{ summary().waiting }}</strong>
       </article>
       <article class="summary-card success">
-        <span class="summary-label">Da chot</span>
+        <span class="summary-label">Da duoc duyet hoc thu</span>
         <strong>{{ summary().converted }}</strong>
       </article>
       <article class="summary-card danger">
@@ -711,7 +711,7 @@ export class TrialEnrollmentsComponent implements OnInit {
   }
 
   canTeacherPaidOnly(item: TrialEnrollmentItem): boolean {
-    return this.isDecisionRole() && item.status === 'WAITING_DECISION';
+    return false;
   }
 
   isActionLoading(item: TrialEnrollmentItem): boolean {
@@ -885,7 +885,7 @@ export class TrialEnrollmentsComponent implements OnInit {
         this.pageFeedback.set({ type: 'error', message: result.message || 'Khong the chuyen doi hoc thu' });
         return;
       }
-      this.pageFeedback.set({ type: 'success', message: 'Da chuyen hoc thu thanh hoc vien chinh thuc' });
+      this.pageFeedback.set({ type: 'success', message: 'Da duoc duyet hoc thu va chuyen thanh hoc vien chinh thuc' });
       await this.reload();
     } finally {
       this.actionLoadingId.set(null);
@@ -910,27 +910,17 @@ export class TrialEnrollmentsComponent implements OnInit {
   }
 
   async teacherPaidOnly(item: TrialEnrollmentItem): Promise<void> {
-    if (!this.canTeacherPaidOnly(item)) return;
-    this.pageFeedback.set(null);
-    this.actionLoadingId.set(item._id);
-    try {
-      const result = await this.trialService.teacherPaidOnly(item._id, item.decisionNotes);
-      if (!result.ok) {
-        this.pageFeedback.set({ type: 'error', message: result.message || 'Khong the chot tra luong giao vien' });
-        return;
-      }
-      this.pageFeedback.set({ type: 'success', message: 'Da chot trial khong tiep tuc nhung van tra luong giao vien' });
-      await this.reload();
-    } finally {
-      this.actionLoadingId.set(null);
-    }
+    this.pageFeedback.set({
+      type: 'error',
+      message: 'Logic hoc thu hien tai khong ho tro che do tra luong giao vien rieng khi phu huynh khong hoc tiep',
+    });
   }
 
   statusLabel(status: string): string {
     const labels: Record<string, string> = {
       PENDING_TRIAL: 'Cho hoc thu',
       WAITING_DECISION: 'Cho quyet dinh',
-      CONVERTED: 'Da chot',
+      CONVERTED: 'Da duoc duyet hoc thu',
       REJECTED: 'Khong tiep tuc',
     };
     return labels[status] || status;

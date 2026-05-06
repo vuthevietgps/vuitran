@@ -1,5 +1,14 @@
 ﻿node_modules/
 dist/
+.claude/
+.dev-logs/
+frontend-ui-evidence/
+runtime-logs/
+showcase-artifacts/
+test-results/
+test-videos/
+tmp-tts/
+mongo-data/
 .env
 .env.local
 .env.development.local
@@ -10,5 +19,7 @@ yarn-debug.log*
 yarn-error.log*
 .DS_Store
 *.log
+*.new
+checklist*.pdf
 uploads/
 .vscode/settings.json

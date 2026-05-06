@@ -14,10 +14,11 @@ import {
 } from './schemas/attendance.schema';
 import { Classroom, ClassDocument, ClassMode } from '../classes/schemas/class.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
-import { Session, SessionDocument } from '../sessions/schemas/session.schema';
-import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
+import { Session, SessionDocument, SessionType } from '../sessions/schemas/session.schema';
+import { Invoice, InvoiceDocument, InvoiceStatus } from '../invoices/schemas/invoice.schema';
 import { dayRange } from '../common/utils/date.utils';
 import { ClassLean, OFFLINE_MIN_TEACHER_PAYOUT, isCountedAttendanceStatus } from './attendance.utils';
+import { getClassPricingConfigAt, getDurationForStudentAt } from '../classes/student-config.utils';
 
 @Injectable()
 export class AttendanceSessionBridgeService {
@@ -41,33 +42,36 @@ export class AttendanceSessionBridgeService {
     classId: Types.ObjectId,
     durationMinutes: number,
     classroom: ClassLean,
+    effectiveAt?: Date,
   ): Promise<number> {
-    const snapshot = (classroom as any)?.pricingSnapshot || {};
-    const snapshotPerMinuteRate = Number(snapshot.perMinuteRate ?? 0);
-    if (snapshotPerMinuteRate > 0) {
-      return Math.round(snapshotPerMinuteRate * durationMinutes);
+    const classPricing = getClassPricingConfigAt(classroom, effectiveAt);
+    if (classPricing.perMinuteRate > 0) {
+      return Math.round(classPricing.perMinuteRate * durationMinutes);
     }
 
-    const snapshotBaseDuration = Number(
-      snapshot.referenceDuration ??
-        (classroom as any).baseDuration ??
-        (classroom as any).sessionDuration ??
-        60,
-    );
-    const snapshotPricePerSession = Number(
-      snapshot.pricePerSession ?? (classroom as any).pricePerSession ?? 0,
-    );
-    if (snapshotBaseDuration > 0 && snapshotPricePerSession > 0) {
-      const ratio = durationMinutes / snapshotBaseDuration;
-      return Math.round(snapshotPricePerSession * ratio);
+    if (classPricing.baseDuration > 0 && classPricing.pricePerSession > 0) {
+      const ratio = durationMinutes / classPricing.baseDuration;
+      return Math.round(classPricing.pricePerSession * ratio);
+    }
+
+    const invoiceFilter: Record<string, unknown> = {
+      studentId,
+      classId,
+      status: 'APPROVED',
+    };
+    if (effectiveAt) {
+      const endOfDay = new Date(effectiveAt);
+      endOfDay.setHours(23, 59, 59, 999);
+      invoiceFilter['createdAt'] = { $lte: endOfDay };
     }
 
     const invoice = await this.invoiceModel
       .findOne({
-        studentId,
-        classId,
-        status: 'APPROVED',
-        perMinuteRate: { $gt: 0 },
+        ...invoiceFilter,
+        $or: [
+          { perMinuteRate: { $gt: 0 } },
+          { pricePerSession: { $gt: 0 }, referenceDuration: { $gt: 0 } },
+        ],
       })
       .sort('-createdAt')
       .select('perMinuteRate referenceDuration pricePerSession')
@@ -77,11 +81,107 @@ export class AttendanceSessionBridgeService {
       return Math.round(invoice.perMinuteRate * durationMinutes);
     }
 
-    const baseDuration =
-      (classroom as any).baseDuration ?? (classroom as any).sessionDuration ?? 60;
-    const pricePerSession = (classroom as any).pricePerSession ?? 0;
-    const ratio = durationMinutes / baseDuration;
-    return Math.round(pricePerSession * ratio);
+    const invoiceBaseDuration = Number(invoice?.referenceDuration ?? 0);
+    const invoicePricePerSession = Number(invoice?.pricePerSession ?? 0);
+    if (invoiceBaseDuration > 0 && invoicePricePerSession > 0) {
+      const ratio = durationMinutes / invoiceBaseDuration;
+      return Math.round(invoicePricePerSession * ratio);
+    }
+
+    const fallbackBaseDuration = Number((classroom as any).baseDuration ?? 0)
+      || Number((classroom as any).sessionDuration ?? 0)
+      || 60;
+    const fallbackPricePerSession = Number((classroom as any).pricePerSession ?? 0);
+    const ratio = durationMinutes / fallbackBaseDuration;
+    return Math.round(fallbackPricePerSession * ratio);
+  }
+
+  private async shouldUseApprovedTrialSession(params: {
+    studentId: Types.ObjectId;
+    classId: Types.ObjectId;
+    effectiveAt: Date;
+    mongoSession?: ClientSession;
+  }): Promise<boolean> {
+    const { studentId, classId, effectiveAt, mongoSession } = params;
+    const endOfDay = new Date(effectiveAt);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    let query = this.invoiceModel
+      .findOne({
+        studentId,
+        classId,
+        status: InvoiceStatus.APPROVED,
+        trialSessionsRemaining: { $gt: 0 },
+        createdAt: { $lte: endOfDay },
+      })
+      .select(
+        'trialSessionsRemaining sessionsRemaining bonusSessionsRemaining amount pricePerSession',
+      )
+      .sort({ paymentDate: 1, createdAt: 1 });
+    if (mongoSession) {
+      query = query.session(mongoSession);
+    }
+
+    const invoice = await query.lean();
+    if (!invoice) {
+      return false;
+    }
+
+    const paidSessionsRemaining = Number((invoice as any)?.sessionsRemaining ?? 0);
+    const bonusSessionsRemaining = Number((invoice as any)?.bonusSessionsRemaining ?? 0);
+    const amount = Number((invoice as any)?.amount ?? 0);
+
+    return paidSessionsRemaining <= 0
+      && bonusSessionsRemaining <= 0
+      && amount <= 0;
+  }
+
+  private resolveDurationMinutes(
+    classroom: ClassLean,
+    studentId: Types.ObjectId,
+    effectiveAt: Date,
+  ): number {
+    const studentDuration = getDurationForStudentAt(
+      classroom,
+      studentId.toString(),
+      effectiveAt,
+    );
+    if (Number(studentDuration.sessionDuration) > 0) {
+      return Number(studentDuration.sessionDuration);
+    }
+
+    const classPricing = getClassPricingConfigAt(classroom, effectiveAt);
+    if (Number(classPricing.sessionDuration) > 0) {
+      return Number(classPricing.sessionDuration);
+    }
+
+    return Number((classroom as any).sessionDuration ?? 0)
+      || Number((classroom as any).baseDuration ?? 0)
+      || 60;
+  }
+
+  private resolveTeacherPayout(
+    classroom: ClassLean,
+    effectiveAt: Date,
+    durationMinutes: number,
+    substitutePayRate?: number,
+  ): number {
+    if (substitutePayRate !== undefined) {
+      return substitutePayRate;
+    }
+
+    const classPricing = getClassPricingConfigAt(classroom, effectiveAt);
+    if ((classroom as any).classMode === ClassMode.OFFLINE) {
+      return Number(classPricing.teacherPayPerStudent ?? 0);
+    }
+
+    const referenceDuration = Number(classPricing.baseDuration ?? 0) || 60;
+    const teacherPayPerSession = Number(classPricing.teacherPayPerSession ?? 0);
+    if (referenceDuration > 0 && teacherPayPerSession > 0) {
+      return Math.round((teacherPayPerSession * durationMinutes) / referenceDuration);
+    }
+
+    return Number((classroom as any).teacherPayPerSession ?? 0);
   }
 
   /**
@@ -130,7 +230,8 @@ export class AttendanceSessionBridgeService {
       ),
     );
 
-    const perStudentTeacherPay = Number((classroom as any).teacherPayPerStudent ?? 0);
+    const classPricing = getClassPricingConfigAt(classroom, date);
+    const perStudentTeacherPay = Number(classPricing.teacherPayPerStudent ?? 0);
 
     if (uniqueSessionIds.length === 0) {
       return {
@@ -239,17 +340,19 @@ export class AttendanceSessionBridgeService {
       const mongoSession = outerSession ?? await this.connection.startSession();
       const ownsTransaction = !outerSession;
       const range = dayRange(date);
-      const duration =
-        (classroom as any).sessionDuration ?? (classroom as any).baseDuration ?? 60;
-
-      let teacherPayout: number;
-      if (substitutePayRate !== undefined) {
-        teacherPayout = substitutePayRate;
-      } else if ((classroom as any).classMode === ClassMode.OFFLINE) {
-        teacherPayout = (classroom as any).teacherPayPerStudent ?? 0;
-      } else {
-        teacherPayout = (classroom as any).teacherPayPerSession ?? 0;
-      }
+      const duration = this.resolveDurationMinutes(classroom, studentId, date);
+      const teacherPayout = this.resolveTeacherPayout(
+        classroom,
+        date,
+        duration,
+        substitutePayRate,
+      );
+      const isApprovedTrialSession = await this.shouldUseApprovedTrialSession({
+        studentId,
+        classId,
+        effectiveAt: date,
+        mongoSession,
+      });
 
       try {
         if (ownsTransaction) {
@@ -275,6 +378,9 @@ export class AttendanceSessionBridgeService {
           if (existingSession.teacherId?.toString() !== teacherId.toString()) {
             existingSession.teacherId = teacherId as any;
           }
+          if (Number(existingSession.durationMinutes ?? 0) !== Number(duration)) {
+            existingSession.durationMinutes = duration;
+          }
           if (Number(existingSession.teacherPayout ?? 0) !== Number(teacherPayout)) {
             existingSession.teacherPayout = teacherPayout;
           }
@@ -288,10 +394,41 @@ export class AttendanceSessionBridgeService {
             existingSession.teacherId = teacherId as any;
             shouldSave = true;
           }
+          if (Number(existingSession.durationMinutes ?? 0) !== Number(duration)) {
+            existingSession.durationMinutes = duration;
+            shouldSave = true;
+          }
           if (Number(existingSession.teacherPayout ?? 0) !== Number(teacherPayout)) {
             existingSession.teacherPayout = teacherPayout;
             shouldSave = true;
           }
+        }
+
+        if (isApprovedTrialSession && !existingSession.trialEnrollmentId) {
+          if (existingSession.sessionType !== SessionType.TRIAL) {
+            existingSession.sessionType = SessionType.TRIAL as any;
+            shouldSave = true;
+          }
+          if (existingSession.trialTeacherPaidOnly) {
+            existingSession.trialTeacherPaidOnly = false;
+            shouldSave = true;
+          }
+          if ((existingSession as any).trialRejectedNoPay) {
+            (existingSession as any).trialRejectedNoPay = false;
+            shouldSave = true;
+          }
+        }
+
+        const refreshedAmountCharged = await this.resolveAmountCharged(
+          studentId,
+          classId,
+          duration,
+          classroom,
+          date,
+        );
+        if (Number(existingSession.amountCharged ?? 0) !== Number(refreshedAmountCharged)) {
+          existingSession.amountCharged = refreshedAmountCharged;
+          shouldSave = true;
         }
 
         if (shouldSave) {
@@ -308,6 +445,7 @@ export class AttendanceSessionBridgeService {
         classId,
         duration,
         classroom,
+        date,
       );
 
       const student = await this.studentModel
@@ -336,12 +474,15 @@ export class AttendanceSessionBridgeService {
               studentId,
               teacherId,
               parentUserId: (student as any)?.parentUserId,
-              sessionType: 'REGULAR',
+              sessionType: isApprovedTrialSession ? SessionType.TRIAL : SessionType.REGULAR,
               scheduledDate: date,
               durationMinutes: duration,
               sessionNumber,
               amountCharged,
               teacherPayout,
+              trialConverted: false,
+              trialTeacherPaidOnly: false,
+              trialRejectedNoPay: false,
               status: 'TEACHER_COMPLETED',
               confirmation: { teacherCompletedAt: new Date() },
               autoConfirmAfterHours: 48,
@@ -395,6 +536,12 @@ export class AttendanceSessionBridgeService {
             cancelled.durationMinutes = duration;
             cancelled.amountCharged = amountCharged;
             cancelled.teacherPayout = teacherPayout;
+            if (isApprovedTrialSession && !cancelled.trialEnrollmentId) {
+              cancelled.sessionType = SessionType.TRIAL as any;
+              cancelled.trialConverted = false;
+              cancelled.trialTeacherPaidOnly = false;
+              (cancelled as any).trialRejectedNoPay = false;
+            }
             cancelled.autoConfirmAfterHours = 48;
             cancelled.cancellation = undefined as any;
             cancelled.confirmation = cancelled.confirmation ?? ({} as any);
@@ -578,6 +725,9 @@ export class AttendanceSessionBridgeService {
       let sessionCreated = false;
       const isPresent = isCountedAttendanceStatus(status);
       let sessionId: Types.ObjectId | null = null;
+      const resolvedSessionDuration = isPresent
+        ? this.resolveDurationMinutes(classroom, studentObjectId, date)
+        : null;
 
       if (isPresent) {
         sessionId = await this.syncSessionForAttendance({
@@ -609,8 +759,9 @@ export class AttendanceSessionBridgeService {
 
       if (sessionId) {
         update.$set.sessionId = sessionId;
+        update.$set.sessionDuration = resolvedSessionDuration;
       } else {
-        update.$unset = { sessionId: 1 };
+        update.$unset = { sessionId: 1, sessionDuration: 1 };
       }
 
       if (isPresent && checkedBy) {

@@ -172,6 +172,7 @@ export class OrdersService {
         } else {
           delete normalizedItem.invoiceNumber;
         }
+        delete normalizedItem.paymentRound;
         return normalizedItem;
       }),
     };
@@ -397,11 +398,8 @@ export class OrdersService {
 
   async create(dto: CreateOrderDto, user: JwtPayload): Promise<Order> {
     const normalizedDto = this.normalizeOrderPayload(dto);
-    (normalizedDto as any).paymentFrames = this.buildPaymentFrames(
-      (normalizedDto as any).paymentPlan,
-      (normalizedDto as any).finalAmount,
-      (normalizedDto as any).paymentDate,
-    );
+    (normalizedDto as any).paymentPlan = PaymentPlan.FULL;
+    (normalizedDto as any).paymentFrames = [];
     await this.assertOrderInvoiceNumbersAvailable(normalizedDto.items);
 
     const orderCode = await this.generateOrderCode();
@@ -588,19 +586,29 @@ export class OrdersService {
       delete updateData.saleCommission;
     }
 
+    const hasOwn = (key: string) =>
+      Object.prototype.hasOwnProperty.call(updateData, key);
     const shouldResolveOwner =
-      updateData.saleId !== undefined ||
-      updateData.leadId !== undefined ||
-      updateData.existingStudentId !== undefined;
+      hasOwn("saleId") ||
+      hasOwn("leadId") ||
+      hasOwn("existingStudentId") ||
+      hasOwn("parentUserId");
 
     if (shouldResolveOwner) {
       const saleOwner = await this.resolveOrderSaleOwner(
         {
-          leadId: updateData.leadId ?? o.leadId?.toString?.(),
-          existingStudentId:
-            updateData.existingStudentId ?? o.existingStudentId?.toString?.(),
-          parentUserId: updateData.parentUserId ?? o.parentUserId?.toString?.(),
-          saleId: updateData.saleId,
+          leadId: hasOwn("leadId")
+            ? updateData.leadId ?? undefined
+            : o.leadId?.toString?.(),
+          existingStudentId: hasOwn("existingStudentId")
+            ? updateData.existingStudentId ?? undefined
+            : o.existingStudentId?.toString?.(),
+          parentUserId: hasOwn("parentUserId")
+            ? updateData.parentUserId ?? undefined
+            : o.parentUserId?.toString?.(),
+          saleId: hasOwn("saleId")
+            ? updateData.saleId ?? undefined
+            : o.saleId?.toString?.(),
         },
         user,
       );
@@ -608,15 +616,8 @@ export class OrdersService {
       updateData.saleName = saleOwner.saleName;
     }
 
-    const mergedOrderState = {
-      ...o,
-      ...updateData,
-    };
-    updateData.paymentFrames = this.buildPaymentFrames(
-      mergedOrderState.paymentPlan,
-      mergedOrderState.finalAmount,
-      mergedOrderState.paymentDate,
-    );
+    updateData.paymentPlan = PaymentPlan.FULL;
+    updateData.paymentFrames = [];
 
     const updated = await this.orderModel
       .findByIdAndUpdate(id, updateData, { new: true })

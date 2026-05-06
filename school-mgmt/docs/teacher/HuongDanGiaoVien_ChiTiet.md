@@ -267,6 +267,7 @@ Tạo link điểm danh:
 2. Hệ thống sinh URL dạng `/student-attendance/:token`
 3. Link có thời hạn sử dụng
 4. Có thể copy gửi cho học sinh/phụ huynh
+5. Khi học sinh/phụ huynh mở link, sau khi bấm `Bật camera` thì nút `Điểm danh ngay` sẽ hiện ngay trên khung camera và hệ thống chụp trực tiếp từ khung preview, không cần thoát camera trước.
 
 Lưu ý vận hành:
 

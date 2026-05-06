@@ -403,6 +403,10 @@ export class AttendanceService {
     return this.queryService.getClassesWithStudents(user);
   }
 
+  async getAttendanceReportClasses(user: JwtPayload, search?: string, limit?: number) {
+    return this.queryService.getAttendanceReportClasses(user, search, limit);
+  }
+
   // Delegate to AttendanceLinkService
   async generateAttendanceLink(dto: GenerateAttendanceLinkDto, user: JwtPayload) {
     return this.linkService.generateAttendanceLink(dto, user);

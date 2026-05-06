@@ -292,18 +292,19 @@ async function main() {
       token: director.token,
       expectedStatus: [200],
     });
-    const rows = Array.isArray(report.data) ? report.data : [];
+    const rows = Array.isArray(report.data?.rows) ? report.data.rows : [];
     const row = rows.find((item) => normalizeId(item._id) === studentId || item.studentCode === studentCode);
     ensure(row, 'Created student not found in student report');
     ensure(Number(row.totalAttendance) === 1, `Expected totalAttendance=1, got ${row.totalAttendance}`);
     ensure(row.parentName === `Parent ${suffix}`, 'Parent name mismatch in report');
+    ensure(report.data?.meta?.total >= 1, 'Student report meta.total missing or invalid');
 
     const byClass = await request({
       reqPath: `/students/report?classId=${classId}`,
       token: accounting.token,
       expectedStatus: [200],
     });
-    const classRows = Array.isArray(byClass.data) ? byClass.data : [];
+    const classRows = Array.isArray(byClass.data?.rows) ? byClass.data.rows : [];
     ensure(classRows.length === 1, `Expected 1 row for class filter, got ${classRows.length}`);
     ensure(Number(classRows[0].totalAttendance) === 1, 'Class-filtered report did not carry attendance count');
   });

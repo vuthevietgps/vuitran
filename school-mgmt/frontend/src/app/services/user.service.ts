@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -36,6 +36,16 @@ export interface ParentAdsAttributionItem {
   lastConfirmedAt?: string | null;
   notes?: string;
   matchedBy?: 'PARENT_USER' | 'PHONE_FALLBACK' | 'UNASSIGNED';
+}
+
+export interface ParentManagementListResponse {
+  data: UserItem[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
 }
 
 export interface CreateUserPayload {
@@ -83,6 +93,16 @@ export interface CreateUserSalaryConfigPayload {
 @Injectable({ providedIn: 'root' })
 export class UserService {
   private http = inject(HttpClient);
+
+  private buildParams(params: Record<string, string | number | null | undefined>): HttpParams {
+    let httpParams = new HttpParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        httpParams = httpParams.set(key, String(value));
+      }
+    });
+    return httpParams;
+  }
 
   async list(): Promise<UserItem[]> {
     try {
@@ -133,6 +153,31 @@ export class UserService {
       );
     } catch {
       return [];
+    }
+  }
+
+  async listParentsManagement(params: {
+    search?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<ParentManagementListResponse> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ParentManagementListResponse>(`${environment.apiBase}/users/parents/management`, {
+          params: this.buildParams(params),
+          withCredentials: true,
+        }),
+      );
+    } catch {
+      return {
+        data: [],
+        meta: {
+          total: 0,
+          page: 1,
+          limit: Number(params.limit) || 50,
+          totalPages: 1,
+        },
+      };
     }
   }
 

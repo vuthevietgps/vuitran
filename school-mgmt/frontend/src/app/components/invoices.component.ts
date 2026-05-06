@@ -1,11 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { Component, computed, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import {
   INVOICE_COURSE_STATUS_LABELS,
   InvoiceCourseStatus,
+  InvoiceManagementSummary,
   InvoiceItem,
   InvoiceService,
   InvoiceUpsertPayload,
@@ -38,12 +39,30 @@ import {
   imports: [CommonModule, FormsModule, FlowGuideComponent],
   templateUrl: './invoices.component.html',
   styleUrls: ['./invoices.component.css'],
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class InvoicesComponent {
+  private readonly defaultSummary: InvoiceManagementSummary = {
+    total: 0,
+    onlineAmount: 0,
+    offlineAmount: 0,
+    approvedAmount: 0,
+    pendingCount: 0,
+  };
+
   items = signal<InvoiceItem[]>([]);
   students = signal<StudentItem[]>([]);
   sales = signal<UserItem[]>([]);
   classes = signal<ClassItem[]>([]);
+  loading = signal(false);
+  lookupsLoading = signal(false);
+  lookupsLoaded = signal(false);
+  summary = signal<InvoiceManagementSummary>({ ...this.defaultSummary });
+  totalItems = signal(0);
+  totalPages = signal(1);
+  currentPage = signal(1);
+  readonly pageSizeOptions = [25, 50, 100];
+  pageSize = signal(25);
 
   // Filter signals
   keyword = signal('');
@@ -74,16 +93,10 @@ export class InvoicesComponent {
   currentUserName = '';
   editingInvoice: InvoiceItem | null = null;
   approvingInvoice = signal<InvoiceItem | null>(null);
-  readonly invoicePageSize = 40;
-  readonly invoicePageStep = 40;
-  readonly invoiceScrollThreshold = 140;
   readonly courseStatusOptions = Object.entries(INVOICE_COURSE_STATUS_LABELS).map(([value, label]) => ({
     value: value as InvoiceCourseStatus,
     label,
   }));
-  invoiceVisibleCount = signal(this.invoicePageSize);
-  visibleInvoices = computed(() => this.filtered().slice(0, this.invoiceVisibleCount()));
-  hasMoreInvoices = computed(() => this.filtered().length > this.visibleInvoices().length);
 
   pendingTopUps = signal<any[]>([]);
   loadingTopUps = signal(false);
@@ -110,7 +123,6 @@ export class InvoicesComponent {
     private http: HttpClient,
   ) {
     void this.reload();
-    void this.loadLookups();
 
     const user = this.auth.userSignal();
     const role = user?.role;
@@ -148,82 +160,6 @@ export class InvoicesComponent {
       );
   }
 
-  // Computed: filtered invoice list
-  filtered = computed(() => {
-    let result = this.items();
-
-    const kw = this.keyword().trim().toLowerCase();
-    if (kw) {
-      result = result.filter(i =>
-        i.invoiceNumber.toLowerCase().includes(kw) ||
-        i.studentId?.fullName?.toLowerCase().includes(kw)
-      );
-    }
-
-    const parentKw = this.parentFilter().trim().toLowerCase();
-    if (parentKw) {
-      result = result.filter(i =>
-        i.studentId?.parentName?.toLowerCase().includes(parentKw) ||
-        i.studentId?.parentPhone?.toLowerCase().includes(parentKw)
-      );
-    }
-
-    const saleKw = this.saleFilter().trim().toLowerCase();
-    if (saleKw) {
-      result = result.filter(i =>
-        i.saleId?.fullName?.toLowerCase().includes(saleKw)
-      );
-    }
-
-    const ct = this.classTypeFilter();
-    if (ct) {
-      result = result.filter(i => i.classType === ct);
-    }
-
-    const st = this.statusFilter();
-    if (st) {
-      result = result.filter(i => i.status === st);
-    }
-
-    const courseStatus = this.courseStatusFilter();
-    if (courseStatus) {
-      result = result.filter(i => (i.courseStatus || 'NEW') === courseStatus);
-    }
-
-    const from = this.dateFrom();
-    if (from) {
-      const fromDate = new Date(from);
-      result = result.filter(i => i.paymentDate && new Date(i.paymentDate) >= fromDate);
-    }
-
-    const to = this.dateTo();
-    if (to) {
-      const toDate = new Date(to);
-      toDate.setHours(23, 59, 59, 999);
-      result = result.filter(i => i.paymentDate && new Date(i.paymentDate) <= toDate);
-    }
-
-    return result;
-  });
-
-  // Computed: summary stats based on filtered list
-  summary = computed(() => {
-    const data = this.filtered();
-    return {
-      total: data.length,
-      onlineAmount: data
-        .filter(i => i.classType === 'ONLINE')
-        .reduce((s, i) => s + i.amount, 0),
-      offlineAmount: data
-        .filter(i => i.classType === 'OFFLINE')
-        .reduce((s, i) => s + i.amount, 0),
-      approvedAmount: data
-        .filter(i => i.status === 'APPROVED' || i.status === 'PAID')
-        .reduce((s, i) => s + i.amount, 0),
-      pendingCount: data.filter(i => i.status === 'PENDING_APPROVAL').length,
-    };
-  });
-
   hasActiveFilters = computed(() =>
     !!this.keyword() || !!this.parentFilter() || !!this.saleFilter() ||
     !!this.classTypeFilter() || !!this.statusFilter() ||
@@ -233,45 +169,37 @@ export class InvoicesComponent {
 
   onKeywordChange(value: string): void {
     this.keyword.set(value);
-    this.resetInvoicePaging();
   }
 
   onParentFilterChange(value: string): void {
     this.parentFilter.set(value);
-    this.resetInvoicePaging();
   }
 
   onSaleFilterChange(value: string): void {
     this.saleFilter.set(value);
-    this.resetInvoicePaging();
   }
 
   onClassTypeFilterChange(value: string): void {
     this.classTypeFilter.set(value);
-    this.resetInvoicePaging();
   }
 
   onStatusFilterChange(value: string): void {
     this.statusFilter.set(value);
-    this.resetInvoicePaging();
   }
 
   onCourseStatusFilterChange(value: string): void {
     this.courseStatusFilter.set(value);
-    this.resetInvoicePaging();
   }
 
   onDateFromChange(value: string): void {
     this.dateFrom.set(value);
-    this.resetInvoicePaging();
   }
 
   onDateToChange(value: string): void {
     this.dateTo.set(value);
-    this.resetInvoicePaging();
   }
 
-  clearFilters(): void {
+  async clearFilters(): Promise<void> {
     this.keyword.set('');
     this.parentFilter.set('');
     this.saleFilter.set('');
@@ -280,24 +208,88 @@ export class InvoicesComponent {
     this.courseStatusFilter.set('');
     this.dateFrom.set('');
     this.dateTo.set('');
-    this.resetInvoicePaging();
+    this.currentPage.set(1);
+    await this.reload();
+  }
+
+  invoiceSessionCount(invoice: InvoiceItem): number {
+    return Math.max(0, Number(invoice.sessions || 0))
+      + Math.max(0, Number(invoice.bonusSessions || 0))
+      + Math.max(0, Number(invoice.trialSessions || 0));
+  }
+
+  invoiceClassTotalSessions(invoice: InvoiceItem): string {
+    const total = Number(invoice.totalSessionsByStudentClass || 0);
+    return total && total > 0 ? String(total) : '-';
   }
 
   async reload(): Promise<void> {
-    const data = await this.invoiceService.list();
-    this.items.set(data);
-    this.resetInvoicePaging();
+    this.loading.set(true);
+    try {
+      const response = await this.invoiceService.listManagement({
+        keyword: this.keyword().trim(),
+        parentKeyword: this.parentFilter().trim(),
+        saleKeyword: this.saleFilter().trim(),
+        classType: (this.classTypeFilter() || undefined) as 'ONLINE' | 'OFFLINE' | undefined,
+        status: (this.statusFilter() || undefined) as any,
+        courseStatus: (this.courseStatusFilter() || undefined) as InvoiceCourseStatus | undefined,
+        dateFrom: this.dateFrom() || undefined,
+        dateTo: this.dateTo() || undefined,
+        page: this.currentPage(),
+        limit: this.pageSize(),
+      });
+      this.items.set(response.data || []);
+      this.summary.set(response.summary || { ...this.defaultSummary });
+      this.totalItems.set(Number(response.meta?.total || 0));
+      this.totalPages.set(Math.max(1, Number(response.meta?.totalPages || 1)));
+      this.currentPage.set(Number(response.meta?.page || 1));
+    } finally {
+      this.loading.set(false);
+    }
   }
 
   async loadLookups(): Promise<void> {
-    const [studs, salesList, classList] = await Promise.all([
-      this.studentService.list(),
-      this.userService.listSales(),
-      this.classService.list(),
-    ]);
-    this.students.set(studs);
-    this.sales.set(salesList);
-    this.classes.set(classList);
+    if (this.lookupsLoaded() || this.lookupsLoading()) {
+      return;
+    }
+
+    this.lookupsLoading.set(true);
+    try {
+      const [studs, salesList, classList] = await Promise.all([
+        this.studentService.list(),
+        this.userService.listSales(),
+        this.classService.list(),
+      ]);
+      this.students.set(studs);
+      this.sales.set(salesList);
+      this.classes.set(classList);
+      this.lookupsLoaded.set(true);
+    } finally {
+      this.lookupsLoading.set(false);
+    }
+  }
+
+  async applyFilters(): Promise<void> {
+    this.currentPage.set(1);
+    await this.reload();
+  }
+
+  async onPageSizeChange(value: number): Promise<void> {
+    this.pageSize.set(Number(value) || 25);
+    this.currentPage.set(1);
+    await this.reload();
+  }
+
+  async goToPage(page: number): Promise<void> {
+    if (page < 1 || page > this.totalPages() || page === this.currentPage()) {
+      return;
+    }
+    this.currentPage.set(page);
+    await this.reload();
+  }
+
+  trackInvoiceById(_index: number, invoice: InvoiceItem): string {
+    return invoice._id;
   }
 
   onStudentChange(): void {
@@ -322,7 +314,8 @@ export class InvoicesComponent {
     }
   }
 
-  openModal(): void {
+  async openModal(): Promise<void> {
+    await this.loadLookups();
     this.editingInvoice = null;
     this.form = blankForm();
     // Pre-fill sale for SALE role
@@ -335,10 +328,11 @@ export class InvoicesComponent {
     this.showModal.set(true);
   }
 
-  edit(invoice: InvoiceItem): void {
+  async edit(invoice: InvoiceItem): Promise<void> {
     if (!this.canEditInvoice(invoice)) {
       return;
     }
+    await this.loadLookups();
     this.editingInvoice = invoice;
     this.form = {
       invoiceNumber: invoice.invoiceNumber,
@@ -364,17 +358,6 @@ export class InvoicesComponent {
 
   closeModal(): void {
     this.showModal.set(false);
-  }
-
-  onInvoiceTableScroll(event: Event): void {
-    const container = event.currentTarget as HTMLElement | null;
-    if (!container || !this.hasMoreInvoices()) return;
-
-    const nearBottom =
-      container.scrollTop + container.clientHeight >= container.scrollHeight - this.invoiceScrollThreshold;
-    if (nearBottom) {
-      this.loadNextInvoiceBatch();
-    }
   }
 
   async submit(): Promise<void> {
@@ -458,20 +441,26 @@ export class InvoicesComponent {
     const invoice = this.approvingInvoice();
     if (!invoice) return;
     this.approveUploadError.set('');
+    const approvalProofRequired = this.isApprovalProofRequired(invoice);
 
-    if (!invoice.receiptImage) {
+    if (approvalProofRequired && !invoice.receiptImage) {
       this.approveUploadError.set('Vui lòng bổ sung hóa đơn sale upload trước khi duyệt');
       return;
     }
 
-    if (!this.approveImage) {
+    if (approvalProofRequired && !this.approveImage) {
       this.approveUploadError.set('Vui lòng tải hóa đơn đối ứng trước khi duyệt');
       return;
     }
 
     if (!confirm(`Duyệt hóa đơn ${invoice.invoiceNumber}? Ví phụ huynh chỉ được cộng sau khi đối chiếu đủ hóa đơn sale và hóa đơn đối ứng.`)) return;
 
-    const result = await this.invoiceService.approve(invoice._id, 'APPROVE', undefined, this.approveImage);
+    const result = await this.invoiceService.approve(
+      invoice._id,
+      'APPROVE',
+      undefined,
+      approvalProofRequired ? this.approveImage : undefined,
+    );
     if (!result.ok) {
       this.approveUploadError.set(result.message || 'Không thể duyệt hóa đơn');
       return;
@@ -549,21 +538,21 @@ export class InvoicesComponent {
     return this.canApproveInvoices && ['APPROVED', 'PAID'].includes(invoice.status);
   }
 
+  isApprovalProofRequired(invoice: InvoiceItem | null | undefined): boolean {
+    if (!invoice) return true;
+    return !(
+      invoice.classType === 'OFFLINE'
+      && Number(invoice.amount || 0) === 0
+      && Number(invoice.trialSessions || 0) > 0
+    );
+  }
+
   showImageModal(imageUrl: string): void {
     this.modalImage.set(imageUrl);
   }
 
   closeImageModal(): void {
     this.modalImage.set('');
-  }
-
-  loadNextInvoiceBatch(): void {
-    if (!this.hasMoreInvoices()) return;
-    this.invoiceVisibleCount.update((count) => count + this.invoicePageStep);
-  }
-
-  private resetInvoicePaging(): void {
-    this.invoiceVisibleCount.set(this.invoicePageSize);
   }
 
   private ensureSelectedClassStillValid(): void {

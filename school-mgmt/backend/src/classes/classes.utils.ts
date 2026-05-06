@@ -4,6 +4,7 @@ import {
   ClassMode,
   ClassUpdateRequestStatus,
   DurationSnapshotSource,
+  OfflineAssignmentRequestStatus,
   PendingClassUpdateType,
   ClassCoTeacherRole,
   PricingSnapshotSource,
@@ -282,6 +283,44 @@ export function filterClassStudentsByIds(classroom: any, allowedStudentIds: Set<
   };
 }
 
+export function getPendingOfflineAssignmentStudentIds(
+  classroom: any,
+  status = OfflineAssignmentRequestStatus.PENDING,
+): string[] {
+  const requests = Array.isArray(classroom?.pendingOfflineAssignments)
+    ? classroom.pendingOfflineAssignments
+    : [];
+  const studentIds = new Set<string>();
+  for (const request of requests) {
+    if (request?.status !== status) {
+      continue;
+    }
+    const requestStudentIds = Array.isArray(request?.studentIds) ? request.studentIds : [];
+    for (const studentId of requestStudentIds) {
+      const normalizedStudentId = objectIdToString(studentId);
+      if (normalizedStudentId) {
+        studentIds.add(normalizedStudentId);
+      }
+    }
+  }
+  return Array.from(studentIds);
+}
+
+export function countReservedOfflineStudents(classroom: any): number {
+  const reservedStudentIds = new Set<string>();
+  const currentStudents = Array.isArray(classroom?.students) ? classroom.students : [];
+  for (const student of currentStudents) {
+    const studentId = objectIdToString(student);
+    if (studentId) {
+      reservedStudentIds.add(studentId);
+    }
+  }
+  for (const studentId of getPendingOfflineAssignmentStudentIds(classroom)) {
+    reservedStudentIds.add(studentId);
+  }
+  return reservedStudentIds.size;
+}
+
 // ══════════════════════════════════════════════════════════════════
 // AUTHORIZATION CHECKS
 // ══════════════════════════════════════════════════════════════════
@@ -291,15 +330,14 @@ export function assertCanReviewPendingUpdate(pendingSaleUpdate: any, actor?: Jwt
     throw new ForbiddenException('Ban khong co quyen duyet thay doi lop hoc');
   }
 
-  if (
-    pendingSaleUpdate?.requestType === PendingClassUpdateType.DURATION_CHANGE
-    && actor.role !== Role.DIRECTOR
-  ) {
-    throw new ForbiddenException('Chi Director moi duoc duyet thay doi thoi luong lop hoc');
-  }
-
   if (pendingSaleUpdate?.status && pendingSaleUpdate.status !== ClassUpdateRequestStatus.PENDING) {
     throw new BadRequestException('Yeu cau sua lop hoc khong con cho duyet');
+  }
+}
+
+export function assertCanReviewPendingOfflineAssignment(actor?: JwtPayload): void {
+  if (!actor || !isManagerRole(actor.role)) {
+    throw new ForbiddenException('Ban khong co quyen duyet yeu cau them hoc sinh offline');
   }
 }
 
@@ -395,21 +433,62 @@ export function buildDurationSnapshotData(classState: any): {
   pricePerSession: number;
   teacherPayPerSession: number;
   teacherPayPerStudent: number;
+};
+export function buildDurationSnapshotData(
+  classState: any,
+  options: {
+    preferPendingValues?: boolean;
+  },
+): {
+  baseDuration: number;
+  sessionDuration: number;
+  pricePerSession: number;
+  teacherPayPerSession: number;
+  teacherPayPerStudent: number;
+};
+export function buildDurationSnapshotData(
+  classState: any,
+  options?: {
+    preferPendingValues?: boolean;
+  },
+): {
+  baseDuration: number;
+  sessionDuration: number;
+  pricePerSession: number;
+  teacherPayPerSession: number;
+  teacherPayPerStudent: number;
 } {
   const classPricing = getClassPricingConfigAt(classState);
   const snapshot = classState?.pricingSnapshot || {};
+  const preferPendingValues = options?.preferPendingValues === true;
   const baseDuration =
     pickFirstPositiveNumber(
-      classState?.baseDuration,
-      classPricing.baseDuration,
-      snapshot.referenceDuration,
+      ...(preferPendingValues
+        ? [
+            classState?.baseDuration,
+            classPricing.baseDuration,
+            snapshot.referenceDuration,
+          ]
+        : [
+            classPricing.baseDuration,
+            snapshot.referenceDuration,
+            classState?.baseDuration,
+          ]),
       60,
     ) || 60;
   const sessionDuration =
     pickFirstPositiveNumber(
-      classState?.sessionDuration,
-      classPricing.sessionDuration,
-      snapshot.sessionDuration,
+      ...(preferPendingValues
+        ? [
+            classState?.sessionDuration,
+            classPricing.sessionDuration,
+            snapshot.sessionDuration,
+          ]
+        : [
+            classPricing.sessionDuration,
+            snapshot.sessionDuration,
+            classState?.sessionDuration,
+          ]),
       baseDuration,
     )
     || baseDuration;
@@ -418,19 +497,43 @@ export function buildDurationSnapshotData(classState: any): {
     baseDuration,
     sessionDuration,
     pricePerSession: roundMoneyToThousand(pickFirstPositiveNumber(
-      classState?.pricePerSession,
-      classPricing.pricePerSession,
-      snapshot.pricePerSession,
+      ...(preferPendingValues
+        ? [
+            classState?.pricePerSession,
+            classPricing.pricePerSession,
+            snapshot.pricePerSession,
+          ]
+        : [
+            classPricing.pricePerSession,
+            snapshot.pricePerSession,
+            classState?.pricePerSession,
+          ]),
     )),
     teacherPayPerSession: roundMoneyDownToThousand(pickFirstPositiveNumber(
-      classState?.teacherPayPerSession,
-      classPricing.teacherPayPerSession,
-      snapshot.teacherPayPerSession,
+      ...(preferPendingValues
+        ? [
+            classState?.teacherPayPerSession,
+            classPricing.teacherPayPerSession,
+            snapshot.teacherPayPerSession,
+          ]
+        : [
+            classPricing.teacherPayPerSession,
+            snapshot.teacherPayPerSession,
+            classState?.teacherPayPerSession,
+          ]),
     )),
     teacherPayPerStudent: roundMoneyDownToThousand(pickFirstPositiveNumber(
-      classState?.teacherPayPerStudent,
-      classPricing.teacherPayPerStudent,
-      snapshot.teacherPayPerStudent,
+      ...(preferPendingValues
+        ? [
+            classState?.teacherPayPerStudent,
+            classPricing.teacherPayPerStudent,
+            snapshot.teacherPayPerStudent,
+          ]
+        : [
+            classPricing.teacherPayPerStudent,
+            snapshot.teacherPayPerStudent,
+            classState?.teacherPayPerStudent,
+          ]),
     )),
   };
 }
@@ -501,37 +604,37 @@ export function resolveCurrentClassPricingState(classroom: any, sourceInvoice?: 
   const classPricing = getClassPricingConfigAt(classroom);
   const pricingSnapshot = classroom?.pricingSnapshot || {};
   const baseDuration = pickFirstPositiveNumber(
-    classroom?.baseDuration,
     classPricing.baseDuration,
     pricingSnapshot.referenceDuration,
     sourceInvoice?.referenceDuration,
+    classroom?.baseDuration,
     60,
   ) || 60;
   const sessionDuration = pickFirstPositiveNumber(
-    classroom?.sessionDuration,
     classPricing.sessionDuration,
     pricingSnapshot.sessionDuration,
+    classroom?.sessionDuration,
     baseDuration,
   ) || baseDuration;
   const pricePerSession = roundMoneyToThousand(pickFirstPositiveNumber(
-    classroom?.pricePerSession,
     classPricing.pricePerSession,
     pricingSnapshot.pricePerSession,
     sourceInvoice?.pricePerSession,
+    classroom?.pricePerSession,
     classroom?.revenuePerStudent,
   ));
   const teacherPayPerSession = roundMoneyDownToThousand(pickFirstPositiveNumber(
-    classroom?.teacherPayPerSession,
     classPricing.teacherPayPerSession,
     pricingSnapshot.teacherPayPerSession,
     sourceInvoice?.teacherPayPerSession,
+    classroom?.teacherPayPerSession,
     classroom?.teacherSalaryCost,
   ));
   const teacherPayPerStudent = roundMoneyDownToThousand(pickFirstPositiveNumber(
-    classroom?.teacherPayPerStudent,
     classPricing.teacherPayPerStudent,
     pricingSnapshot.teacherPayPerStudent,
     sourceInvoice?.teacherPayPerStudent,
+    classroom?.teacherPayPerStudent,
   ));
 
   return {

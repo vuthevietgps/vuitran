@@ -10,6 +10,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  Query,
   Req,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -17,6 +18,7 @@ import { InvoicesService } from './invoices.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
 import { UpdateInvoiceDto } from './dto/update-invoice.dto';
 import { ApproveInvoiceDto } from './dto/approve-invoice.dto';
+import { QueryInvoiceManagementDto } from './dto/query-invoice-management.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -39,6 +41,15 @@ export class InvoicesController {
   @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
   findAll(@Req() req: AuthenticatedRequest) {
     return this.invoicesService.findAll(req.user);
+  }
+
+  @Get('management')
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE)
+  findManagement(
+    @Query() query: QueryInvoiceManagementDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.invoicesService.findManagement(query, req.user);
   }
 
   /** PH xem hóa đơn của tất cả con */

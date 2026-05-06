@@ -116,6 +116,10 @@ export class InvoicesOrderService {
       saleCommission,
       classId: item.selectedClassId ? new Types.ObjectId(String(item.selectedClassId)) : undefined,
       requestedClassId: item.selectedClassId ? new Types.ObjectId(String(item.selectedClassId)) : undefined,
+      requestedClassCode:
+        typeof item.requestedClassCode === 'string' && item.requestedClassCode.trim()
+          ? item.requestedClassCode.trim().toUpperCase()
+          : undefined,
       requestedTeacherId: item.preferredTeacherId ? new Types.ObjectId(String(item.preferredTeacherId)) : undefined,
       createNewClassWhenApproved: !!item.createNewClassWhenApproved,
       classType,

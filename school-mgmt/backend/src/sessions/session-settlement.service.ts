@@ -77,6 +77,11 @@ export class SessionSettlementService {
               $or: [
                 { isPaid: true, amountCharged: { $gt: 0 } },
                 { isBonusSession: true, referenceAmountCharged: { $gt: 0 } },
+                {
+                  sessionType: SessionType.TRIAL,
+                  trialConverted: true,
+                  durationMinutes: { $gt: 0 },
+                },
               ],
             },
             {
@@ -90,7 +95,9 @@ export class SessionSettlementService {
         { $set: { invoiceConsumptionApplied: true } },
         { new: true },
       )
-      .select('_id studentId classId amountCharged referenceAmountCharged isBonusSession sessionType')
+      .select(
+        '_id studentId classId amountCharged referenceAmountCharged durationMinutes isBonusSession sessionType',
+      )
       .lean();
 
     if (!claim) return;
@@ -98,11 +105,6 @@ export class SessionSettlementService {
     const isBonusSession = !!(claim as any).isBonusSession;
     const coverageAmount = this.getSessionCoverageAmount(claim);
     const resetPayload = this.buildInvoiceConsumptionReset();
-
-    if (coverageAmount <= 0) {
-      await this.sessionModel.updateOne({ _id: sid }, resetPayload);
-      return;
-    }
 
     let allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining' | 'trialSessionsRemaining' =
       isBonusSession ? 'bonusSessionsRemaining' : 'sessionsRemaining';
@@ -113,17 +115,29 @@ export class SessionSettlementService {
     }
 
     try {
-      const consumptionResult = await this.consumeInvoiceAllowanceForAmount(
-        claim,
-        allowanceField,
-      );
+      const consumptionResult =
+        (claim as any).sessionType === SessionType.TRIAL
+          ? await this.consumeInvoiceAllowanceForUnits(claim, allowanceField)
+          : coverageAmount > 0
+            ? await this.consumeInvoiceAllowanceForAmount(
+                claim,
+                allowanceField,
+              )
+            : null;
+
+      if (!consumptionResult) {
+        await this.sessionModel.updateOne({ _id: sid }, resetPayload);
+        return;
+      }
 
       if (consumptionResult.consumedAmount <= 0) {
-        await this.sessionModel.updateOne({ _id: sid }, resetPayload);
-        this.logger.warn(
-          `Invoice consumption skipped: no APPROVED invoice with ${allowanceLabel} for session ${sid.toString()}`,
-        );
-        return;
+        if (consumptionResult.consumedUnits <= 0) {
+          await this.sessionModel.updateOne({ _id: sid }, resetPayload);
+          this.logger.warn(
+            `Invoice consumption skipped: no APPROVED invoice with ${allowanceLabel} for session ${sid.toString()}`,
+          );
+          return;
+        }
       }
 
       await this.sessionModel.updateOne(
@@ -151,7 +165,10 @@ export class SessionSettlementService {
             },
       );
 
-      if (consumptionResult.remainingAmount > 0) {
+      if (
+        consumptionResult.remainingAmount > 0
+        || consumptionResult.remainingUnits > 0
+      ) {
         this.logger.warn(
           `Invoice consumption partial for session ${sid.toString()}: consumed ${Math.round(consumptionResult.consumedAmount)} / ${Math.round(coverageAmount)}`,
         );
@@ -391,6 +408,7 @@ export class SessionSettlementService {
     consumedUnits: number;
     consumedAmount: number;
     remainingAmount: number;
+    remainingUnits: number;
   }> {
     const coverageAmount = this.getSessionCoverageAmount(claim);
     let remainingAmount = coverageAmount;
@@ -410,7 +428,7 @@ export class SessionSettlementService {
       .lean();
 
     if (!invoices.length) {
-      return { primaryInvoiceId, consumedUnits, consumedAmount, remainingAmount };
+      return { primaryInvoiceId, consumedUnits, consumedAmount, remainingAmount, remainingUnits: 0 };
     }
 
     for (const inv of invoices) {
@@ -478,6 +496,120 @@ export class SessionSettlementService {
       consumedUnits: this.roundTo2(consumedUnits),
       consumedAmount: Math.round(consumedAmount),
       remainingAmount,
+      remainingUnits: 0,
+    };
+  }
+
+  private async consumeInvoiceAllowanceForUnits(
+    claim: any,
+    allowanceField: 'sessionsRemaining' | 'bonusSessionsRemaining' | 'trialSessionsRemaining',
+  ): Promise<{
+    primaryInvoiceId: Types.ObjectId | null;
+    consumedUnits: number;
+    consumedAmount: number;
+    remainingAmount: number;
+    remainingUnits: number;
+  }> {
+    let remainingMinutes = this.toSafeNumber(claim?.durationMinutes, 0);
+    let consumedUnits = 0;
+    let primaryInvoiceId: Types.ObjectId | null = null;
+
+    if (remainingMinutes <= 0) {
+      return {
+        primaryInvoiceId,
+        consumedUnits: 0,
+        consumedAmount: 0,
+        remainingAmount: 0,
+        remainingUnits: 0,
+      };
+    }
+
+    const invoices = await this.invoiceModel
+      .find({
+        studentId: claim.studentId,
+        classId: claim.classId,
+        status: InvoiceStatus.APPROVED,
+        [allowanceField]: { $gt: 0 },
+      })
+      .sort({ paymentDate: 1, createdAt: 1 })
+      .select(`_id ${allowanceField} referenceDuration`)
+      .lean();
+
+    for (const inv of invoices) {
+      if (remainingMinutes <= 0) {
+        break;
+      }
+
+      const referenceDuration = Math.max(
+        1,
+        this.toSafeNumber((inv as any).referenceDuration, remainingMinutes) || 60,
+      );
+      const invoiceRemainingUnits = this.toSafeNumber((inv as any)[allowanceField], 0);
+      if (invoiceRemainingUnits <= 0) {
+        continue;
+      }
+
+      const availableMinutes = this.roundTo2(invoiceRemainingUnits * referenceDuration);
+      const minutesToConsume = Math.min(remainingMinutes, availableMinutes);
+      let unitsToConsume = this.roundTo2(minutesToConsume / referenceDuration);
+      if (unitsToConsume <= 0) {
+        continue;
+      }
+
+      let updateResult = await this.invoiceModel.updateOne(
+        { _id: (inv as any)._id, [allowanceField]: { $gte: unitsToConsume } },
+        { $inc: { [allowanceField]: -unitsToConsume } },
+      );
+
+      if (!updateResult.modifiedCount) {
+        const latestInvoice = await this.invoiceModel
+          .findById((inv as any)._id)
+          .select(`${allowanceField} referenceDuration`)
+          .lean();
+        const latestReferenceDuration = Math.max(
+          1,
+          this.toSafeNumber((latestInvoice as any)?.referenceDuration, referenceDuration) || 60,
+        );
+        const latestRemainingUnits = this.toSafeNumber((latestInvoice as any)?.[allowanceField], 0);
+        const latestAvailableMinutes = this.roundTo2(latestRemainingUnits * latestReferenceDuration);
+        const fallbackMinutes = Math.min(remainingMinutes, latestAvailableMinutes);
+        const fallbackUnits = this.roundTo2(fallbackMinutes / latestReferenceDuration);
+        if (fallbackUnits <= 0) {
+          continue;
+        }
+
+        updateResult = await this.invoiceModel.updateOne(
+          { _id: (inv as any)._id, [allowanceField]: { $gte: fallbackUnits } },
+          { $inc: { [allowanceField]: -fallbackUnits } },
+        );
+        if (!updateResult.modifiedCount) {
+          continue;
+        }
+
+        unitsToConsume = fallbackUnits;
+      }
+
+      if (!primaryInvoiceId) {
+        primaryInvoiceId = (inv as any)._id as Types.ObjectId;
+      }
+
+      consumedUnits += unitsToConsume;
+      remainingMinutes = Math.max(
+        0,
+        this.roundTo2(remainingMinutes - (unitsToConsume * referenceDuration)),
+      );
+    }
+
+    const remainingUnits = consumedUnits > 0
+      ? this.roundTo2(remainingMinutes / Math.max(1, this.toSafeNumber(claim?.durationMinutes, 60) || 60))
+      : 0;
+
+    return {
+      primaryInvoiceId,
+      consumedUnits: this.roundTo2(consumedUnits),
+      consumedAmount: 0,
+      remainingAmount: 0,
+      remainingUnits,
     };
   }
 
@@ -488,7 +620,7 @@ export class SessionSettlementService {
 
     if (session.sessionType === SessionType.TRIAL && !session.trialConverted) {
       this.logger.log(
-        `Session ${session._id} is TRIAL (not converted) - skipping wallet deduction, teacher will still be paid`,
+        `Session ${session._id} is TRIAL (not converted) - deferring wallet deduction until trial decision`,
       );
       return;
     }

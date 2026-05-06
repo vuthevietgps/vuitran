@@ -2,10 +2,10 @@
   <div class="page-header">
     <div>
       <p class="eyebrow">Landing Pages</p>
-      <h2>Quan ly landing page va tracking</h2>
-      <p class="subtext">Nhap pixel/tag ID, publish trang public va xem submission da dinh danh phu huynh, vi va ad group ra sao.</p>
+      <h2>Quản lý landing page và tracking</h2>
+      <p class="subtext">Nhập pixel hoặc tag ID, publish trang public, xem submission và tập hợp cả landing page hệ thống trên cùng một màn quản lý.</p>
     </div>
-    <button class="primary" *ngIf="canEdit()" (click)="openCreate()">Tao landing page</button>
+    <button class="primary" *ngIf="canEdit()" (click)="openCreate()">Tạo landing page</button>
   </div>
 
   <app-flow-guide featureKey="landing-pages"></app-flow-guide>
@@ -17,18 +17,158 @@
     <button [class.active]="activeTab() === 'submissions'" (click)="activeTab.set('submissions')">Submissions</button>
   </div>
 
-  <ng-container *ngIf="activeTab() === 'pages'">
+<ng-container *ngIf="activeTab() === 'pages'">
     <div class="toolbar">
       <div class="filters">
-        <input [(ngModel)]="pageSearch" placeholder="Tim theo ten, slug, code" />
-        <select [(ngModel)]="pageStatus">
-          <option value="">Tat ca trang thai</option>
-          <option value="DRAFT">Nhap</option>
-          <option value="ACTIVE">Hoat dong</option>
-          <option value="ARCHIVED">Luu tru</option>
+        <input [ngModel]="pageSearch()" (ngModelChange)="pageSearch.set($event)" placeholder="Tìm theo tên, slug, mã" />
+        <select [ngModel]="pageStatus()" (ngModelChange)="pageStatus.set($event)">
+          <option value="">Tất cả trạng thái</option>
+          <option value="DRAFT">Nháp</option>
+          <option value="ACTIVE">Hoạt động</option>
+          <option value="ARCHIVED">Lưu trữ</option>
         </select>
       </div>
     </div>
+
+    <div class="section-block">
+      <div class="section-heading">
+        <div>
+          <h3>Menu quản lý link landing page</h3>
+          <p>Tất cả link public được gom về đây để mở nhanh, copy nhanh và theo dõi theo đúng từng nhóm landing page.</p>
+        </div>
+        <span class="inline-note">{{ totalLandingLinks() }} link</span>
+      </div>
+
+      <div class="link-menu-grid">
+        <section class="link-menu-panel system-panel">
+          <div class="link-menu-heading">
+            <div>
+              <h4>Landing page hệ thống</h4>
+              <p>Cụm link chuẩn do hệ thống render sẵn cho ERP launch và các trang giới thiệu trọng điểm.</p>
+            </div>
+            <span class="inline-note">{{ filteredSystemPages().length }} trang</span>
+          </div>
+
+          <div class="link-menu-list" *ngIf="filteredSystemPages().length > 0; else emptySystemLinkMenu">
+            <article class="link-menu-card" *ngFor="let page of filteredSystemPages()">
+              <div class="link-menu-top">
+                <span class="badge active system">Hệ thống</span>
+                <span class="mono">{{ page.sourceCode }}</span>
+              </div>
+              <div class="title">{{ page.title }}</div>
+              <div class="hint">{{ page.summary }}</div>
+              <div class="link-menu-meta">
+                <span class="meta-chip">{{ page.sectionCount }} mục</span>
+                <span class="meta-chip">{{ page.milestoneCount }} mốc</span>
+                <span class="meta-chip">{{ page.roleSummary }}</span>
+              </div>
+              <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
+              <div class="link-menu-actions">
+                <a class="link-btn anchor-btn" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">Mở trang</a>
+                <button class="link-btn" (click)="copyPublicUrlBySlug(page.slug)">Copy link</button>
+              </div>
+            </article>
+          </div>
+          <ng-template #emptySystemLinkMenu>
+            <div class="empty-state compact">Không có landing page hệ thống nào khớp bộ lọc.</div>
+          </ng-template>
+        </section>
+
+        <section class="link-menu-panel dynamic-panel">
+          <div class="link-menu-heading">
+            <div>
+              <h4>Landing page động</h4>
+              <p>Các link được quản lý bằng API, có tracking, submit form và attribution riêng cho từng chiến dịch.</p>
+            </div>
+            <span class="inline-note">{{ filteredPages().length }} trang</span>
+          </div>
+
+          <div class="link-menu-list" *ngIf="filteredPages().length > 0; else emptyDynamicLinkMenu">
+            <article class="link-menu-card" *ngFor="let page of filteredPages()">
+              <div class="link-menu-top">
+                <span class="badge" [class.active]="page.status === 'ACTIVE'">{{ statusLabel(page.status) }}</span>
+                <span class="mono">{{ page.pageCode }}</span>
+              </div>
+              <div class="title">{{ page.name }}</div>
+              <div class="hint">{{ dynamicPageSummary(page) }}</div>
+              <div class="link-menu-meta">
+                <span class="meta-chip">{{ platformLabel(page.defaultPlatform) }}</span>
+                <span class="meta-chip">{{ page.defaultAdGroupName || 'Chưa gắn ad group' }}</span>
+              </div>
+              <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
+              <div class="link-menu-actions">
+                <a class="link-btn anchor-btn" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">Mở trang</a>
+                <button class="link-btn" (click)="copyPublicUrl(page)">Copy link</button>
+                <button class="link-btn" *ngIf="canEdit()" (click)="editPage(page)">Sửa</button>
+              </div>
+            </article>
+          </div>
+          <ng-template #emptyDynamicLinkMenu>
+            <div class="empty-state compact">Chưa có landing page động nào khớp bộ lọc.</div>
+          </ng-template>
+        </section>
+      </div>
+    </div>
+
+    <div class="section-block">
+      <div class="section-heading">
+        <div>
+          <h3>Landing page hệ thống</h3>
+          <p>Cụm ERP launch được tập hợp tại đây để preview, copy link và theo dõi chung với màn landing page.</p>
+        </div>
+        <span class="inline-note">{{ filteredSystemPages().length }} trang</span>
+      </div>
+
+      <table class="data-table" *ngIf="filteredSystemPages().length > 0; else emptySystemPages">
+        <thead>
+          <tr>
+            <th>Trang hệ thống</th>
+            <th>Public URL</th>
+            <th>Phạm vi</th>
+            <th>Nội dung</th>
+            <th>Trạng thái</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let page of filteredSystemPages()">
+            <td>
+              <div class="title">{{ page.title }}</div>
+              <div class="mono">{{ page.sourceCode }} | {{ page.publicPath }}</div>
+              <div class="hint">{{ page.summary }}</div>
+            </td>
+            <td>
+              <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
+            </td>
+            <td>
+              <div>{{ page.roleSummary }}</div>
+              <div class="mono">CTA: {{ page.primaryCta }}</div>
+            </td>
+            <td>
+              <div>{{ page.sectionCount }} mục | {{ page.milestoneCount }} mốc</div>
+              <div class="mono">Cụm ERP launch</div>
+            </td>
+            <td><span class="badge active system">Hệ thống</span></td>
+            <td class="actions">
+              <a class="link-btn anchor-btn" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">Mở trang</a>
+              <button class="link-btn" (click)="copyPublicUrlBySlug(page.slug)">Copy link</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <ng-template #emptySystemPages>
+        <div class="empty-state">Không có landing page hệ thống nào khớp bộ lọc.</div>
+      </ng-template>
+    </div>
+
+    <div class="section-block">
+      <div class="section-heading">
+        <div>
+          <h3>Landing page động</h3>
+          <p>Các trang được quản lý bằng API, có tracking, submit form và dữ liệu attribution riêng.</p>
+        </div>
+        <span class="inline-note">{{ filteredPages().length }} trang</span>
+      </div>
 
     <table class="data-table" *ngIf="filteredPages().length > 0; else emptyPages">
       <thead>
@@ -36,8 +176,8 @@
           <th>Trang</th>
           <th>Public URL</th>
           <th>Tracking</th>
-          <th>Mac dinh</th>
-          <th>Trang thai</th>
+          <th>Mặc định</th>
+          <th>Trạng thái</th>
           <th></th>
         </tr>
       </thead>
@@ -52,29 +192,30 @@
           </td>
           <td>{{ trackingSummary(page) }}</td>
           <td>
-            <div>{{ page.defaultAdGroupName || 'Khong gan ad group' }}</div>
+            <div>{{ page.defaultAdGroupName || 'Không gắn ad group' }}</div>
             <div class="mono">{{ platformLabel(page.defaultPlatform) }}</div>
           </td>
           <td><span class="badge" [class.active]="page.status === 'ACTIVE'">{{ statusLabel(page.status) }}</span></td>
           <td class="actions">
             <button class="link-btn" (click)="copyPublicUrl(page)">Copy link</button>
-            <button class="link-btn" *ngIf="canEdit()" (click)="editPage(page)">Sua</button>
-            <button class="link-btn danger" *ngIf="canDelete()" (click)="removePage(page)">Xoa</button>
+            <button class="link-btn" *ngIf="canEdit()" (click)="editPage(page)">Sửa</button>
+            <button class="link-btn danger" *ngIf="canDelete()" (click)="removePage(page)">Xóa</button>
           </td>
         </tr>
       </tbody>
     </table>
     <ng-template #emptyPages>
-      <div class="empty-state">Chua co landing page nao.</div>
+      <div class="empty-state">Chưa có landing page nào.</div>
     </ng-template>
+    </div>
   </ng-container>
 
   <ng-container *ngIf="activeTab() === 'submissions'">
     <div class="toolbar">
       <div class="filters">
-        <input [(ngModel)]="submissionSearch" placeholder="Tim theo phu huynh, hoc sinh, lead code" />
-        <select [(ngModel)]="submissionLandingPageId">
-          <option value="">Tat ca landing page</option>
+        <input [ngModel]="submissionSearch()" (ngModelChange)="submissionSearch.set($event)" placeholder="Tìm theo phụ huynh, học sinh, mã lead" />
+        <select [ngModel]="submissionLandingPageId()" (ngModelChange)="submissionLandingPageId.set($event)">
+          <option value="">Tất cả landing page</option>
           <option *ngFor="let page of pages()" [value]="page._id">{{ page.name }}</option>
         </select>
       </div>
@@ -84,9 +225,9 @@
       <thead>
         <tr>
           <th>Submission</th>
-          <th>Phu huynh</th>
+          <th>Phụ huynh</th>
           <th>Ad attribution</th>
-          <th>Match he thong</th>
+          <th>Ghép hệ thống</th>
           <th>Lead</th>
         </tr>
       </thead>
@@ -103,7 +244,7 @@
             <div>{{ submission.studentName || '-' }}</div>
           </td>
           <td>
-            <div>{{ submission.adGroupName || 'Chua map ad group' }}</div>
+            <div>{{ submission.adGroupName || 'Chưa map ad group' }}</div>
             <div class="mono">{{ platformLabel(submission.platform) }}</div>
             <div class="mono" *ngIf="submission.adRefParam">ref: {{ submission.adRefParam }}</div>
           </td>
@@ -113,7 +254,7 @@
             <div class="mono">wallet: {{ submission.matchedWalletId || '-' }}</div>
           </td>
           <td>
-            <div>{{ submission.leadCode || 'Khong tao lead' }}</div>
+            <div>{{ submission.leadCode || 'Không tạo lead' }}</div>
             <div class="mono" *ngIf="submission.tracking?.gclid">gclid</div>
             <div class="mono" *ngIf="submission.tracking?.fbclid">fbclid</div>
             <div class="mono" *ngIf="submission.tracking?.ttclid">ttclid</div>
@@ -122,54 +263,54 @@
       </tbody>
     </table>
     <ng-template #emptySubmissions>
-      <div class="empty-state">Chua co submission nao.</div>
+      <div class="empty-state">Chưa có submission nào.</div>
     </ng-template>
   </ng-container>
 </div>
 
 <div class="modal-backdrop" *ngIf="showModal()">
   <div class="modal">
-    <h3>{{ editingPage ? 'Sua landing page' : 'Tao landing page' }}</h3>
+    <h3>{{ editingPage ? 'Sửa landing page' : 'Tạo landing page' }}</h3>
 
-    <label>Ten landing page <input [(ngModel)]="form.name" /></label>
+    <label>Tên landing page <input [(ngModel)]="form.name" /></label>
     <label>Slug public <input [(ngModel)]="form.slug" placeholder="toan-12-chuyen-de" /></label>
     <label>
-      Trang thai
+      Trạng thái
       <select [(ngModel)]="form.status">
-        <option value="DRAFT">Nhap</option>
-        <option value="ACTIVE">Hoat dong</option>
-        <option value="ARCHIVED">Luu tru</option>
+        <option value="DRAFT">Nháp</option>
+        <option value="ACTIVE">Hoạt động</option>
+        <option value="ARCHIVED">Lưu trữ</option>
       </select>
     </label>
 
     <div class="grid two">
-      <label>Tieu de hero <input [(ngModel)]="form.heroTitle" /></label>
+      <label>Tiêu đề hero <input [(ngModel)]="form.heroTitle" /></label>
       <label>Subtitle hero <input [(ngModel)]="form.heroSubtitle" /></label>
     </div>
 
     <div class="grid two">
-      <label>Tieu de form <input [(ngModel)]="form.formTitle" /></label>
-      <label>Nut submit <input [(ngModel)]="form.submitButtonText" /></label>
+      <label>Tiêu đề form <input [(ngModel)]="form.formTitle" /></label>
+      <label>Nút submit <input [(ngModel)]="form.submitButtonText" /></label>
     </div>
 
-    <label>Mo ta form <textarea rows="2" [(ngModel)]="form.formDescription"></textarea></label>
-    <label>Thong diep bao mat <textarea rows="2" [(ngModel)]="form.privacyNotice"></textarea></label>
-    <label>Noi dung HTML <textarea rows="8" [(ngModel)]="form.bodyHtml"></textarea></label>
+    <label>Mô tả form <textarea rows="2" [(ngModel)]="form.formDescription"></textarea></label>
+    <label>Thông điệp bảo mật <textarea rows="2" [(ngModel)]="form.privacyNotice"></textarea></label>
+    <label>Nội dung HTML <textarea rows="8" [(ngModel)]="form.bodyHtml"></textarea></label>
 
     <div class="grid two">
       <label>
-        Platform mac dinh
+        Platform mặc định
         <select [(ngModel)]="form.defaultPlatform">
-          <option value="">Khong set</option>
+          <option value="">Không đặt</option>
           <option value="FACEBOOK">Facebook</option>
           <option value="GOOGLE">Google</option>
           <option value="TIKTOK">TikTok</option>
         </select>
       </label>
       <label>
-        Ad group mac dinh
+        Ad group mặc định
         <select [(ngModel)]="form.defaultAdGroupId" (ngModelChange)="onDefaultGroupChange()">
-          <option value="">Khong gan</option>
+          <option value="">Không gắn</option>
           <option *ngFor="let group of allGroups()" [value]="group._id">{{ group.name }} ({{ platformLabel(group.platform) }})</option>
         </select>
       </label>
@@ -177,13 +318,13 @@
 
     <label class="checkbox">
       <input type="checkbox" [(ngModel)]="form.autoCreateLead" />
-      <span>Tu dong tao lead khi co submit</span>
+      <span>Tự động tạo lead khi có submit</span>
     </label>
 
     <div class="section-title">Tracking IDs</div>
     <div class="grid two">
       <label>Meta Pixel ID <input [(ngModel)]="form.metaPixelId" /></label>
-      <label>Google Tag ID <input [(ngModel)]="form.googleTagId" placeholder="G-xxxx hoac GTM-xxxx" /></label>
+      <label>Google Tag ID <input [(ngModel)]="form.googleTagId" placeholder="G-xxxx hoặc GTM-xxxx" /></label>
       <label>Google Ads Conversion ID <input [(ngModel)]="form.googleAdsConversionId" placeholder="123456789" /></label>
       <label>Google Ads Conversion Label <input [(ngModel)]="form.googleAdsConversionLabel" /></label>
       <label>TikTok Pixel ID <input [(ngModel)]="form.tiktokPixelId" /></label>
@@ -194,15 +335,15 @@
     <label>Custom body HTML <textarea rows="4" [(ngModel)]="form.customBodyHtml"></textarea></label>
 
     <div class="grid two">
-      <label>Tieu de thanh cong <input [(ngModel)]="form.successTitle" /></label>
-      <label>Thong diep thanh cong <input [(ngModel)]="form.successMessage" /></label>
+      <label>Tiêu đề thành công <input [(ngModel)]="form.successTitle" /></label>
+      <label>Thông điệp thành công <input [(ngModel)]="form.successMessage" /></label>
     </div>
 
-    <label>Ghi chu van hanh <textarea rows="3" [(ngModel)]="form.notes"></textarea></label>
+    <label>Ghi chú vận hành <textarea rows="3" [(ngModel)]="form.notes"></textarea></label>
 
     <div class="modal-actions">
-      <button class="secondary" (click)="showModal.set(false)">Huy</button>
-      <button class="primary" [disabled]="loading()" (click)="savePage()">Luu</button>
+      <button class="secondary" (click)="showModal.set(false)">Hủy</button>
+      <button class="primary" [disabled]="loading()" (click)="savePage()">Lưu</button>
     </div>
   </div>
 </div>

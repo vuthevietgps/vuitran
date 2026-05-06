@@ -130,6 +130,13 @@ export interface ClassWithStudents {
   }>;
 }
 
+export interface AttendanceReportClassOption {
+  _id: string;
+  code: string;
+  name: string;
+  studentCount: number;
+}
+
 export interface BulkAttendancePayload {
   classId: string;
   date: string;
@@ -262,6 +269,23 @@ export class AttendanceService {
       return res;
     } catch (error) {
       console.error('Error loading classes with students:', error);
+      return [];
+    }
+  }
+
+  async getAttendanceReportClasses(
+    search?: string,
+    limit: number = 50,
+  ): Promise<AttendanceReportClassOption[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<AttendanceReportClassOption[]>(`${environment.apiBase}/attendance/report/classes`, {
+          params: this.buildParams({ search, limit }),
+          withCredentials: true,
+        }),
+      );
+    } catch (error) {
+      console.error('Error loading attendance report classes:', error);
       return [];
     }
   }

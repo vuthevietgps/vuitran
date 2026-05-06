@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { Req } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateParentAdsAttributionDto } from './dto/update-parent-ads-attribution.dto';
+import { QueryParentManagementDto } from './dto/query-parent-management.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
@@ -49,6 +50,15 @@ export class UsersController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.ACCOUNTING)
   findParents(@Req() req: AuthenticatedRequest) {
     return this.usersService.findParents(req.user);
+  }
+
+  @Get('parents/management')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.ACCOUNTING)
+  findParentsManagement(
+    @Query() query: QueryParentManagementDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.usersService.findParentsManagement(query, req.user);
   }
 
   @Get('me')

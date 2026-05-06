@@ -43,6 +43,7 @@ const PREFETCH_LOADERS: Partial<Record<Role, Loader[]>> = {
   [Role.SALE]: [
     () => import('../components/leads.component'),
     () => import('../components/orders.component'),
+    () => import('../components/classes.component'),
     () => import('../components/messages.component'),
     () => import('../components/sale-guide-landing.component'),
   ],

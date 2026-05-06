@@ -10,6 +10,7 @@ export interface SessionItem {
   studentId: { _id: string; fullName: string; studentCode?: string };
   teacherId: { _id: string; fullName: string; email?: string };
   parentUserId?: { _id: string; fullName: string };
+  sessionType?: string;
   scheduledDate: string;
   scheduledStartTime: string;
   scheduledEndTime: string;
@@ -21,6 +22,9 @@ export interface SessionItem {
   status: string;
   isPaid: boolean;
   isTeacherPaid: boolean;
+  trialConverted?: boolean;
+  trialTeacherPaidOnly?: boolean;
+  trialRejectedNoPay?: boolean;
   walletDeductError?: string;
   walletDeductAlertSentAt?: string;
   topicsCovered?: string;

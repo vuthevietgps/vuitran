@@ -564,6 +564,7 @@ export class ClassesDataService {
     afterValue: string;
   }>> {
     const lookupMaps = await this.buildClassHistoryLookupMaps(classroom, dto);
+    const currentPricingState = buildDurationSnapshotData(classroom);
     const fields = Object.keys(dto).filter((field) => field !== 'requestType');
     const changes: Array<{
       field: string;
@@ -579,11 +580,11 @@ export class ClassesDataService {
       coTeachers: classroom?.coTeachers,
       productPackageId: classroom?.productPackage,
       classMode: classroom?.classMode,
-      pricePerSession: classroom?.pricePerSession,
-      teacherPayPerSession: classroom?.teacherPayPerSession,
-      teacherPayPerStudent: classroom?.teacherPayPerStudent,
-      baseDuration: classroom?.baseDuration,
-      sessionDuration: classroom?.sessionDuration,
+      pricePerSession: currentPricingState.pricePerSession,
+      teacherPayPerSession: currentPricingState.teacherPayPerSession,
+      teacherPayPerStudent: currentPricingState.teacherPayPerStudent,
+      baseDuration: currentPricingState.baseDuration,
+      sessionDuration: currentPricingState.sessionDuration,
       subject: classroom?.subject,
       grade: classroom?.grade,
       learningGoals: classroom?.learningGoals,
@@ -816,13 +817,14 @@ export class ClassesDataService {
       }
       | undefined;
 
+    const currentDurationState = buildDurationSnapshotData(classroom);
     const nextBaseDuration =
-      toSafeNumber(dtoWithoutMeta.baseDuration, toSafeNumber(classroom?.baseDuration, 60))
-      || toSafeNumber(classroom?.baseDuration, 60)
+      toSafeNumber(dtoWithoutMeta.baseDuration, currentDurationState.baseDuration)
+      || currentDurationState.baseDuration
       || 60;
     const nextSessionDuration =
-      toSafeNumber(dtoWithoutMeta.sessionDuration, toSafeNumber(classroom?.sessionDuration, nextBaseDuration))
-      || toSafeNumber(classroom?.sessionDuration, nextBaseDuration)
+      toSafeNumber(dtoWithoutMeta.sessionDuration, currentDurationState.sessionDuration)
+      || currentDurationState.sessionDuration
       || nextBaseDuration;
 
     if (

@@ -12,6 +12,7 @@ import { User, UserDocument } from "./schemas/user.schema";
 import { CreateUserDto } from "./dto/create-user.dto";
 import { UpdateUserDto } from "./dto/update-user.dto";
 import { UpdateParentAdsAttributionDto } from "./dto/update-parent-ads-attribution.dto";
+import { QueryParentManagementDto } from "./dto/query-parent-management.dto";
 import * as bcrypt from "bcrypt";
 import { Role } from "../common/interfaces/role.enum";
 import { UserStatus } from "../common/interfaces/user-status.enum";
@@ -72,6 +73,10 @@ export class UsersService {
 
   private normalizeOptionalPhone(value?: string | null): string | null {
     return this.normalizeOptionalText(value);
+  }
+
+  private escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
 
   private normalizeOwnershipPercentage(value?: number | null): number | null {
@@ -360,6 +365,63 @@ export class UsersService {
       .sort({ fullName: 1 })
       .lean();
     return (await this.usersAdsService.enrichUsersWithAdsAttribution(users as any)) as any;
+  }
+
+  async findParentsManagement(
+    dto: QueryParentManagementDto,
+    actor?: JwtPayload,
+  ): Promise<{
+    data: User[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  }> {
+    const baseQuery = await this.buildParentQueryForActor(actor);
+    const search = dto.search?.trim();
+    const page = Math.max(1, Number(dto.page) || 1);
+    const limit = Math.min(200, Math.max(1, Number(dto.limit) || 50));
+    const searchRegex = search ? new RegExp(this.escapeRegex(search), "i") : null;
+    const query = searchRegex
+      ? {
+          $and: [
+            baseQuery,
+            {
+              $or: [
+                { userCode: searchRegex },
+                { email: searchRegex },
+                { fullName: searchRegex },
+                { phone: searchRegex },
+                { saleOwnerName: searchRegex },
+              ],
+            },
+          ],
+        }
+      : baseQuery;
+
+    const total = await this.userModel.countDocuments(query);
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const skip = (safePage - 1) * limit;
+
+    const users = await this.userModel
+      .find(query)
+      .select(
+        "_id userCode email fullName role status phone ownershipPercentage saleOwnerId saleOwnerName facebookLink address",
+      )
+      .sort({ fullName: 1, _id: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    return {
+      data: (await this.usersAdsService.enrichUsersWithAdsAttribution(
+        users as any,
+      )) as any,
+      meta: {
+        total,
+        page: safePage,
+        limit,
+        totalPages,
+      },
+    };
   }
 
   async update(

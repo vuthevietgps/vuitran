@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -43,6 +43,22 @@ export interface PendingSaleUpdate {
   requestedAt?: string;
   changeSummary?: ClassEditHistoryChange[];
   durationPreview?: ClassDurationPreview | null;
+  reviewedBy?: ClassMember | null;
+  reviewedAt?: string;
+  rejectionReason?: string;
+}
+
+export interface PendingOfflineAssignment {
+  _id: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  studentIds?: (ClassMember & { studentCode?: string })[];
+  invoiceId?: {
+    _id: string;
+    invoiceNumber: string;
+    status?: string;
+  } | string | null;
+  requestedBy?: ClassMember | null;
+  requestedAt?: string;
   reviewedBy?: ClassMember | null;
   reviewedAt?: string;
   rejectionReason?: string;
@@ -147,6 +163,7 @@ export interface ClassItem {
   totalSessions?: number;
   sessionsCompleted?: number;
   pendingSaleUpdate?: PendingSaleUpdate | null;
+  pendingOfflineAssignments?: PendingOfflineAssignment[];
   durationSnapshots?: DurationSnapshot[];
   studentConfigs?: StudentClassConfig[];
   editHistory?: ClassEditHistoryEntry[];
@@ -203,6 +220,24 @@ export interface ClassMutationResult {
   data?: any;
 }
 
+export interface ClassListQuery {
+  search?: string;
+  teacherId?: string;
+  classMode?: 'ONLINE' | 'OFFLINE' | '';
+  page?: number;
+  limit?: number;
+}
+
+export interface ClassListResult {
+  data: ClassItem[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
 export interface UpdateStudentConfigPayload {
   teacherId?: string;
   baseDuration?: number;
@@ -213,6 +248,16 @@ export interface UpdateStudentConfigPayload {
 export class ClassService {
   private http = inject(HttpClient);
 
+  private buildParams(params: Record<string, string | number | undefined>): HttpParams {
+    let httpParams = new HttpParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        httpParams = httpParams.set(key, String(value));
+      }
+    });
+    return httpParams;
+  }
+
   async list(): Promise<ClassItem[]> {
     try {
       return await firstValueFrom(
@@ -220,6 +265,43 @@ export class ClassService {
       );
     } catch {
       return [];
+    }
+  }
+
+  async listManagement(query: ClassListQuery = {}): Promise<ClassListResult> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ClassListResult>(`${environment.apiBase}/classes/management`, {
+          params: this.buildParams({
+            search: query.search,
+            teacherId: query.teacherId,
+            classMode: query.classMode,
+            page: query.page,
+            limit: query.limit,
+          }),
+          withCredentials: true,
+        }),
+      );
+    } catch {
+      return {
+        data: [],
+        meta: {
+          total: 0,
+          page: 1,
+          limit: Number(query.limit) || 25,
+          totalPages: 1,
+        },
+      };
+    }
+  }
+
+  async findOne(id: string): Promise<ClassItem | null> {
+    try {
+      return await firstValueFrom(
+        this.http.get<ClassItem>(`${environment.apiBase}/classes/${id}`, { withCredentials: true }),
+      );
+    } catch {
+      return null;
     }
   }
 
@@ -285,7 +367,11 @@ export class ClassService {
           { withCredentials: true },
         ),
       );
-      return { ok: true, data: response };
+      return {
+        ok: true,
+        data: response,
+        message: this.normalizeMessage((response as any)?.message),
+      };
     } catch (error: any) {
       return this.fail(error);
     }
@@ -330,6 +416,43 @@ export class ClassService {
       const response = await firstValueFrom(
         this.http.post(
           `${environment.apiBase}/classes/${id}/pending-sale-update/reject`,
+          { reason },
+          { withCredentials: true },
+        ),
+      );
+      return { ok: true, data: response };
+    } catch (error: any) {
+      return this.fail(error);
+    }
+  }
+
+  async approvePendingOfflineAssignment(
+    classId: string,
+    requestId: string,
+  ): Promise<ClassMutationResult> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post(
+          `${environment.apiBase}/classes/${classId}/pending-offline-assignments/${requestId}/approve`,
+          {},
+          { withCredentials: true },
+        ),
+      );
+      return { ok: true, data: response };
+    } catch (error: any) {
+      return this.fail(error);
+    }
+  }
+
+  async rejectPendingOfflineAssignment(
+    classId: string,
+    requestId: string,
+    reason?: string,
+  ): Promise<ClassMutationResult> {
+    try {
+      const response = await firstValueFrom(
+        this.http.post(
+          `${environment.apiBase}/classes/${classId}/pending-offline-assignments/${requestId}/reject`,
           { reason },
           { withCredentials: true },
         ),
