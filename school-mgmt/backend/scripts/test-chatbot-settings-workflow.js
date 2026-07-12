@@ -391,7 +391,7 @@ async function main() {
       body: {
         label: TOKEN_LABEL,
         apiKey: `sk-e2e-${RUN_ID}`,
-        model: 'gpt-4o-mini',
+        model: 'gpt-5.4-mini',
         temperature: 0.3,
         maxTokens: 700,
         systemPromptPrefix: 'E2E token for chatbot settings',
@@ -471,7 +471,7 @@ async function main() {
     ensure(profile, 'ops must see created AI profile');
     ensure(profile.defaultOpenAITokenId === createdTokenId, 'AI profile must reference created token');
     ensure(profile.defaultOpenAITokenLabel === TOKEN_LABEL, 'AI profile must populate token label');
-    ensure(profile.defaultOpenAIModel === 'gpt-4o-mini', 'AI profile must populate token model');
+    ensure(profile.defaultOpenAIModel === 'gpt-5.4-mini', 'AI profile must populate token model');
   });
 
   await runner.test('STEP 4 | Ops cannot create, update, or delete AI profiles', async () => {

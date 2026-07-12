@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AdsAnalyticsProfitService } from './ads-analytics-profit.service';
 import { AdsAnalyticsSuggestionsService } from './ads-analytics-suggestions.service';
-import { ActionableSuggestion, ActionsRequiredSummary } from './ads.types';
+import { ActionableSuggestion, ActionsRequiredSummary, CampaignDraftRecommendation } from './ads.types';
 
 import { toUtcDateOnlyString } from './ads.utils';
 
@@ -59,28 +59,58 @@ export class AdsAnalyticsActionsService {
     }
 
     const effectiveByGroup = new Map<string, number>();
+    const cohortStatsByGroup = this.buildCohortStatsByGroup(suggestionsReal?.summaryTable || []);
     if (suggestionsReal?.summaryTable) {
       for (const row of suggestionsReal.summaryTable) {
         effectiveByGroup.set(row.adGroupId, (effectiveByGroup.get(row.adGroupId) ?? 0) + row.effectiveNetProfit);
       }
     }
 
-    for (const group of profitData.summaryByGroup) {
+    const profitByGroup = new Map<string, any>(
+      (profitData.summaryByGroup || []).map((group: any) => [group.adGroupId, group]),
+    );
+    const allGroupIds = new Set<string>([
+      ...Array.from(profitByGroup.keys()),
+      ...Array.from(realByGroup.keys()),
+      ...Array.from(cohortStatsByGroup.keys()),
+    ]);
+    const allGroups = Array.from(allGroupIds).map((groupId) => {
+      const profitGroup = profitByGroup.get(groupId);
+      const suggestionGroup = realByGroup.get(groupId);
+      const cohortStats = cohortStatsByGroup.get(groupId);
+      return {
+        ...(profitGroup || {}),
+        adGroupId: groupId,
+        adGroupName: profitGroup?.adGroupName || suggestionGroup?.adGroupName || cohortStats?.adGroupName || '',
+        adAccountId: profitGroup?.adAccountId || suggestionGroup?.adAccountId || cohortStats?.adAccountId || '',
+        platform: profitGroup?.platform || suggestionGroup?.platform || cohortStats?.platform || '',
+        totalRevenue: Number(profitGroup?.totalRevenue || cohortStats?.projectedRevenue || 0),
+        totalAdSpend: Number(profitGroup?.totalAdSpend || cohortStats?.adSpend || 0),
+        totalNetProfit: Number(profitGroup?.totalNetProfit || cohortStats?.actualNetProfit || 0),
+      };
+    });
+
+    for (const group of allGroups) {
       const realSuggestion = realByGroup.get(group.adGroupId);
+      const cohortStats = cohortStatsByGroup.get(group.adGroupId);
       const netProfit7d = group.totalNetProfit;
       const actualDailySpend = lookbackDays > 0 ? group.totalAdSpend / lookbackDays : 0;
       const optimalDailySpend = realSuggestion?.suggestedDailySpend ?? 0;
-      const effectiveNetProfit = effectiveByGroup.get(group.adGroupId) ?? 0;
+      const effectiveNetProfit = cohortStats?.effectiveNetProfit ?? effectiveByGroup.get(group.adGroupId) ?? 0;
       const profitPerLead = realSuggestion?.averageProfitPerLead ?? null;
       const dataPoints = realSuggestion?.dataPoints ?? 0;
+      const hasEnoughCohortSignal =
+        dataPoints >= 5
+        || Number(cohortStats?.matureRows || 0) > 0
+        || Number(cohortStats?.collectedRevenue || 0) > 0;
 
       let shouldPause = false;
       const pauseReasons: string[] = [];
 
-      if (netProfit7d < 0 && effectiveNetProfit < 0) {
+      if (effectiveNetProfit < 0 && hasEnoughCohortSignal && (netProfit7d < 0 || profitPerLead === null || profitPerLead < 0)) {
         shouldPause = true;
         pauseReasons.push(
-          `Lỗ liên tục: lỗ ${Math.abs(netProfit7d).toLocaleString('vi-VN')}đ trong ${lookbackDays} ngày và cohort lỗ ${Math.abs(effectiveNetProfit).toLocaleString('vi-VN')}đ`,
+          `Cohort hiệu quả đang lỗ ${Math.abs(effectiveNetProfit).toLocaleString('vi-VN')}đ sau khi tính doanh thu ghi nhận, học phí còn lại, refund dự kiến và chi phí giáo viên còn lại`,
         );
       }
 
@@ -124,6 +154,11 @@ export class AdsAnalyticsActionsService {
           overspendPercent,
           platform: group.platform,
           dataPoints,
+          cohortMatureRows: cohortStats?.matureRows || 0,
+          cohortImmatureRows: cohortStats?.immatureRows || 0,
+          collectedRevenue: cohortStats?.collectedRevenue || 0,
+          projectedCohortNetProfit: cohortStats?.projectedNetProfit || 0,
+          metricBasis: 'COHORT_EFFECTIVE_NET_PROFIT',
         },
         relatedEntity: { type: 'AdGroup', id: group.adGroupId, name: group.adGroupName },
         estimatedImpact: {
@@ -161,7 +196,7 @@ export class AdsAnalyticsActionsService {
         const isDecrease = deviationPercentReal > 0;
         const subType: 'INCREASE' | 'DECREASE' = isDecrease ? 'DECREASE' : 'INCREASE';
 
-        const effectiveNetProfitGroup = effectiveByGroup.get(s.adGroupId) ?? 0;
+        const effectiveNetProfitGroup = cohortStatsByGroup.get(s.adGroupId)?.effectiveNetProfit ?? effectiveByGroup.get(s.adGroupId) ?? 0;
         if (!isDecrease && effectiveNetProfitGroup <= 0) continue;
 
         let safeTarget: number;
@@ -233,6 +268,8 @@ export class AdsAnalyticsActionsService {
             deviationPercentReal: Math.round(deviationPercentReal),
             deviationPercentX,
             platform: s.platform,
+            effectiveCohortNetProfit: effectiveNetProfitGroup,
+            metricBasis: 'COHORT_EFFECTIVE_NET_PROFIT',
           },
           relatedEntity: { type: 'AdGroup', id: s.adGroupId, name: s.adGroupName },
           estimatedImpact: {
@@ -243,15 +280,16 @@ export class AdsAnalyticsActionsService {
       }
     }
 
-    const allGroups = profitData.summaryByGroup;
-    const profitableGroups = allGroups.filter((g) => (effectiveByGroup.get(g.adGroupId) ?? 0) > 0);
-    const unprofitableGroups = allGroups.filter((g) => (effectiveByGroup.get(g.adGroupId) ?? 0) <= 0);
+    const getEffectiveGroupProfit = (groupId: string) =>
+      cohortStatsByGroup.get(groupId)?.effectiveNetProfit ?? effectiveByGroup.get(groupId) ?? 0;
+    const profitableGroups = allGroups.filter((g) => getEffectiveGroupProfit(g.adGroupId) > 0);
+    const unprofitableGroups = allGroups.filter((g) => getEffectiveGroupProfit(g.adGroupId) <= 0);
     const currentProfitableCount = profitableGroups.length;
     const targetProfitableCount = Math.max(3, Math.ceil(allGroups.length * targetProfitableRatio));
     const groupDeficit = Math.max(0, targetProfitableCount - currentProfitableCount);
     const totalUnallocated = suggestionsReal?.unallocated ?? 0;
 
-    const accountOverallProfit = allGroups.reduce((sum, g) => sum + (effectiveByGroup.get(g.adGroupId) ?? 0), 0);
+    const accountOverallProfit = allGroups.reduce((sum, g) => sum + getEffectiveGroupProfit(g.adGroupId), 0);
     const isAccountInLoss = accountOverallProfit < 0;
 
     const profitableWithModel = profitableGroups
@@ -305,12 +343,12 @@ export class AdsAnalyticsActionsService {
     }
 
     if (totalSuggestedNewGroups > 0) {
-      const platformRoiMap: Record<string, { totalRevenue: number; totalAdSpend: number; profitableCount: number }> = {};
+      const platformRoiMap: Record<string, { totalEffectiveProfit: number; totalAdSpend: number; profitableCount: number }> = {};
       for (const group of allGroups) {
         if (!platformRoiMap[group.platform]) {
-          platformRoiMap[group.platform] = { totalRevenue: 0, totalAdSpend: 0, profitableCount: 0 };
+          platformRoiMap[group.platform] = { totalEffectiveProfit: 0, totalAdSpend: 0, profitableCount: 0 };
         }
-        platformRoiMap[group.platform].totalRevenue += group.totalRevenue;
+        platformRoiMap[group.platform].totalEffectiveProfit += getEffectiveGroupProfit(group.adGroupId);
         platformRoiMap[group.platform].totalAdSpend += group.totalAdSpend;
       }
       for (const group of profitableGroups) {
@@ -321,7 +359,7 @@ export class AdsAnalyticsActionsService {
         platformBreakdown[platform] = {
           profitableCount: data.profitableCount,
           avgROI: data.totalAdSpend > 0
-            ? Math.round(((data.totalRevenue - data.totalAdSpend) / data.totalAdSpend) * 100)
+            ? Math.round((data.totalEffectiveProfit / data.totalAdSpend) * 100)
             : 0,
         };
       }
@@ -332,7 +370,7 @@ export class AdsAnalyticsActionsService {
 
       const avgProfitPerProfitableGroup = profitableGroups.length > 0
         ? Math.round(
-          profitableGroups.reduce((sum, g) => sum + (effectiveByGroup.get(g.adGroupId) ?? 0), 0)
+          profitableGroups.reduce((sum, g) => sum + getEffectiveGroupProfit(g.adGroupId), 0)
           / profitableGroups.length,
         )
         : 0;
@@ -349,6 +387,14 @@ export class AdsAnalyticsActionsService {
       const createReasons: string[] = [];
       if (groupDeficit > 0) createReasons.push(`Thiếu ${groupDeficit} nhóm có lãi so với mục tiêu ${Math.round(targetProfitableRatio * 100)}%`);
       if (totalUnallocated > 0) createReasons.push(`Còn ${totalUnallocated.toLocaleString('vi-VN')}đ/ngày ngân sách chưa phân bổ tối ưu`);
+      const draftRecommendations = this.buildCampaignDraftRecommendations({
+        count: totalSuggestedNewGroups,
+        platform: suggestedPlatform,
+        dailyBudget: suggestedBudgetPerNewGroup,
+        sourceGroups: profitableGroups,
+        avgProfitPerProfitableGroup,
+        bestPlatformROI,
+      });
 
       actions.push({
         type: 'CREATE_GROUP',
@@ -366,6 +412,7 @@ export class AdsAnalyticsActionsService {
           unallocatedBudget: totalUnallocated,
           suggestedBudgetPerNewGroup,
           suggestedPlatform,
+          draftRecommendationCount: draftRecommendations.length,
           platformBreakdown,
           avgProfitPerProfitableGroup,
           estimatedMonthlyProfitIfSuccessful: estimatedMonthlyProfit,
@@ -374,6 +421,7 @@ export class AdsAnalyticsActionsService {
           dailyProfitChange: Math.round(avgProfitPerProfitableGroup * totalSuggestedNewGroups),
           monthlyProfitChange: estimatedMonthlyProfit,
         },
+        draftRecommendations,
       });
     }
 
@@ -381,7 +429,14 @@ export class AdsAnalyticsActionsService {
     actions.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
     const totalOptimalDailySpend = suggestionsReal?.totalSuggestedDailySpend ?? 0;
-    const overallEffectiveNetProfit = Array.from(effectiveByGroup.values()).reduce((sum, v) => sum + v, 0);
+    const overallEffectiveNetProfit = accountOverallProfit;
+    const dataReadiness = this.buildDataReadiness({
+      allGroups,
+      realByGroup,
+      cohortStatsByGroup,
+      summaryTable: suggestionsReal?.summaryTable || [],
+      totalRevenue: profitData.overall.totalRevenue || 0,
+    });
 
     return {
       actions,
@@ -393,8 +448,184 @@ export class AdsAnalyticsActionsService {
         totalOptimalDailySpend,
         overallNetProfit7d: profitData.overall.totalNetProfit,
         overallEffectiveNetProfit,
+        dataReadiness,
         generatedAt: new Date().toISOString(),
       },
     };
+  }
+
+  private buildCampaignDraftRecommendations(input: {
+    count: number;
+    platform: string;
+    dailyBudget: number;
+    sourceGroups: any[];
+    avgProfitPerProfitableGroup: number;
+    bestPlatformROI: number;
+  }): CampaignDraftRecommendation[] {
+    const count = Math.max(0, Math.min(5, Math.floor(input.count || 0)));
+    const sourceGroups = input.sourceGroups
+      .filter((group) => !input.platform || group.platform === input.platform)
+      .sort((a, b) => Number(b.totalNetProfit || 0) - Number(a.totalNetProfit || 0));
+    const fallbackSources = sourceGroups.length ? sourceGroups : input.sourceGroups;
+    const today = toUtcDateOnlyString(new Date());
+
+    return Array.from({ length: count }).map((_, index) => {
+      const source = fallbackSources[index % Math.max(1, fallbackSources.length)] || {};
+      const platform = input.platform || source.platform || 'FACEBOOK';
+      const sourceName = source.adGroupName || `${platform} benchmark`;
+      const draftName = `${platform} scale test ${index + 1} - ${sourceName}`.slice(0, 120);
+      const trackingKey = this.buildTrackingKey(platform, draftName, index + 1, today);
+      const targetAudience = this.buildTargetAudience(platform, sourceName);
+      const targetDailyNetProfit = Math.max(0, Math.round(input.avgProfitPerProfitableGroup || 0));
+      const payload: CampaignDraftRecommendation['payload'] = {
+        name: draftName,
+        ...(source.adAccountId ? { adAccountId: source.adAccountId } : {}),
+        platform,
+        dailyBudget: Math.max(0, Math.round(input.dailyBudget || 0)),
+        targetAudience,
+        trackingKeys: [trackingKey],
+        notes: [
+          `AI scale draft from source group: ${sourceName}`,
+          `Expected ROI benchmark: ${input.bestPlatformROI}%`,
+          'Keep PAUSED until creative, landing page, pixel/offline conversion and approval are verified.',
+        ].join('\n'),
+      };
+
+      return {
+        draftName,
+        platform,
+        ...(source.adAccountId ? { adAccountId: source.adAccountId } : {}),
+        ...(source.adGroupId ? { sourceAdGroupId: source.adGroupId } : {}),
+        ...(source.adGroupName ? { sourceAdGroupName: source.adGroupName } : {}),
+        dailyBudget: payload.dailyBudget,
+        targetAudience,
+        trackingKey,
+        objective: this.buildObjective(platform),
+        offerAngle: this.buildOfferAngle(sourceName),
+        kpi: {
+          targetCpl: null,
+          targetCpo: null,
+          targetDailyNetProfit,
+        },
+        payload,
+        missingFields: source.adAccountId ? [] : ['adAccountId'],
+        launchChecklist: [
+          'Confirm ad account and billing are active.',
+          'Attach approved creative/copy and landing page.',
+          'Verify tracking key is present on the landing page form.',
+          'Verify pixel/offline conversion event mapping.',
+          'Start paused; publish only after human approval.',
+        ],
+      };
+    });
+  }
+
+  private buildDataReadiness(input: {
+    allGroups: any[];
+    realByGroup: Map<string, any>;
+    cohortStatsByGroup: Map<string, any>;
+    summaryTable: any[];
+    totalRevenue: number;
+  }): ActionsRequiredSummary['dataReadiness'] {
+    const groupsAnalyzed = input.allGroups.length;
+    const groupsWithModel = input.allGroups
+      .filter((group) => Number(input.realByGroup.get(group.adGroupId)?.dataPoints || 0) >= 5)
+      .length;
+    const groupsWithCohortSignal = input.allGroups.filter((group) => {
+      const stats = input.cohortStatsByGroup.get(group.adGroupId);
+      return Number(stats?.matureRows || 0) > 0
+        || Number(stats?.collectedRevenue || 0) > 0
+        || Number(stats?.projectedRevenue || 0) > 0;
+    }).length;
+    const matureCohortRows = input.summaryTable.filter((row) => row.isMatured).length;
+    const attributionCoveragePercent = groupsAnalyzed > 0
+      ? Math.round((groupsWithCohortSignal / groupsAnalyzed) * 100)
+      : 0;
+
+    let score = 0;
+    if (groupsAnalyzed > 0) score += 15;
+    score += Math.min(30, attributionCoveragePercent * 0.3);
+    score += groupsAnalyzed > 0 ? Math.min(25, (groupsWithModel / groupsAnalyzed) * 25) : 0;
+    score += matureCohortRows > 0 ? 15 : 0;
+    score += input.totalRevenue > 0 ? 15 : 0;
+    score = Math.round(Math.min(100, score));
+
+    const warnings: string[] = [];
+    if (groupsAnalyzed === 0) warnings.push('No ad groups were available for analysis.');
+    if (attributionCoveragePercent < 70) warnings.push('Attribution coverage is below 70%; verify tracking keys and lead/order mapping.');
+    if (groupsWithModel < Math.ceil(groupsAnalyzed / 2)) warnings.push('Fewer than half of ad groups have enough model data points.');
+    if (matureCohortRows === 0) warnings.push('No matured cohort rows yet; projections may be unstable.');
+    if (input.totalRevenue <= 0) warnings.push('No recognized revenue in the analysis window.');
+
+    return {
+      score,
+      level: score >= 85 ? 'PRODUCTION_READY' : score >= 70 ? 'GOOD' : score >= 50 ? 'NEEDS_REVIEW' : 'WEAK',
+      groupsAnalyzed,
+      groupsWithModel,
+      groupsWithCohortSignal,
+      matureCohortRows,
+      attributionCoveragePercent,
+      warnings,
+    };
+  }
+
+  private buildTrackingKey(platform: string, draftName: string, index: number, date: string): string {
+    const slug = draftName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 42) || 'campaign';
+    return `${platform.toLowerCase()}-${date.replace(/-/g, '')}-${index}-${slug}`;
+  }
+
+  private buildTargetAudience(platform: string, sourceName: string): string {
+    if (platform === 'GOOGLE') return `High-intent search demand related to ${sourceName}; split exact/phrase tests before broad expansion.`;
+    if (platform === 'TIKTOK') return `Parents and students matching ${sourceName}; test broad interest + retargeting viewers separately.`;
+    return `Parents similar to profitable group ${sourceName}; test broad, lookalike and retargeting in separate ad sets.`;
+  }
+
+  private buildObjective(platform: string): string {
+    if (platform === 'GOOGLE') return 'Capture high-intent leads with measurable form submissions.';
+    if (platform === 'TIKTOK') return 'Validate new audience/creative angle while protecting daily budget.';
+    return 'Scale profitable parent lead acquisition with controlled budget and clean attribution.';
+  }
+
+  private buildOfferAngle(sourceName: string): string {
+    return `Clone the strongest promise from "${sourceName}", but create a fresh audience/creative test so performance can be measured independently.`;
+  }
+
+  private buildCohortStatsByGroup(rows: any[]): Map<string, any> {
+    const result = new Map<string, any>();
+    for (const row of rows || []) {
+      const groupId = row.adGroupId;
+      if (!groupId) continue;
+      if (!result.has(groupId)) {
+        result.set(groupId, {
+          adGroupId: groupId,
+          adGroupName: row.adGroupName || '',
+          platform: row.platform || '',
+          adSpend: 0,
+          collectedRevenue: 0,
+          realizedRevenue: 0,
+          projectedRevenue: 0,
+          actualNetProfit: 0,
+          projectedNetProfit: 0,
+          effectiveNetProfit: 0,
+          matureRows: 0,
+          immatureRows: 0,
+        });
+      }
+      const target = result.get(groupId);
+      target.adSpend += Number(row.actualAdSpend || 0);
+      target.collectedRevenue += Number(row.collectedRevenue || 0);
+      target.realizedRevenue += Number(row.realizedRevenue || 0);
+      target.projectedRevenue += Number(row.projectedRevenue || 0);
+      target.actualNetProfit += Number(row.netProfit || 0);
+      target.projectedNetProfit += Number(row.projectedNetProfit || 0);
+      target.effectiveNetProfit += Number(row.effectiveNetProfit || 0);
+      if (row.isMatured) target.matureRows += 1;
+      else target.immatureRows += 1;
+    }
+    return result;
   }
 }

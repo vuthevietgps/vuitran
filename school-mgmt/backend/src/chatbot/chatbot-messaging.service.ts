@@ -21,6 +21,7 @@ import {
 } from '../marketing-attribution/schemas/parent-attribution.schema';
 import { ChatbotConfigService } from './chatbot-config.service';
 import { ChatbotGateway } from './chatbot.gateway';
+import { buildOpenAIChatBody } from '../common/utils/openai-chat-options';
 
 @Injectable()
 export class ChatbotMessagingService {
@@ -62,6 +63,12 @@ export class ChatbotMessagingService {
       if (!exists) return code;
     }
     return `${prefix}${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+  }
+
+  private parsePositiveInt(value: string | undefined, fallback: number, max: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(Math.floor(parsed), max);
   }
 
   async findOrCreateConversation(
@@ -206,8 +213,8 @@ export class ChatbotMessagingService {
       ];
     }
 
-    const page = parseInt(query.page || '1', 10);
-    const limit = parseInt(query.limit || '20', 10);
+    const page = this.parsePositiveInt(query.page, 1, 10000);
+    const limit = this.parsePositiveInt(query.limit, 20, 100);
     const skip = (page - 1) * limit;
     const total = await this.conversationModel.countDocuments(filter);
     const data = await this.conversationModel.find(filter)
@@ -311,20 +318,43 @@ export class ChatbotMessagingService {
     senderUserId?: string,
     platformMessageId?: string,
   ): Promise<MessageDocument> {
-    const msg = new this.messageModel({
-      conversationId: new Types.ObjectId(conversationId.toString()),
-      senderType,
-      senderName,
-      senderUserId: senderUserId ? new Types.ObjectId(senderUserId) : undefined,
-      content,
-      platformMessageId,
-      status: MessageStatus.SENT,
-    });
-    const saved = await msg.save();
+    const conversationObjectId = new Types.ObjectId(conversationId.toString());
+    const normalizedPlatformMessageId = platformMessageId?.trim();
+
+    if (normalizedPlatformMessageId) {
+      const existing = await this.messageModel.findOne({
+        conversationId: conversationObjectId,
+        platformMessageId: normalizedPlatformMessageId,
+      });
+      if (existing) return existing;
+    }
+
+    let saved: MessageDocument;
+    try {
+      const msg = new this.messageModel({
+        conversationId: conversationObjectId,
+        senderType,
+        senderName,
+        senderUserId: senderUserId ? new Types.ObjectId(senderUserId) : undefined,
+        content,
+        platformMessageId: normalizedPlatformMessageId || undefined,
+        status: MessageStatus.SENT,
+      });
+      saved = await msg.save();
+    } catch (err: any) {
+      if (normalizedPlatformMessageId && this.isDuplicateKeyError(err, ['platformMessageId'])) {
+        const existing = await this.messageModel.findOne({
+          conversationId: conversationObjectId,
+          platformMessageId: normalizedPlatformMessageId,
+        });
+        if (existing) return existing;
+      }
+      throw err;
+    }
 
     // Update conversation
     await this.conversationModel.updateOne(
-      { _id: new Types.ObjectId(conversationId.toString()) },
+      { _id: conversationObjectId },
       { lastMessageAt: new Date(), $inc: { messageCount: 1 } },
     );
 
@@ -335,8 +365,8 @@ export class ChatbotMessagingService {
   }
 
   async getMessages(conversationId: string, query: QueryMessageDto) {
-    const page = parseInt(query.page || '1', 10);
-    const limit = parseInt(query.limit || '50', 10);
+    const page = this.parsePositiveInt(query.page, 1, 10000);
+    const limit = this.parsePositiveInt(query.limit, 50, 100);
     const skip = (page - 1) * limit;
 
     const filter = { conversationId: new Types.ObjectId(conversationId) };
@@ -403,14 +433,23 @@ export class ChatbotMessagingService {
     );
 
     const normalizedContent = String(content || '').trim();
-    if (normalizedContent) {
+    const normalizedPlatformMessageId = platformMessageId?.trim();
+    const isDuplicatePlatformMessage = Boolean(
+      normalizedPlatformMessageId
+      && await this.messageModel.exists({
+        conversationId: conv._id,
+        platformMessageId: normalizedPlatformMessageId,
+      }),
+    );
+
+    if (normalizedContent && !isDuplicatePlatformMessage) {
       await this.saveMessage(
         conv._id,
         normalizedContent,
         SenderType.CUSTOMER,
         customerName || conv.customerName,
         undefined,
-        platformMessageId,
+        normalizedPlatformMessageId,
       );
     }
 
@@ -421,7 +460,12 @@ export class ChatbotMessagingService {
     }
 
     // AI auto-reply if enabled
-    if (normalizedContent && conv.status === ConversationStatus.AI_HANDLING && fanpage.aiAutoReplyEnabled) {
+    if (
+      normalizedContent
+      && !isDuplicatePlatformMessage
+      && conv.status === ConversationStatus.AI_HANDLING
+      && fanpage.aiAutoReplyEnabled
+    ) {
       try {
         const aiReply = await this.generateAIReply(conv, fanpage);
         if (aiReply) {
@@ -513,12 +557,12 @@ export class ChatbotMessagingService {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${tokenData.key}`,
           },
-          body: JSON.stringify({
+          body: JSON.stringify(buildOpenAIChatBody({
             model: tokenData.model,
             messages,
             temperature: tokenData.temperature,
-            max_tokens: tokenData.maxTokens,
-          }),
+            maxTokens: tokenData.maxTokens,
+          })),
         });
 
         if (!response.ok) {

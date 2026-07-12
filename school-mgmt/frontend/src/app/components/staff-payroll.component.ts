@@ -28,6 +28,7 @@ const ROLE_LABELS: Record<string, string> = {
   OPS: 'Vận hành',
   ADSMANAGER: 'Ads manager',
   TEACHER: 'Giáo viên',
+  EXPERIENCE_TEACHER: 'Giao vien trai nghiem',
   SALES: 'Kinh doanh',
   STAFF: 'Nhân viên',
 };
@@ -253,6 +254,35 @@ const ROLE_LABELS: Record<string, string> = {
           <div class="breakdown-row total-row">
             <span>= Thưởng KPI</span>
             <span>{{detail()!.kpiBonusAmount | number}}đ</span>
+          </div>
+        </div>
+
+        <!-- Experience teacher additions -->
+        <div class="breakdown-section" *ngIf="detail()!.punctualityBonusAmount || detail()!.experienceCaseAmount || detail()!.homeworkGradingAmount || detail()!.role === 'EXPERIENCE_TEACHER'">
+          <div class="section-title">Khoản giáo viên trải nghiệm</div>
+          <div class="breakdown-row green">
+            <span>Thưởng đúng giờ</span>
+            <span>+{{(detail()!.punctualityBonusAmount || 0) | number}}đ</span>
+          </div>
+          <div class="breakdown-row sub">
+            <span>{{detail()!.onTimeDays || 0}} lần × {{(detail()!.punctualityBonusPerTime || 0) | number}}đ</span>
+            <span></span>
+          </div>
+          <div class="breakdown-row green">
+            <span>Lương test học sinh</span>
+            <span>+{{(detail()!.experienceCaseAmount || 0) | number}}đ</span>
+          </div>
+          <div class="breakdown-row sub">
+            <span>{{detail()!.experienceCaseCount || 0}} case test × {{(detail()!.experienceCaseRate || 0) | number}}đ</span>
+            <span>{{detail()!.successfulExperienceCaseCount || 0}} case chốt học</span>
+          </div>
+          <div class="breakdown-row green">
+            <span>Lương chấm bài tập</span>
+            <span>+{{(detail()!.homeworkGradingAmount || 0) | number}}đ</span>
+          </div>
+          <div class="breakdown-row sub">
+            <span>{{detail()!.homeworkGradingCount || 0}} bài × {{(detail()!.homeworkGradingRate || 0) | number}}đ</span>
+            <span></span>
           </div>
         </div>
 

@@ -7,6 +7,8 @@ import { AuthService } from '../services/auth.service';
 import { PayrollItem, PayrollPreview, PayrollService } from '../services/payroll.service';
 import { SessionService, SessionItem } from '../services/session.service';
 import { UserItem, UserService } from '../services/user.service';
+import { TeacherService, TeachingMaterial } from '../services/teacher.service';
+import { Quiz, QuizService } from '../services/quiz.service';
 import { ReportTemplateService, ReportTemplate } from '../services/report-template.service';
 import { FlowGuideComponent } from './shared/flow-guide.component';
 import {
@@ -187,6 +189,8 @@ interface BulkPendingGroup {
             [contextClassId]="group.classId"
             [draftStorageKey]="bulkDraftStorageKey(group)"
             [templates]="templates()"
+            [homeworkMaterials]="homeworkMaterials()"
+            [quizzes]="quizzes()"
             [submitting]="submitting()"
             submitLabel="Nop bao cao hang loat"
             (formSubmit)="handleBulkSubmit(group, $event)"
@@ -200,6 +204,8 @@ interface BulkPendingGroup {
       <app-teaching-report-pending
         [sessions]="pendingSessions()"
         [templates]="templates()"
+        [homeworkMaterials]="homeworkMaterials()"
+        [quizzes]="quizzes()"
         [submitting]="submitting()"
         [canEdit]="canEditReports()"
         [teacherView]="isTeacher()"
@@ -214,6 +220,8 @@ interface BulkPendingGroup {
       <app-teaching-report-completed
         [sessions]="completedSessions()"
         [templates]="templates()"
+        [homeworkMaterials]="homeworkMaterials()"
+        [quizzes]="quizzes()"
         [submitting]="submitting()"
         [canEdit]="canEditReports()"
         [teacherView]="isTeacher()"
@@ -503,6 +511,8 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
   completedMeta = signal<any>({});
   payrollPreview = signal<PayrollPreview | null>(null);
   templates = signal<ReportTemplate[]>([]);
+  homeworkMaterials = signal<TeachingMaterial[]>([]);
+  quizzes = signal<Quiz[]>([]);
   loading = signal(false);
   submitting = signal(false);
   error = signal('');
@@ -570,6 +580,8 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
     private payrollService: PayrollService,
     private userService: UserService,
     private templateService: ReportTemplateService,
+    private teacherService: TeacherService,
+    private quizService: QuizService,
   ) {}
 
   ngOnInit() {
@@ -794,8 +806,19 @@ export class TeachingReportComponent implements OnInit, OnDestroy {
 
   private async loadTemplates() {
     try {
-      const tpls = await this.templateService.list();
+      const [tpls, materials, quizzes] = await Promise.all([
+        this.templateService.list(),
+        this.teacherService.getMaterials({
+          materialScope: 'HOMEWORK',
+          assignableAsHomework: true,
+          status: 'APPROVED',
+          limit: 80,
+        }).catch(() => ({ data: [] as TeachingMaterial[] })),
+        this.quizService.listQuizzes('APPROVED').catch(() => [] as Quiz[]),
+      ]);
       this.templates.set(tpls);
+      this.homeworkMaterials.set(materials.data || []);
+      this.quizzes.set(quizzes || []);
     } catch {
       // Non-critical: silently ignore template load errors
     }

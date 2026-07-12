@@ -78,6 +78,47 @@
   margin: 20px 0;
 }
 
+.material-tabs {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0 10px;
+}
+
+.material-tabs button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid #dbe4e2;
+  border-radius: 999px;
+  color: #475569;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+}
+
+.material-tabs button.active {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+}
+
+.material-tabs span {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 11px;
+  height: 22px;
+  justify-content: center;
+  min-width: 22px;
+  padding: 0 6px;
+}
+
 .stat-card {
   border-radius: 18px;
   min-height: 96px;
@@ -287,6 +328,87 @@
   display: grid;
   gap: 16px;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.curriculum-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.curriculum-row {
+  background: #fff;
+  border: 1px solid rgba(229, 231, 235, 0.95);
+  border-radius: 16px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) auto minmax(260px, 1.1fr) minmax(260px, 1.1fr);
+  padding: 16px;
+}
+
+.curriculum-main h3 {
+  color: #14213d;
+  font-size: 16px;
+  margin: 10px 0 4px;
+}
+
+.curriculum-main p {
+  color: var(--muted);
+  margin: 0;
+}
+
+.curriculum-counts {
+  align-items: flex-start;
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  font-weight: 700;
+  gap: 8px;
+  min-width: 130px;
+}
+
+.curriculum-files {
+  align-content: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.curriculum-slots {
+  align-content: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.slot-chip {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  min-height: 30px;
+  padding: 5px 9px;
+}
+
+.slot-chip.ok {
+  background: #dcfce7;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
+.slot-chip.missing {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+
+.quiz-chip {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
 }
 
 .material-card {
@@ -568,7 +690,7 @@
 .modal {
   border-radius: 26px;
   max-height: 92vh;
-  max-width: 720px;
+  max-width: 860px;
   overflow: auto;
   width: 100%;
 }
@@ -613,6 +735,14 @@
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.taxonomy-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  margin: 4px 0 16px;
+  padding: 14px;
 }
 
 .checkbox-row {
@@ -714,6 +844,14 @@
   .filter-row,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .curriculum-row {
+    grid-template-columns: 1fr;
+  }
+
+  .curriculum-files {
+    justify-content: flex-start;
   }
 
   .search-field {

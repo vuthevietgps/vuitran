@@ -23,6 +23,7 @@ import { UpdateAiAssistantProfileDto } from './dto/update-ai-assistant-profile.d
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditAction, AuditModule } from '../audit-log/schemas/audit-log.schema';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
+import { extractOpenAIApiKey } from '../common/utils/openai-api-key';
 
 @Injectable()
 export class ChatbotConfigService {
@@ -77,6 +78,33 @@ export class ChatbotConfigService {
   private maskToken(token: string): string {
     if (token.length <= 8) return '****';
     return '****' + token.slice(-6);
+  }
+
+  private normalizeOpenAIApiKey(input: string): string {
+    const key = extractOpenAIApiKey(input);
+    if (!key) {
+      throw new BadRequestException('API key OpenAI khong hop le. Hay dan dung chuoi bat dau bang sk-...');
+    }
+    return key;
+  }
+
+  private async resolveActiveOpenAITokenId(tokenId: string, fieldName: string): Promise<Types.ObjectId> {
+    if (!Types.ObjectId.isValid(tokenId)) {
+      throw new BadRequestException(`${fieldName} khong hop le`);
+    }
+
+    const token = await this.openaiTokenModel
+      .findById(tokenId)
+      .select('_id status')
+      .lean<{ _id: Types.ObjectId; status: OpenAITokenStatus } | null>();
+    if (!token) {
+      throw new BadRequestException(`${fieldName} khong ton tai`);
+    }
+    if (token.status !== OpenAITokenStatus.ACTIVE) {
+      throw new BadRequestException(`${fieldName} phai tro toi OpenAI token ACTIVE`);
+    }
+
+    return new Types.ObjectId(tokenId);
   }
 
   private mapFanpageForResponse(fp: any) {
@@ -143,6 +171,11 @@ export class ChatbotConfigService {
 
     if (dto.pageAccessToken) data.pageAccessToken = this.encrypt(dto.pageAccessToken);
     if (dto.appSecret) data.appSecret = this.encrypt(dto.appSecret);
+    if (dto.openaiTokenId?.trim()) {
+      data.openaiTokenId = await this.resolveActiveOpenAITokenId(dto.openaiTokenId, 'openaiTokenId');
+    } else {
+      delete data.openaiTokenId;
+    }
 
     const doc = new this.fanpageModel(data);
     const saved = await doc.save();
@@ -256,7 +289,7 @@ export class ChatbotConfigService {
 
     if (dto.openaiTokenId !== undefined) {
       const openaiTokenId = dto.openaiTokenId.trim();
-      if (openaiTokenId) update.openaiTokenId = openaiTokenId;
+      if (openaiTokenId) update.openaiTokenId = await this.resolveActiveOpenAITokenId(openaiTokenId, 'openaiTokenId');
       else unset.openaiTokenId = 1;
     }
 
@@ -285,9 +318,10 @@ export class ChatbotConfigService {
   // ─── OpenAI Token CRUD ──────────────────────────────────────
 
   async createOpenAIToken(dto: CreateOpenAITokenDto, user: JwtPayload) {
+    const apiKey = this.normalizeOpenAIApiKey(dto.apiKey);
     const data: any = {
       ...dto,
-      apiKey: this.encrypt(dto.apiKey),
+      apiKey: this.encrypt(apiKey),
       createdById: user.sub,
     };
 
@@ -319,7 +353,11 @@ export class ChatbotConfigService {
 
   async updateOpenAIToken(id: string, dto: UpdateOpenAITokenDto) {
     const update: any = { ...dto };
-    if (dto.apiKey) update.apiKey = this.encrypt(dto.apiKey);
+    if (dto.apiKey !== undefined) {
+      delete update.apiKey;
+      const input = dto.apiKey.trim();
+      if (input) update.apiKey = this.encrypt(this.normalizeOpenAIApiKey(input));
+    }
 
     const doc = await this.openaiTokenModel.findByIdAndUpdate(id, update, { new: true });
     if (!doc) throw new NotFoundException('OpenAI token không tồn tại');
@@ -343,10 +381,10 @@ export class ChatbotConfigService {
 
     let defaultOpenAITokenId: Types.ObjectId | undefined;
     if (dto.defaultOpenAITokenId?.trim()) {
-      if (!Types.ObjectId.isValid(dto.defaultOpenAITokenId)) {
-        throw new BadRequestException('defaultOpenAITokenId khong hop le');
-      }
-      defaultOpenAITokenId = new Types.ObjectId(dto.defaultOpenAITokenId);
+      defaultOpenAITokenId = await this.resolveActiveOpenAITokenId(
+        dto.defaultOpenAITokenId,
+        'defaultOpenAITokenId',
+      );
     }
 
     const doc = new this.aiAssistantProfileModel({
@@ -420,10 +458,7 @@ export class ChatbotConfigService {
       if (!tokenId) {
         unset.defaultOpenAITokenId = 1;
       } else {
-        if (!Types.ObjectId.isValid(tokenId)) {
-          throw new BadRequestException('defaultOpenAITokenId khong hop le');
-        }
-        update.defaultOpenAITokenId = new Types.ObjectId(tokenId);
+        update.defaultOpenAITokenId = await this.resolveActiveOpenAITokenId(tokenId, 'defaultOpenAITokenId');
       }
     }
     if (dto.status !== undefined) update.status = dto.status;
@@ -453,10 +488,21 @@ export class ChatbotConfigService {
     const token = await this.openaiTokenModel.findById(tokenId);
     if (!token || token.status !== OpenAITokenStatus.ACTIVE) return null;
 
-    await this.openaiTokenModel.updateOne({ _id: token._id }, { lastUsedAt: new Date() });
+    const decryptedKey = this.decrypt(token.apiKey);
+    const normalizedKey = extractOpenAIApiKey(decryptedKey);
+    if (!normalizedKey) {
+      this.logger.warn(`OpenAI token ${token._id?.toString()} does not contain a valid sk- API key`);
+      return null;
+    }
+
+    const tokenUpdate: Record<string, any> = { lastUsedAt: new Date() };
+    if (normalizedKey !== decryptedKey) {
+      tokenUpdate.apiKey = this.encrypt(normalizedKey);
+    }
+    await this.openaiTokenModel.updateOne({ _id: token._id }, tokenUpdate);
 
     return {
-      key: this.decrypt(token.apiKey),
+      key: normalizedKey,
       model: token.model,
       temperature: token.temperature ?? 0.7,
       maxTokens: token.maxTokens ?? 2000,

@@ -1,4 +1,5 @@
-import { IsEnum, IsMongoId, IsOptional, IsString } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsMongoId, IsOptional, IsString, Max, Min } from 'class-validator';
 import { TrialEnrollmentStatus } from '../schemas/trial-enrollment.schema';
 
 export class QueryTrialEnrollmentDto {
@@ -17,6 +18,10 @@ export class QueryTrialEnrollmentDto {
   @IsMongoId()
   @IsOptional()
   saleId?: string;
+
+  @IsMongoId()
+  @IsOptional()
+  experienceTeacherId?: string;
 
   @IsMongoId()
   @IsOptional()
@@ -41,4 +46,17 @@ export class QueryTrialEnrollmentDto {
   @IsString()
   @IsOptional()
   needsDecision?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  page?: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  @IsOptional()
+  limit?: number;
 }

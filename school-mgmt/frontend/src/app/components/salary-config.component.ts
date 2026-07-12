@@ -63,6 +63,9 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
             <th>Giờ chuẩn/tháng</th>
             <th>Giờ vào ca</th>
             <th>Phạt muộn/lần</th>
+            <th>Thưởng đúng giờ</th>
+            <th>Case test học sinh</th>
+            <th>Chấm bài</th>
             <th>Hoa hồng</th>
             <th>KPI</th>
             <th>Trạng thái</th>
@@ -81,6 +84,9 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
             <td class="center">{{cfg.standardHours}}h</td>
             <td class="center">{{cfg.scheduledStartTime}}</td>
             <td class="right mono">{{cfg.latePenaltyAmount | number}}đ</td>
+            <td class="right mono">{{(cfg.punctualityBonusAmount || 0) | number}}đ</td>
+            <td class="right mono">{{(cfg.experienceCaseRate || 0) | number}}đ</td>
+            <td class="right mono">{{(cfg.homeworkGradingRate || 0) | number}}đ</td>
             <td class="center">
               <span class="pill" [class.on]="cfg.commissionEnabled" [class.off]="!cfg.commissionEnabled">
                 {{cfg.commissionEnabled ? 'Bật' : 'Tắt'}}
@@ -129,6 +135,18 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
         <div class="info-row">
           <span class="info-label">Phạt đi muộn / lần</span>
           <span class="info-value">{{myConfig()!.latePenaltyAmount | number}}đ</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Thưởng đúng giờ / lần</span>
+          <span class="info-value">{{(myConfig()!.punctualityBonusAmount || 0) | number}}đ</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Lương test học sinh / case</span>
+          <span class="info-value">{{(myConfig()!.experienceCaseRate || 0) | number}}đ</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Lương chấm bài / bài</span>
+          <span class="info-value">{{(myConfig()!.homeworkGradingRate || 0) | number}}đ</span>
         </div>
         <div class="info-row">
           <span class="info-label">Trạng thái</span>
@@ -221,6 +239,18 @@ const COMMISSION_TYPE_LABELS: Record<string, string> = {
           <label>
             Phạt đi muộn / lần (VNĐ)
             <input name="latePenaltyAmount" type="number" [(ngModel)]="form.latePenaltyAmount" min="0" />
+          </label>
+          <label>
+            Thưởng đúng giờ / lần (VNĐ)
+            <input name="punctualityBonusAmount" type="number" [(ngModel)]="form.punctualityBonusAmount" min="0" />
+          </label>
+          <label>
+            Lương test học sinh / case (VNĐ)
+            <input name="experienceCaseRate" type="number" [(ngModel)]="form.experienceCaseRate" min="0" />
+          </label>
+          <label>
+            Lương chấm bài / bài (VNĐ)
+            <input name="homeworkGradingRate" type="number" [(ngModel)]="form.homeworkGradingRate" min="0" />
           </label>
         </div>
 
@@ -499,6 +529,9 @@ export class SalaryConfigComponent implements OnInit {
       standardHours: 176,
       scheduledStartTime: '08:00',
       latePenaltyAmount: 0,
+      punctualityBonusAmount: 0,
+      experienceCaseRate: 0,
+      homeworkGradingRate: 0,
       commissionEnabled: false,
       commissionType: 'PROGRESSIVE' as string,
       commissionTiers: [] as CommissionTier[],
@@ -526,6 +559,9 @@ export class SalaryConfigComponent implements OnInit {
       standardHours: cfg.standardHours,
       scheduledStartTime: cfg.scheduledStartTime,
       latePenaltyAmount: cfg.latePenaltyAmount,
+      punctualityBonusAmount: cfg.punctualityBonusAmount || 0,
+      experienceCaseRate: cfg.experienceCaseRate || 0,
+      homeworkGradingRate: cfg.homeworkGradingRate || 0,
       commissionEnabled: cfg.commissionEnabled,
       commissionType: cfg.commissionType || 'PROGRESSIVE',
       commissionTiers: (cfg.commissionTiers || []).map(t => ({ ...t })),

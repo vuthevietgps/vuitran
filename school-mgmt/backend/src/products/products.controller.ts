@@ -20,7 +20,7 @@ export class ProductsController {
   }
 
   @Get()
-  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS)
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.EXPERIENCE_TEACHER)
   findAll() {
     return this.productsService.findAll();
   }

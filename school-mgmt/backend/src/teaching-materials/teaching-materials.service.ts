@@ -7,8 +7,13 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { FilterQuery, Model, Types } from 'mongoose';
 import {
+  MaterialDifficulty,
   MaterialFileCategory,
   MaterialExtractionStatus,
+  MaterialScope,
+  MaterialStatus,
+  MaterialType,
+  MaterialUsagePhase,
   TeachingMaterial,
   TeachingMaterialDocument,
 } from './schemas/teaching-material.schema';
@@ -40,8 +45,22 @@ type MaterialListFilters = {
   search?: string;
   fileCategory?: MaterialFileCategory;
   extractionStatus?: MaterialExtractionStatus;
+  productId?: string;
+  courseName?: string;
+  unitCode?: string;
+  lessonCode?: string;
+  materialScope?: MaterialScope;
+  materialType?: MaterialType;
+  usagePhase?: MaterialUsagePhase;
+  difficulty?: MaterialDifficulty;
+  status?: MaterialStatus;
+  assignableAsHomework?: boolean;
   page?: number;
   limit?: number;
+};
+
+type MaterialKnowledgeChunkFilters = MaterialListFilters & {
+  materialId?: string;
 };
 
 type ScopedMaterialStats = {
@@ -50,6 +69,9 @@ type ScopedMaterialStats = {
   totalChunks: number;
   bySubject: Record<string, number>;
   byGrade: Record<string, number>;
+  byScope: Record<string, number>;
+  byMaterialType: Record<string, number>;
+  byCourse: Record<string, number>;
   totalSizeBytes: number;
   totalSizeMB: number;
 };
@@ -59,7 +81,6 @@ export class TeachingMaterialsService {
   private readonly logger = new Logger(TeachingMaterialsService.name);
   private static readonly MATERIAL_ADMIN_ROLES = new Set<Role>([
     Role.DIRECTOR,
-    Role.OPS,
   ]);
 
   constructor(
@@ -107,6 +128,59 @@ export class TeachingMaterialsService {
     }
   }
 
+  private parseStringArray(input?: string[] | string): string[] {
+    if (!input) return [];
+    if (Array.isArray(input)) {
+      return input.map((item) => String(item).trim()).filter(Boolean);
+    }
+
+    try {
+      const parsed = JSON.parse(input);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      // Fallback below handles comma-separated form input.
+    }
+
+    return input.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+
+  private trimToUndefined(value?: string | null): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed || undefined;
+  }
+
+  private uppercaseToUndefined(value?: string | null): string | undefined {
+    return this.trimToUndefined(value)?.toUpperCase();
+  }
+
+  private objectIdOrUndefined(value?: string | null): Types.ObjectId | undefined {
+    const trimmed = this.trimToUndefined(value);
+    if (!trimmed || !Types.ObjectId.isValid(trimmed)) return undefined;
+    return new Types.ObjectId(trimmed);
+  }
+
+  private numberOrUndefined(value?: number | string | null): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : undefined;
+  }
+
+  private booleanValue(value: unknown, fallback = false): boolean {
+    if (value === undefined || value === null || value === '') return fallback;
+    return value === true || value === 'true' || value === '1' || value === 1;
+  }
+
+  private enumOrDefault<T extends string>(
+    value: unknown,
+    allowedValues: readonly T[],
+    fallback: T,
+  ): T {
+    return allowedValues.includes(value as T) ? value as T : fallback;
+  }
+
   private normalizeMaterialText(value?: string | null) {
     if (!value) return '';
     return value
@@ -121,6 +195,10 @@ export class TeachingMaterialsService {
     if (!normalized) return '';
     if (normalized.length <= limit) return normalized;
     return `${normalized.slice(0, limit - 3)}...`;
+  }
+
+  private escapeRegex(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private isTextExtractableMime(fileType?: string) {
@@ -249,6 +327,36 @@ export class TeachingMaterialsService {
     if (filters?.classId) {
       clauses.push({ classId: new Types.ObjectId(filters.classId) });
     }
+    if (filters?.productId && Types.ObjectId.isValid(filters.productId)) {
+      clauses.push({ productId: new Types.ObjectId(filters.productId) });
+    }
+    if (filters?.courseName) {
+      clauses.push({ courseName: filters.courseName });
+    }
+    if (filters?.unitCode) {
+      clauses.push({ unitCode: filters.unitCode.trim().toUpperCase() });
+    }
+    if (filters?.lessonCode) {
+      clauses.push({ lessonCode: filters.lessonCode.trim().toUpperCase() });
+    }
+    if (filters?.materialScope) {
+      clauses.push({ materialScope: filters.materialScope });
+    }
+    if (filters?.materialType) {
+      clauses.push({ materialType: filters.materialType });
+    }
+    if (filters?.usagePhase) {
+      clauses.push({ usagePhase: filters.usagePhase });
+    }
+    if (filters?.difficulty) {
+      clauses.push({ difficulty: filters.difficulty });
+    }
+    if (filters?.status) {
+      clauses.push({ status: filters.status });
+    }
+    if (filters?.assignableAsHomework !== undefined) {
+      clauses.push({ assignableAsHomework: filters.assignableAsHomework });
+    }
     const fileCategoryFilter = this.buildFileCategoryFilter(filters?.fileCategory);
     if (fileCategoryFilter) {
       clauses.push(fileCategoryFilter);
@@ -348,6 +456,18 @@ export class TeachingMaterialsService {
     const knowledgeText = this.normalizeMaterialText(
       [
         material.title ? `Tieu de: ${material.title}` : '',
+        material.courseName ? `Khoa hoc: ${material.courseName}` : '',
+        material.unitCode || material.unitTitle
+          ? `Unit: ${[material.unitCode, material.unitTitle].filter(Boolean).join(' - ')}`
+          : '',
+        material.lessonCode || material.lessonTitle
+          ? `Bai hoc: ${[material.lessonCode, material.lessonTitle].filter(Boolean).join(' - ')}`
+          : '',
+        material.materialScope ? `Nhom tai lieu: ${material.materialScope}` : '',
+        material.materialType ? `Loai hoc lieu: ${material.materialType}` : '',
+        Array.isArray(material.skills) && material.skills.length
+          ? `Ky nang: ${material.skills.join(', ')}`
+          : '',
         material.description ? `Mo ta: ${material.description}` : '',
         material.manualSummary ? `Tom tat: ${material.manualSummary}` : '',
         extractedText ? `Noi dung: ${extractedText}` : '',
@@ -391,6 +511,7 @@ export class TeachingMaterialsService {
     return this.materialModel
       .findById(id)
       .populate('classId', 'name code')
+      .populate('productId', 'name code category teachingMode gradeLevel')
       .populate('teacherId', 'fullName')
       .lean();
   }
@@ -420,18 +541,58 @@ export class TeachingMaterialsService {
 
     const material = new this.materialModel({
       teacherId: actorObjectId,
-      title: dto.title,
-      description: dto.description,
-      subject: dto.subject,
-      grade: dto.grade,
-      classId: dto.classId ? new Types.ObjectId(dto.classId) : undefined,
+      title: this.trimToUndefined(dto.title) || file.originalname,
+      description: this.trimToUndefined(dto.description),
+      subject: this.trimToUndefined(dto.subject),
+      grade: this.trimToUndefined(dto.grade),
+      classId: this.objectIdOrUndefined(dto.classId),
+      productId: this.objectIdOrUndefined(dto.productId),
+      courseName: this.trimToUndefined(dto.courseName),
+      unitCode: this.uppercaseToUndefined(dto.unitCode),
+      unitTitle: this.trimToUndefined(dto.unitTitle),
+      lessonCode: this.uppercaseToUndefined(dto.lessonCode),
+      lessonTitle: this.trimToUndefined(dto.lessonTitle),
+      lessonOrder: this.numberOrUndefined(dto.lessonOrder as any),
+      materialScope: this.enumOrDefault(
+        dto.materialScope,
+        Object.values(MaterialScope),
+        MaterialScope.TEACHING,
+      ),
+      materialType: this.enumOrDefault(
+        dto.materialType,
+        Object.values(MaterialType),
+        MaterialType.OTHER,
+      ),
+      usagePhase: this.enumOrDefault(
+        dto.usagePhase,
+        Object.values(MaterialUsagePhase),
+        MaterialUsagePhase.IN_CLASS,
+      ),
+      difficulty: this.enumOrDefault(
+        dto.difficulty,
+        Object.values(MaterialDifficulty),
+        MaterialDifficulty.STANDARD,
+      ),
+      status: this.enumOrDefault(
+        dto.status,
+        Object.values(MaterialStatus),
+        MaterialStatus.APPROVED,
+      ),
+      estimatedMinutes: this.numberOrUndefined(dto.estimatedMinutes as any),
+      skills: this.parseStringArray(dto.skills as any),
+      assignableAsHomework: this.booleanValue(
+        dto.assignableAsHomework,
+        dto.materialScope === MaterialScope.HOMEWORK,
+      ),
+      autoGradeable: this.booleanValue(dto.autoGradeable),
+      version: this.trimToUndefined(dto.version),
       fileUrl: `/uploads/materials/${file.filename}`,
       fileType: file.mimetype,
       fileCategory: this.resolveFileCategory(file.mimetype),
       fileSize: file.size,
       originalName: file.originalname,
       tags: this.parseTags(dto.tags),
-      isShared: dto.isShared === true || (dto.isShared as any) === 'true',
+      isShared: this.booleanValue(dto.isShared),
       manualSummary: dto.manualSummary?.trim() || undefined,
     });
 
@@ -474,6 +635,7 @@ export class TeachingMaterialsService {
       this.materialModel
         .find(query, projection)
         .populate('classId', 'name code')
+        .populate('productId', 'name code category teachingMode gradeLevel')
         .sort(hasSearch ? { score: { $meta: 'textScore' }, updatedAt: -1 } : { updatedAt: -1 })
         .skip((page - 1) * limit)
         .limit(limit)
@@ -511,27 +673,215 @@ export class TeachingMaterialsService {
     return material as TeachingMaterial;
   }
 
+  async searchKnowledgeChunks(actor: JwtPayload, filters?: MaterialKnowledgeChunkFilters) {
+    const limit = Math.min(20, Math.max(1, Number(filters?.limit) || 8));
+    const materialFilters: MaterialListFilters = {
+      subject: filters?.subject,
+      grade: filters?.grade,
+      classId: filters?.classId,
+      fileCategory: filters?.fileCategory,
+      extractionStatus: filters?.extractionStatus || MaterialExtractionStatus.READY,
+      productId: filters?.productId,
+      courseName: filters?.courseName,
+      unitCode: filters?.unitCode,
+      lessonCode: filters?.lessonCode,
+      materialScope: filters?.materialScope,
+      materialType: filters?.materialType,
+      usagePhase: filters?.usagePhase,
+      difficulty: filters?.difficulty,
+      status: filters?.status || MaterialStatus.APPROVED,
+      assignableAsHomework: filters?.assignableAsHomework,
+      search: filters?.search,
+      limit: 50,
+      page: 1,
+    };
+    const materialQuery = this.buildScopedFilter(actor, materialFilters);
+    const materialClauses: FilterQuery<TeachingMaterialDocument>[] = [materialQuery];
+    if (filters?.materialId && Types.ObjectId.isValid(filters.materialId)) {
+      materialClauses.push({ _id: new Types.ObjectId(filters.materialId) });
+    }
+    const scopedMaterialQuery = materialClauses.length === 1
+      ? materialQuery
+      : { $and: materialClauses };
+
+    const materials = await this.materialModel
+      .find(scopedMaterialQuery)
+      .select('_id title subject grade courseName unitCode unitTitle lessonCode lessonTitle materialType materialScope aiSummary manualSummary chunkCount updatedAt')
+      .sort({ updatedAt: -1 })
+      .limit(80)
+      .lean<any[]>();
+
+    if (!materials.length) {
+      return {
+        data: [],
+        meta: {
+          totalMaterials: 0,
+          limit,
+          warning: 'Khong co hoc lieu scoped phu hop de tim chunk.',
+        },
+      };
+    }
+
+    const materialIds = materials.map((material) => material._id);
+    const materialById = new Map(materials.map((material) => [material._id.toString(), material]));
+    const searchTerm = filters?.search?.trim();
+    const baseChunkQuery: FilterQuery<TeachingMaterialChunkDocument> = {
+      materialId: { $in: materialIds },
+    };
+    const chunkQuery = searchTerm
+      ? {
+          ...baseChunkQuery,
+          content: { $regex: this.escapeRegex(searchTerm), $options: 'i' },
+        }
+      : baseChunkQuery;
+
+    let chunks = await this.chunkModel
+      .find(chunkQuery)
+      .sort({ updatedAt: -1, chunkIndex: 1 })
+      .limit(limit)
+      .lean<any[]>();
+
+    if (!chunks.length && searchTerm) {
+      chunks = await this.chunkModel
+        .find(baseChunkQuery)
+        .sort({ updatedAt: -1, chunkIndex: 1 })
+        .limit(limit)
+        .lean<any[]>();
+    }
+
+    return {
+      data: chunks.map((chunk) => {
+        const material = materialById.get(chunk.materialId?.toString?.() || '');
+        return {
+          materialId: chunk.materialId?.toString?.(),
+          title: material?.title,
+          subject: material?.subject,
+          grade: material?.grade,
+          courseName: material?.courseName,
+          unitCode: material?.unitCode,
+          unitTitle: material?.unitTitle,
+          lessonCode: material?.lessonCode,
+          lessonTitle: material?.lessonTitle,
+          materialType: material?.materialType,
+          materialScope: material?.materialScope,
+          chunkIndex: chunk.chunkIndex,
+          preview: chunk.preview || this.clipText(chunk.content, 240),
+          content: this.clipText(chunk.content, 900),
+          charCount: chunk.charCount,
+        };
+      }),
+      meta: {
+        totalMaterials: materials.length,
+        totalChunksReturned: chunks.length,
+        limit,
+        search: searchTerm,
+      },
+    };
+  }
+
   async update(
     id: string,
     dto: UpdateTeachingMaterialDto,
     actor: JwtPayload,
   ): Promise<TeachingMaterial> {
     const material = await this.assertMaterialAccess(id, actor);
+    const updatePayload: Record<string, unknown> = { ...dto };
 
-    if (dto.tags && typeof dto.tags === 'string') {
-      (dto as any).tags = this.parseTags(dto.tags);
+    for (const key of [
+      'title',
+      'description',
+      'subject',
+      'grade',
+      'courseName',
+      'unitTitle',
+      'lessonTitle',
+      'version',
+    ] as const) {
+      if ((dto as any)[key] !== undefined) {
+        updatePayload[key] = this.trimToUndefined((dto as any)[key]);
+      }
+    }
+
+    if (dto.unitCode !== undefined) {
+      updatePayload.unitCode = this.uppercaseToUndefined(dto.unitCode);
+    }
+    if (dto.lessonCode !== undefined) {
+      updatePayload.lessonCode = this.uppercaseToUndefined(dto.lessonCode);
+    }
+    if (dto.classId !== undefined) {
+      updatePayload.classId = this.objectIdOrUndefined(dto.classId);
+    }
+    if (dto.productId !== undefined) {
+      updatePayload.productId = this.objectIdOrUndefined(dto.productId);
+    }
+    if (dto.lessonOrder !== undefined) {
+      updatePayload.lessonOrder = this.numberOrUndefined(dto.lessonOrder as any);
+    }
+    if (dto.estimatedMinutes !== undefined) {
+      updatePayload.estimatedMinutes = this.numberOrUndefined(dto.estimatedMinutes as any);
+    }
+    if (dto.materialScope !== undefined) {
+      updatePayload.materialScope = this.enumOrDefault(
+        dto.materialScope,
+        Object.values(MaterialScope),
+        (material as any).materialScope || MaterialScope.TEACHING,
+      );
+      if (dto.assignableAsHomework === undefined && updatePayload.materialScope === MaterialScope.HOMEWORK) {
+        updatePayload.assignableAsHomework = true;
+      }
+    }
+    if (dto.materialType !== undefined) {
+      updatePayload.materialType = this.enumOrDefault(
+        dto.materialType,
+        Object.values(MaterialType),
+        (material as any).materialType || MaterialType.OTHER,
+      );
+    }
+    if (dto.usagePhase !== undefined) {
+      updatePayload.usagePhase = this.enumOrDefault(
+        dto.usagePhase,
+        Object.values(MaterialUsagePhase),
+        (material as any).usagePhase || MaterialUsagePhase.IN_CLASS,
+      );
+    }
+    if (dto.difficulty !== undefined) {
+      updatePayload.difficulty = this.enumOrDefault(
+        dto.difficulty,
+        Object.values(MaterialDifficulty),
+        (material as any).difficulty || MaterialDifficulty.STANDARD,
+      );
+    }
+    if (dto.status !== undefined) {
+      updatePayload.status = this.enumOrDefault(
+        dto.status,
+        Object.values(MaterialStatus),
+        (material as any).status || MaterialStatus.APPROVED,
+      );
+    }
+
+    if (dto.tags !== undefined) {
+      updatePayload.tags = this.parseTags(dto.tags as any);
+    }
+    if (dto.skills !== undefined) {
+      updatePayload.skills = this.parseStringArray(dto.skills as any);
     }
 
     if (dto.isShared !== undefined) {
-      (dto as any).isShared = dto.isShared === true || (dto.isShared as any) === 'true';
+      updatePayload.isShared = this.booleanValue(dto.isShared);
+    }
+    if (dto.assignableAsHomework !== undefined) {
+      updatePayload.assignableAsHomework = this.booleanValue(dto.assignableAsHomework);
+    }
+    if (dto.autoGradeable !== undefined) {
+      updatePayload.autoGradeable = this.booleanValue(dto.autoGradeable);
     }
 
     if (dto.manualSummary !== undefined) {
-      (dto as any).manualSummary = dto.manualSummary?.trim() || undefined;
+      updatePayload.manualSummary = dto.manualSummary?.trim() || undefined;
     }
 
     const previousClassId = material.classId?.toString?.() || null;
-    const updated = await this.materialModel.findByIdAndUpdate(id, dto, { new: true }).lean<any>();
+    const updated = await this.materialModel.findByIdAndUpdate(id, updatePayload, { new: true }).lean<any>();
     if (!updated) throw new NotFoundException('Tai lieu khong ton tai');
 
     await this.processMaterialKnowledge(id);
@@ -616,6 +966,25 @@ export class TeachingMaterialsService {
             { $group: { _id: '$grade', count: { $sum: 1 } } },
             { $sort: { count: -1 } },
           ],
+          byScope: [
+            { $group: { _id: '$materialScope', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+          byMaterialType: [
+            { $group: { _id: '$materialType', count: { $sum: 1 } } },
+            { $sort: { count: -1 } },
+          ],
+          byCourse: [
+            {
+              $group: {
+                _id: {
+                  $ifNull: ['$courseName', '$productId'],
+                },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { count: -1 } },
+          ],
         },
       },
     ]);
@@ -636,6 +1005,28 @@ export class TeachingMaterialsService {
       byGrade: (summary.byGrade || []).reduce(
         (acc: Record<string, number>, entry: { _id?: string; count: number }) => {
           acc[entry._id || 'Khac'] = entry.count;
+          return acc;
+        },
+        {},
+      ),
+      byScope: (summary.byScope || []).reduce(
+        (acc: Record<string, number>, entry: { _id?: string; count: number }) => {
+          acc[entry._id || MaterialScope.TEACHING] = entry.count;
+          return acc;
+        },
+        {},
+      ),
+      byMaterialType: (summary.byMaterialType || []).reduce(
+        (acc: Record<string, number>, entry: { _id?: string; count: number }) => {
+          acc[entry._id || MaterialType.OTHER] = entry.count;
+          return acc;
+        },
+        {},
+      ),
+      byCourse: (summary.byCourse || []).reduce(
+        (acc: Record<string, number>, entry: { _id?: unknown; count: number }) => {
+          const key = entry._id ? String(entry._id) : 'Chua gan khoa';
+          acc[key] = entry.count;
           return acc;
         },
         {},

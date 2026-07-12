@@ -449,6 +449,8 @@ export class UsersService {
     const address = this.normalizeOptionalText(dto.address);
     const isParent = dto.role === Role.PARENT;
     const isTeacher = dto.role === Role.TEACHER;
+    const usesStaffSalaryConfig =
+      dto.role === Role.TEACHER || dto.role === Role.EXPERIENCE_TEACHER;
     const isShareholder = dto.role === Role.SHAREHOLDER;
     const ownershipPercentage = this.normalizeOwnershipPercentage(
       dto.ownershipPercentage,
@@ -462,9 +464,9 @@ export class UsersService {
         "Chi tai khoan giao vien moi duoc gan sale quan ly",
       );
     }
-    if (dto.salaryConfig && !isTeacher) {
+    if (dto.salaryConfig && !usesStaffSalaryConfig) {
       throw new BadRequestException(
-        "Chi tai khoan giao vien moi duoc khai bao salary config mac dinh",
+        "Chi tai khoan giao vien hoac giao vien trai nghiem moi duoc khai bao salary config mac dinh",
       );
     }
     if (!isShareholder && dto.ownershipPercentage !== undefined) {
@@ -518,12 +520,12 @@ export class UsersService {
           approvedBy: approvedBy || undefined,
           approvedAt: new Date(),
         });
-        if (dto.salaryConfig) {
-          await this.salaryConfigService.create({
-            ...dto.salaryConfig,
-            userId: saved._id.toString(),
-          });
-        }
+      }
+      if (usesStaffSalaryConfig && dto.salaryConfig) {
+        await this.salaryConfigService.create({
+          ...dto.salaryConfig,
+          userId: saved._id.toString(),
+        });
       }
     } catch (error) {
       await this.salaryConfigService.remove(saved._id.toString()).catch(() => undefined);

@@ -58,8 +58,8 @@ describe('TrialEnrollmentsComponent', () => {
 
   afterEach(() => TestBed.resetTestingModule());
 
-  it('labels converted trials as approved trial records', () => {
-    expect(component.statusLabel('CONVERTED')).toBe('Da duoc duyet hoc thu');
+  it('labels converted test cases as closed enrollments', () => {
+    expect(component.statusLabel('CONVERTED')).toBe('Đã chốt học');
   });
 
   it('shows the approved-trial success message after convert', async () => {
@@ -68,7 +68,7 @@ describe('TrialEnrollmentsComponent', () => {
     expect(trialService.convert).toHaveBeenCalledWith('trial-1', undefined);
     expect(component.pageFeedback()).toEqual({
       type: 'success',
-      message: 'Da duoc duyet hoc thu va chuyen thanh hoc vien chinh thuc',
+      message: 'Đã chốt học sau buổi test và chuyển thành học viên chính thức',
     });
   });
 

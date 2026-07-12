@@ -38,6 +38,8 @@ import { ReviewSessionChangeRequestDto } from './dto/review-session-change-reque
 import { BulkCreateSessionDto } from './dto/bulk-create-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
 import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
+import { GradeHomeworkDto } from './dto/grade-homework.dto';
+import { SubmitHomeworkDto } from './dto/submit-homework.dto';
 import { SessionTrialService } from './session-trial.service';
 import { SessionWorkflowService } from './session-workflow.service';
 import { SessionPayrollService } from './session-payroll.service';
@@ -571,6 +573,158 @@ export class SessionsService {
     return this.sessionQueryService.findAll(query, actor);
   }
 
+  async submitHomework(
+    sessionId: string,
+    actor: JwtPayload,
+    dto: SubmitHomeworkDto,
+    files: Express.Multer.File[] = [],
+  ): Promise<SessionDocument> {
+    const session = await this.sessionModel.findById(sessionId);
+    if (!session) {
+      throw new NotFoundException('Buoi hoc khong ton tai');
+    }
+
+    if (actor.role !== Role.PARENT) {
+      throw new ForbiddenException('Chi phu huynh moi duoc nop bai tap');
+    }
+
+    const ownerParentId = await this.resolveParentUserIdForSession({
+      parentUserId: session.parentUserId,
+      studentId: session.studentId,
+    });
+    if (!ownerParentId || ownerParentId !== actor.sub) {
+      throw new ForbiddenException('Ban khong phai phu huynh cua hoc sinh nay');
+    }
+
+    const evaluation = (session.evaluation || {}) as any;
+    const assignedHomework =
+      evaluation.homeworkAssigned || session.homework || (session.teachingReport as any)?.homework;
+    const assignedMaterials = Array.isArray(evaluation.homeworkMaterialIds)
+      ? evaluation.homeworkMaterialIds
+      : [];
+    const assignedQuizzes = Array.isArray(evaluation.homeworkQuizIds)
+      ? evaluation.homeworkQuizIds
+      : [];
+    if (!assignedHomework && assignedMaterials.length === 0 && assignedQuizzes.length === 0) {
+      throw new BadRequestException('Buoi hoc nay chua co bai tap ve nha');
+    }
+
+    const submissionText = dto.submissionText?.trim();
+    const submissionVideoUrl = dto.submissionVideoUrl?.trim();
+    if (!submissionText && !submissionVideoUrl && files.length === 0) {
+      throw new BadRequestException('Can nhap noi dung, link video hoac upload file bai lam');
+    }
+
+    if (submissionText) {
+      evaluation.homeworkSubmissionText = submissionText;
+    }
+    if (submissionVideoUrl) {
+      evaluation.homeworkSubmissionVideoUrl = submissionVideoUrl;
+    }
+    if (files.length > 0) {
+      const uploadedFiles = files.map((file) => ({
+        fileUrl: `/uploads/homework-submissions/${file.filename}`,
+        originalName: file.originalname,
+        fileType: file.mimetype,
+        fileSize: file.size,
+        uploadedAt: new Date(),
+      }));
+      evaluation.homeworkSubmissionFiles = [
+        ...(Array.isArray(evaluation.homeworkSubmissionFiles)
+          ? evaluation.homeworkSubmissionFiles
+          : []),
+        ...uploadedFiles,
+      ];
+    }
+    evaluation.homeworkSubmittedAt = new Date();
+    evaluation.homeworkSubmittedBy = new Types.ObjectId(actor.sub);
+    evaluation.homeworkStatus = 'SUBMITTED';
+    session.evaluation = evaluation;
+
+    const savedSession = await session.save();
+    this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'submitHomework');
+    return savedSession;
+  }
+
+  private assertCanReviewHomework(actor?: JwtPayload) {
+    if (!actor) return;
+    const canReview = [Role.DIRECTOR, Role.OPS, Role.EXPERIENCE_TEACHER].includes(actor.role as Role);
+    if (!canReview) {
+      throw new ForbiddenException('Ban khong co quyen xem queue cham bai tap ve nha');
+    }
+  }
+
+  private buildHomeworkGradingFilters(status?: string): any[] {
+    const filters: any[] = [
+      {
+        $or: [
+          { 'evaluation.homeworkAssigned': { $exists: true, $nin: [null, ''] } },
+          { 'evaluation.homeworkMaterialIds.0': { $exists: true } },
+          { homework: { $exists: true, $nin: [null, ''] } },
+          { 'teachingReport.homework': { $exists: true, $nin: [null, ''] } },
+        ],
+      },
+    ];
+
+    if ((status || 'pending') !== 'all') {
+      filters.push({
+        'evaluation.homeworkStatus': { $nin: ['GRADED', 'REVIEWED'] },
+      });
+      filters.push({
+        $or: [
+          { 'evaluation.homeworkSubmittedAt': { $exists: true } },
+          { 'evaluation.homeworkSubmissionFiles.0': { $exists: true } },
+          { 'evaluation.homeworkSubmissionText': { $exists: true, $nin: [null, ''] } },
+          { 'evaluation.homeworkSubmissionVideoUrl': { $exists: true, $nin: [null, ''] } },
+        ],
+      });
+    }
+
+    return filters;
+  }
+
+  async listHomeworkForGrading(query?: { status?: string; limit?: string }, actor?: JwtPayload) {
+    this.assertCanReviewHomework(actor);
+    const limit = Math.min(200, Math.max(1, Number(query?.limit) || 100));
+    const filters = this.buildHomeworkGradingFilters(query?.status);
+
+    return this.sessionModel
+      .find({ $and: filters })
+      .sort({ scheduledDate: -1, scheduledStartTime: -1 })
+      .limit(limit)
+      .populate('classId', 'name code')
+      .populate('studentId', 'fullName studentCode')
+      .populate('teacherId', 'fullName email')
+      .populate('evaluation.homeworkMaterialIds', 'title courseName unitTitle lessonTitle fileUrl materialType')
+      .populate('evaluation.homeworkQuizIds', 'title subject grade courseName unitCode lessonCode passingScore')
+      .lean();
+  }
+
+  async getHomeworkForGradingDetail(sessionId: string, actor: JwtPayload) {
+    this.assertCanReviewHomework(actor);
+    if (!Types.ObjectId.isValid(sessionId)) {
+      throw new BadRequestException('sessionId khong hop le');
+    }
+
+    const filters = this.buildHomeworkGradingFilters('all');
+    filters.push({ _id: new Types.ObjectId(sessionId) });
+
+    const session = await this.sessionModel
+      .findOne({ $and: filters })
+      .select('-evaluation.homeworkSubmissionFiles -evaluation.homeworkReviewFiles')
+      .populate('classId', 'name code subject grade')
+      .populate('studentId', 'fullName studentCode')
+      .populate('teacherId', 'fullName email')
+      .populate('evaluation.homeworkMaterialIds', 'title courseName unitTitle lessonTitle materialType aiSummary manualSummary')
+      .populate('evaluation.homeworkQuizIds', 'title subject grade courseName unitCode lessonCode passingScore')
+      .lean();
+
+    if (!session) {
+      throw new NotFoundException('Khong tim thay bai tap trong queue cham');
+    }
+    return session;
+  }
+
   async findById(id: string, actor?: JwtPayload): Promise<SessionDocument> {
     return this.sessionQueryService.findById(id, actor);
   }
@@ -1003,6 +1157,15 @@ export class SessionsService {
     dto: SubmitTeachingReportDto,
   ): Promise<SessionDocument> {
     return this.sessionWorkflowService.submitTeachingReport(sessionId, teacherUserId, dto);
+  }
+
+  async gradeHomework(
+    sessionId: string,
+    actor: JwtPayload,
+    dto: GradeHomeworkDto,
+    reviewFiles: Express.Multer.File[] = [],
+  ): Promise<SessionDocument> {
+    return this.sessionWorkflowService.gradeHomework(sessionId, actor, dto, reviewFiles);
   }
 
   async bulkSubmitTeachingReport(

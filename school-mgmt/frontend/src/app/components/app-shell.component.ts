@@ -23,6 +23,18 @@ import { ChangePasswordModalComponent } from './change-password-modal.component'
 const SIDEBAR_STATE_STORAGE_KEY = 'school_mgmt_sidebar_collapsed';
 const REPORT_GROUP_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.TEACHER, Role.SALE, Role.SHAREHOLDER];
 const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.SHAREHOLDER];
+const AI_ASSISTANT_ROLES = [
+  Role.DIRECTOR,
+  Role.ACCOUNTING,
+  Role.OPS,
+  Role.TEACHER,
+  Role.EXPERIENCE_TEACHER,
+  Role.PARENT,
+  Role.STUDENT,
+  Role.SALE,
+  Role.ADSMANAGER,
+  Role.SHAREHOLDER,
+];
 
 @Component({
   selector: 'app-shell',
@@ -43,6 +55,22 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           <div class="menu-group-items" [class.collapsed-sidebar]="sidebarCollapsed">
             <a routerLink="/app/dashboard" routerLinkActive="active" title="Dashboard" data-testid="nav-dashboard">
               <span class="icon">&#9632;</span><span class="label">Dashboard</span>
+            </a>
+            <a
+              *ngIf="hasRole([Role.DIRECTOR])"
+              routerLink="/app/director-ai"
+              routerLinkActive="active"
+              title="Trợ lý Giám đốc"
+              data-testid="nav-director-ai">
+              <span class="icon">&#128172;</span><span class="label">Trợ lý Giám đốc</span>
+            </a>
+            <a
+              *ngIf="hasRole(aiAssistantRoles) && !hasRole([Role.DIRECTOR])"
+              routerLink="/app/ai-assistant"
+              routerLinkActive="active"
+              title="Tro ly AI"
+              data-testid="nav-ai-assistant">
+              <span class="icon">&#129302;</span><span class="label">Tro ly AI</span>
             </a>
             <a
               *ngIf="hasRole([Role.DIRECTOR, Role.SHAREHOLDER])"
@@ -71,7 +99,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['management']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.TEACHER])">
+        <div class="menu-group" [class.open]="menuGroups['management']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.TEACHER, Role.EXPERIENCE_TEACHER])">
           <button class="menu-group-header" (click)="toggleGroup('management')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128736;</span>
             <span class="group-label">Quản lý</span>
@@ -97,7 +125,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
               data-testid="nav-parent-users">
               <span class="icon">&#128101;</span><span class="label">TK phụ huynh</span>
             </a>
-            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="Quản lý gói sản phẩm" data-testid="nav-products">
+            <a routerLink="/app/products" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE, Role.EXPERIENCE_TEACHER])" title="Bảng giá gói sản phẩm" data-testid="nav-products">
               <span class="icon">&#128218;</span><span class="label">Quản lý gói sản phẩm</span>
             </a>
             <a routerLink="/app/students" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE])" title="Quản lý học sinh" data-testid="nav-students">
@@ -109,7 +137,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['sales']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE])">
+        <div class="menu-group" [class.open]="menuGroups['sales']" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE, Role.EXPERIENCE_TEACHER])">
           <button class="menu-group-header" (click)="toggleGroup('sales')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128176;</span>
             <span class="group-label">Kinh doanh</span>
@@ -124,6 +152,12 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             </a>
             <a routerLink="/app/commission-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.SALE, Role.ACCOUNTING])" title="Hoa hồng">
               <span class="icon">&#128178;</span><span class="label">BC hoa hồng</span>
+            </a>
+            <a routerLink="/app/trial-enrollments" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.SALE, Role.EXPERIENCE_TEACHER])" title="Buổi test">
+              <span class="icon">&#128221;</span><span class="label">Buổi test</span>
+            </a>
+            <a routerLink="/app/homework-grading" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.EXPERIENCE_TEACHER])" title="Chấm bài">
+              <span class="icon">&#9989;</span><span class="label">Chấm bài</span>
             </a>
         </div>
         </div>
@@ -177,7 +211,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['learning']" *ngIf="hasRole([Role.PARENT])">
+        <div class="menu-group" [class.open]="menuGroups['learning']" *ngIf="hasRole([Role.PARENT, Role.STUDENT])">
           <button class="menu-group-header" (click)="toggleGroup('learning')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128218;</span>
             <span class="group-label">Học bạ trực tuyến</span>
@@ -187,22 +221,25 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/teaching-materials" routerLinkActive="active" title="Chương trình học" data-testid="nav-parent-materials">
               <span class="icon">&#128194;</span><span class="label">Chương trình học</span>
             </a>
-            <a routerLink="/app/student-progress" routerLinkActive="active" title="Báo cáo giảng dạy chi tiết" data-testid="nav-student-progress">
+            <a routerLink="/app/student-quiz" routerLinkActive="active" title="Quiz">
+              <span class="icon">&#9989;</span><span class="label">Quiz</span>
+            </a>
+            <a routerLink="/app/student-progress" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Báo cáo giảng dạy chi tiết" data-testid="nav-student-progress">
               <span class="icon">&#128200;</span><span class="label">Báo cáo giảng dạy</span>
             </a>
-            <a routerLink="/app/parent-attendance" routerLinkActive="active" title="Lịch sử điểm danh">
+            <a routerLink="/app/parent-attendance" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Lịch sử điểm danh">
               <span class="icon">&#9745;</span><span class="label">Điểm danh</span>
             </a>
-            <a routerLink="/app/sessions" routerLinkActive="active" title="Lớp học">
+            <a routerLink="/app/sessions" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Lớp học">
               <span class="icon">&#128197;</span><span class="label">Lớp học</span>
             </a>
-            <a routerLink="/app/parent-calendar" routerLinkActive="active" title="Lịch học" data-testid="nav-parent-calendar">
+            <a routerLink="/app/parent-calendar" routerLinkActive="active" *ngIf="hasRole([Role.PARENT])" title="Lịch học" data-testid="nav-parent-calendar">
               <span class="icon">&#128198;</span><span class="label">Lịch học</span>
             </a>
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['teaching']" *ngIf="!hasRole([Role.PARENT]) && hasRole(teachingMaterialsAccessRoles)">
+        <div class="menu-group" [class.open]="menuGroups['teaching']" *ngIf="!hasRole([Role.PARENT, Role.STUDENT]) && hasRole(teachingMaterialsAccessRoles)">
           <button class="menu-group-header" (click)="toggleGroup('teaching')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#127891;</span>
             <span class="group-label">Giảng dạy</span>
@@ -220,6 +257,9 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             </a>
             <a routerLink="/app/teaching-report" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS, Role.TEACHER, Role.ACCOUNTING, Role.SHAREHOLDER])" title="Báo cáo giảng dạy">
               <span class="icon">&#128221;</span><span class="label">BC giảng dạy</span>
+            </a>
+            <a routerLink="/app/quizzes" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.OPS])" title="Kho quiz">
+              <span class="icon">&#9989;</span><span class="label">Kho quiz</span>
             </a>
             <a routerLink="/app/teacher-kpi" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR])" title="KPI giáo viên">
               <span class="icon">&#127942;</span><span class="label">KPI giáo viên</span>
@@ -248,7 +288,7 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
           </div>
         </div>
 
-        <div class="menu-group" [class.open]="menuGroups['finance']" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE, Role.PARENT, Role.TEACHER, Role.SHAREHOLDER])">
+        <div class="menu-group" [class.open]="menuGroups['finance']" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.SALE, Role.PARENT, Role.TEACHER, Role.EXPERIENCE_TEACHER, Role.SHAREHOLDER])">
           <button class="menu-group-header" (click)="toggleGroup('finance')" *ngIf="!sidebarCollapsed">
             <span class="group-icon">&#128181;</span>
             <span class="group-label">Tài chính</span>
@@ -267,13 +307,13 @@ const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE
             <a routerLink="/app/payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER])" title="Thanh toán lương giáo viên">
               <span class="icon">&#128181;</span><span class="label">Lương GV (session)</span>
             </a>
-            <a routerLink="/app/work-sessions" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE])" title="Chấm công">
+            <a routerLink="/app/work-sessions" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.EXPERIENCE_TEACHER, Role.SALE])" title="Chấm công">
               <span class="icon">&#9201;</span><span class="label">Chấm công</span>
             </a>
             <a routerLink="/app/salary-config" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING])" title="Cấu hình lương">
               <span class="icon">&#9881;</span><span class="label">Cấu hình lương</span>
             </a>
-            <a routerLink="/app/staff-payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Bảng lương nhân viên">
+            <a routerLink="/app/staff-payroll" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.EXPERIENCE_TEACHER])" title="Bảng lương nhân viên">
               <span class="icon">&#128176;</span><span class="label">Bảng lương NV</span>
             </a>
             <a routerLink="/app/expenses" routerLinkActive="active" *ngIf="hasRole([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])" title="Chi phí khác">
@@ -543,6 +583,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
   Role = Role;
   readonly reportGroupRoles = REPORT_GROUP_ROLES;
   readonly reportAccessRoles = REPORT_ACCESS_ROLES;
+  readonly aiAssistantRoles = AI_ASSISTANT_ROLES;
   readonly teachingMaterialsAccessRoles = Object.values(Role).filter((role) => role !== Role.SHAREHOLDER) as Role[];
   sidebarCollapsed = false;
   unreadNotifCount = 0;
@@ -731,6 +772,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
       OPS: 'Cẩm nang VH',
       ADSMANAGER: 'Cẩm nang Ads',
       TEACHER: 'Cẩm nang GV',
+      EXPERIENCE_TEACHER: 'Cam nang GV trai nghiem',
       PARENT: 'Cẩm nang PH',
       SALE: 'Cẩm nang Sale',
     };
@@ -741,6 +783,7 @@ export class AppShellComponent implements OnInit, OnDestroy {
     const role = this.auth.userSignal()?.role;
     const routes: Record<string, string> = {
       TEACHER: '/app/teacher-hub',
+      EXPERIENCE_TEACHER: '/app/internal-handbook',
       SALE: '/app/sale-hub',
       DIRECTOR: '/app/internal-handbook',
       ACCOUNTING: '/app/internal-handbook',

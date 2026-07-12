@@ -8,6 +8,19 @@ const ALL_ROLES = Object.values(Role) as Role[];
 const NON_SHAREHOLDER_ROLES = ALL_ROLES.filter((role) => role !== Role.SHAREHOLDER) as Role[];
 const INVESTOR_ROLES = [Role.DIRECTOR, Role.SHAREHOLDER];
 const REPORT_ACCESS_ROLES = [Role.DIRECTOR, Role.OPS, Role.ACCOUNTING, Role.SALE, Role.SHAREHOLDER];
+const PRODUCT_READ_ROLES = [Role.DIRECTOR, Role.OPS, Role.SALE, Role.EXPERIENCE_TEACHER];
+const AI_ASSISTANT_ROLES = [
+  Role.DIRECTOR,
+  Role.ACCOUNTING,
+  Role.OPS,
+  Role.TEACHER,
+  Role.EXPERIENCE_TEACHER,
+  Role.PARENT,
+  Role.STUDENT,
+  Role.SALE,
+  Role.ADSMANAGER,
+  Role.SHAREHOLDER,
+];
 const ERP_LAUNCH_PUBLIC_ROUTES: Routes = erpLaunchClusterContent.publicLinks.map(({ slug }) => ({
   path: `lp/${slug}`,
   loadComponent: () =>
@@ -59,6 +72,18 @@ export const routes: Routes = [
           import('./components/dashboards/dashboard.component').then((m) => m.DashboardComponent),
       },
       {
+        path: 'director-ai',
+        canActivate: [roleGuard([Role.DIRECTOR])],
+        loadComponent: () =>
+          import('./components/director-ai-assistant-widget.component').then((m) => m.DirectorAiAssistantWidgetComponent),
+      },
+      {
+        path: 'ai-assistant',
+        canActivate: [roleGuard(AI_ASSISTANT_ROLES)],
+        loadComponent: () =>
+          import('./components/director-ai-assistant-widget.component').then((m) => m.DirectorAiAssistantWidgetComponent),
+      },
+      {
         path: 'investor-dashboard',
         canActivate: [roleGuard(INVESTOR_ROLES)],
         loadComponent: () =>
@@ -72,7 +97,7 @@ export const routes: Routes = [
       },
       {
         path: 'products',
-        canActivate: [roleGuard([Role.DIRECTOR])],
+        canActivate: [roleGuard(PRODUCT_READ_ROLES)],
         loadComponent: () =>
           import('./components/products.component').then((m) => m.ProductsComponent),
       },
@@ -162,7 +187,7 @@ export const routes: Routes = [
       },
       {
         path: 'teacher-hub',
-        canActivate: [roleGuard([Role.TEACHER])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.TEACHER])],
         loadComponent: () =>
           import('./components/teacher-guide-landing.component').then((m) => m.TeacherGuideLandingComponent),
       },
@@ -171,6 +196,18 @@ export const routes: Routes = [
         canActivate: [roleGuard([Role.DIRECTOR, Role.SALE])],
         loadComponent: () =>
           import('./components/sale-guide-landing.component').then((m) => m.SaleGuideLandingComponent),
+      },
+      {
+        path: 'ads-hub',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.ADSMANAGER])],
+        loadComponent: () =>
+          import('./components/ads-guide-landing.component').then((m) => m.AdsGuideLandingComponent),
+      },
+      {
+        path: 'accounting-hub',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING])],
+        loadComponent: () =>
+          import('./components/accounting-guide-landing.component').then((m) => m.AccountingGuideLandingComponent),
       },
       {
         path: 'pending-approvals',
@@ -246,13 +283,31 @@ export const routes: Routes = [
       },
       {
         path: 'trial-enrollments',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.SALE, Role.EXPERIENCE_TEACHER])],
         loadComponent: () =>
           import('./components/trial-enrollments.component').then((m) => m.TrialEnrollmentsComponent),
       },
       {
+        path: 'homework-grading',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS, Role.EXPERIENCE_TEACHER])],
+        loadComponent: () =>
+          import('./components/homework-grading.component').then((m) => m.HomeworkGradingComponent),
+      },
+      {
+        path: 'quizzes',
+        canActivate: [roleGuard([Role.DIRECTOR, Role.OPS])],
+        loadComponent: () =>
+          import('./components/quizzes.component').then((m) => m.QuizzesComponent),
+      },
+      {
+        path: 'student-quiz',
+        canActivate: [roleGuard([Role.STUDENT, Role.PARENT])],
+        loadComponent: () =>
+          import('./components/student-quiz.component').then((m) => m.StudentQuizComponent),
+      },
+      {
         path: 'work-sessions',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.EXPERIENCE_TEACHER, Role.SALE])],
         loadComponent: () =>
           import('./components/work-sessions.component').then((m) => m.WorkSessionsComponent),
       },
@@ -264,7 +319,7 @@ export const routes: Routes = [
       },
       {
         path: 'staff-payroll',
-        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS])],
+        canActivate: [roleGuard([Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.EXPERIENCE_TEACHER])],
         loadComponent: () =>
           import('./components/staff-payroll.component').then((m) => m.StaffPayrollComponent),
       },

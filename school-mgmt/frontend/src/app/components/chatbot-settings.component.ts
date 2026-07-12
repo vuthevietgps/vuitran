@@ -37,11 +37,36 @@ const SYNC_SOURCE_LABELS: Record<string, string> = {
 };
 
 const AI_ASSISTANT_TYPE_LABELS: Record<string, string> = {
+  DIRECTOR_OPERATIONS: 'Tro ly Giam doc',
+  ACCOUNTING_OPERATIONS: 'Tro ly Ke toan',
+  OPS_OPERATIONS: 'Tro ly Van hanh',
   PARENT_SUPPORT: 'Cham soc phu huynh',
   INTERNAL_SUPPORT: 'Ho tro noi bo',
   TEACHER_SUPPORT: 'Tro ly giao vien',
+  EXPERIENCE_TEACHER_SUPPORT: 'Tro ly giao vien review',
+  STUDENT_SUPPORT: 'Ho tro hoc sinh',
+  SALE_OPERATIONS: 'Tro ly Sales',
+  ADS_OPERATIONS: 'Tro ly Ads',
+  SHAREHOLDER_INSIGHTS: 'Bao cao co dong',
   LEAD_CARE: 'Cham soc lead',
 };
+
+const OPENAI_MODEL_OPTIONS = [
+  { value: 'gpt-5.5', label: 'gpt-5.5 - cao nhat cho tac vu phuc tap' },
+  { value: 'gpt-5.5-pro', label: 'gpt-5.5-pro - chat luong cao, cham va ton phi hon' },
+  { value: 'gpt-5.4', label: 'gpt-5.4 - frontier, can bang chi phi' },
+  { value: 'gpt-5.4-mini', label: 'gpt-5.4-mini - khuyen nghi cho chatbot van hanh' },
+  { value: 'gpt-5.4-nano', label: 'gpt-5.4-nano - nhanh, re cho tac vu don gian' },
+  { value: 'gpt-5.1', label: 'gpt-5.1 - doi cu hon, van manh' },
+  { value: 'gpt-5', label: 'gpt-5 - doi cu hon' },
+  { value: 'chat-latest', label: 'chat-latest - gan voi model ChatGPT hien hanh' },
+  { value: 'gpt-4.1', label: 'gpt-4.1 - non-reasoning thong minh' },
+  { value: 'gpt-4.1-mini', label: 'gpt-4.1-mini - nhanh va tiet kiem' },
+  { value: 'gpt-4o', label: 'gpt-4o - cu, nhanh va on dinh' },
+  { value: 'gpt-4o-mini', label: 'gpt-4o-mini - cu, re' },
+  { value: 'gpt-4-turbo', label: 'gpt-4-turbo - legacy' },
+  { value: 'gpt-3.5-turbo', label: 'gpt-3.5-turbo - legacy' },
+];
 
 @Component({
   selector: 'app-chatbot-settings',
@@ -52,6 +77,7 @@ const AI_ASSISTANT_TYPE_LABELS: Record<string, string> = {
 })
 export class ChatbotSettingsComponent implements OnInit {
   activeTab = 'fanpages';
+  readonly openaiModelOptions = OPENAI_MODEL_OPTIONS;
 
   fanpages = signal<FanpageItem[]>([]);
   tokens = signal<OpenAITokenItem[]>([]);
@@ -189,7 +215,7 @@ export class ChatbotSettingsComponent implements OnInit {
     return {
       label: '',
       apiKey: '',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5.4-mini',
       temperature: 0.7,
       maxTokens: 2000,
       systemPromptPrefix: '',
@@ -386,7 +412,33 @@ export class ChatbotSettingsComponent implements OnInit {
     this.saving.set(true);
     this.tokenError.set('');
 
-    const data: any = { ...this.tokenForm };
+    const data: any = {
+      label: String(this.tokenForm.label || '').trim(),
+      apiKey: this.tokenForm.apiKey,
+      model: this.tokenForm.model || 'gpt-5.4-mini',
+      temperature: this.tokenForm.temperature,
+      maxTokens: this.tokenForm.maxTokens,
+      systemPromptPrefix: this.tokenForm.systemPromptPrefix,
+    };
+
+    if (data.temperature === '' || data.temperature === null || data.temperature === undefined) {
+      delete data.temperature;
+    } else {
+      data.temperature = Number(data.temperature);
+    }
+
+    if (data.maxTokens === '' || data.maxTokens === null || data.maxTokens === undefined) {
+      delete data.maxTokens;
+    } else {
+      data.maxTokens = Number(data.maxTokens);
+    }
+
+    if (!data.systemPromptPrefix) delete data.systemPromptPrefix;
+
+    if (this.editingToken) {
+      data.status = this.tokenForm.status;
+    }
+
     if (this.editingToken && !data.apiKey) {
       delete data.apiKey;
     }

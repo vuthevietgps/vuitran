@@ -1,32 +1,46 @@
 <div class="materials-shell">
   <section class="hero-card">
     <div>
-      <p class="eyebrow">Kho hoc lieu</p>
-      <h2>Tai lieu giang day va tri thuc cho AI</h2>
+      <p class="eyebrow">Kho học liệu</p>
+      <h2>Tài liệu giảng dạy và tri thức cho AI</h2>
       <p class="subtitle">
-        Tai nhanh, loc nhanh, va de AI doc dung tai lieu can thiet ma khong bat frontend tai qua nhieu du lieu mot luc.
+        Tải nhanh, lọc nhanh, và để AI đọc đúng tài liệu cần thiết mà không bắt frontend tải quá nhiều dữ liệu một lúc.
       </p>
     </div>
-    <button class="btn primary" type="button" (click)="openUploadModal()">Tai len tai lieu</button>
+    <button class="btn primary" type="button" (click)="openUploadModal()" *ngIf="canManageMaterials()">Tải lên tài liệu</button>
   </section>
 
   <app-flow-guide featureKey="teaching-materials"></app-flow-guide>
 
+  <section class="material-tabs" aria-label="Phân loại học liệu">
+    <button type="button" [class.active]="activeTab === 'curriculum'" (click)="setActiveTab('curriculum')">
+      Chương trình
+    </button>
+    <button type="button" [class.active]="activeTab === 'teaching'" (click)="setActiveTab('teaching')">
+      Nội dung giảng dạy
+      <span>{{ tabCount('TEACHING') }}</span>
+    </button>
+    <button type="button" [class.active]="activeTab === 'homework'" (click)="setActiveTab('homework')">
+      Kho bài tập về nhà
+      <span>{{ tabCount('HOMEWORK') }}</span>
+    </button>
+  </section>
+
   <section class="stats-grid" *ngIf="stats() as overview">
     <article class="stat-card">
-      <span class="stat-label">Tong tai lieu</span>
+      <span class="stat-label">Tổng tài liệu</span>
       <strong>{{ overview.total }}</strong>
     </article>
     <article class="stat-card">
-      <span class="stat-label">Dung luong</span>
+      <span class="stat-label">Dung lượng</span>
       <strong>{{ overview.totalSizeMB }} MB</strong>
     </article>
     <article class="stat-card">
-      <span class="stat-label">AI ready</span>
+      <span class="stat-label">Sẵn sàng cho AI</span>
       <strong>{{ overview.readyForAI }}</strong>
     </article>
     <article class="stat-card">
-      <span class="stat-label">Tong chunks</span>
+      <span class="stat-label">Tổng đoạn</span>
       <strong>{{ overview.totalChunks }}</strong>
     </article>
     <article class="stat-card compact" *ngFor="let entry of objectEntries(overview.bySubject)">
@@ -38,37 +52,65 @@
   <section class="filter-card">
     <div class="filter-row">
       <label class="search-field">
-        <span>Tim kiem</span>
+        <span>Tìm kiếm</span>
         <input
           type="text"
           [ngModel]="searchQuery"
           (ngModelChange)="onSearchQueryChange($event)"
-          placeholder="Tim theo tieu de, tom tat, tag..."
+          placeholder="Tìm theo tiêu đề, tóm tắt, tag..."
         />
       </label>
 
       <label>
-        <span>Mon hoc</span>
+        <span>Môn học</span>
         <select [ngModel]="filterSubject" (ngModelChange)="onSubjectChange($event)">
-          <option value="">Tat ca mon</option>
+          <option value="">Tất cả môn</option>
           <option *ngFor="let subject of subjectOptions()" [value]="subject">{{ subject }}</option>
         </select>
       </label>
 
       <label>
-        <span>Khoi lop</span>
+        <span>Khối lớp</span>
         <select [ngModel]="filterGrade" (ngModelChange)="onGradeChange($event)">
-          <option value="">Tat ca khoi</option>
+          <option value="">Tất cả khối</option>
           <option *ngFor="let grade of gradeOptions()" [value]="grade">{{ grade }}</option>
+        </select>
+      </label>
+      <label>
+        <span>Khóa học / gói</span>
+        <select [ngModel]="filterProductId" (ngModelChange)="onProductChange($event)">
+          <option value="">Tất cả khóa học</option>
+          <option *ngFor="let product of products()" [value]="product._id">
+            {{ product.name }} ({{ product.code }})
+          </option>
         </select>
       </label>
     </div>
 
     <div class="filter-row">
       <label>
-        <span>Lop hoc</span>
+        <span>Unit</span>
+        <input
+          type="text"
+          [ngModel]="filterUnitCode"
+          (ngModelChange)="onUnitCodeChange($event)"
+          placeholder="VD: U01"
+        />
+      </label>
+
+      <label>
+        <span>Bài</span>
+        <input
+          type="text"
+          [ngModel]="filterLessonCode"
+          (ngModelChange)="onLessonCodeChange($event)"
+          placeholder="VD: L03"
+        />
+      </label>
+      <label>
+        <span>Lớp học</span>
         <select [ngModel]="filterClassId" (ngModelChange)="onClassChange($event)">
-          <option value="">Tat ca lop</option>
+          <option value="">Tất cả lớp</option>
           <option *ngFor="let classroom of classes()" [value]="classroom._id">
             {{ classroom.name }} ({{ classroom.code }})
           </option>
@@ -76,33 +118,49 @@
       </label>
 
       <label>
-        <span>Trang thai AI</span>
+        <span>Trạng thái AI</span>
         <select [ngModel]="filterExtractionStatus" (ngModelChange)="onExtractionStatusChange($event)">
-          <option value="">Tat ca trang thai</option>
-          <option value="READY">AI ready</option>
-          <option value="PENDING">Dang xu ly</option>
-          <option value="UNSUPPORTED">Can tom tat tay</option>
-          <option value="FAILED">Xu ly loi</option>
+          <option value="">Tất cả trạng thái</option>
+          <option value="READY">Sẵn sàng cho AI</option>
+          <option value="PENDING">Đang xử lý</option>
+          <option value="UNSUPPORTED">Cần tóm tắt thủ công</option>
+          <option value="FAILED">Xử lý lỗi</option>
         </select>
       </label>
 
       <label>
-        <span>Loai file</span>
+        <span>Loại file</span>
         <select [ngModel]="filterType" (ngModelChange)="onTypeChange($event)">
-          <option value="">Tat ca loai</option>
+          <option value="">Tất cả loại</option>
           <option value="pdf">PDF</option>
           <option value="doc">Word</option>
           <option value="ppt">PowerPoint</option>
           <option value="excel">Excel</option>
-          <option value="image">Hinh anh</option>
+          <option value="image">Hình ảnh</option>
           <option value="video">Video</option>
-          <option value="other">Khac</option>
+          <option value="other">Khác</option>
+        </select>
+      </label>
+
+      <label>
+        <span>Loại học liệu</span>
+        <select [ngModel]="filterMaterialType" (ngModelChange)="onMaterialTypeChange($event)">
+          <option value="">Tất cả loại học liệu</option>
+          <option value="SLIDE">Slide</option>
+          <option value="LESSON_PLAN">Giáo án</option>
+          <option value="WORKSHEET">Phiếu bài tập</option>
+          <option value="HOMEWORK_SET">Bộ BTVN</option>
+          <option value="QUIZ">Quiz</option>
+          <option value="TEST">Đề kiểm tra</option>
+          <option value="ANSWER_KEY">Đáp án</option>
+          <option value="RUBRIC">Rubric</option>
+          <option value="OTHER">Khác</option>
         </select>
       </label>
 
       <div class="filter-actions">
         <button class="btn ghost" type="button" (click)="resetFilters()" [disabled]="!hasActiveFilters()">
-          Xoa bo loc
+          Xóa bộ lọc
         </button>
       </div>
     </div>
@@ -111,19 +169,19 @@
   <section class="status-row">
     <div class="status-copy">
       <strong>{{ resultLabel() }}</strong>
-      <span *ngIf="meta().hasNextPage">Con {{ meta().total - materials().length }} tai lieu o cac trang sau</span>
+      <span *ngIf="meta().hasNextPage">Còn {{ meta().total - materials().length }} tài liệu ở các trang sau</span>
     </div>
-    <div class="status-copy subtle" *ngIf="loadingMore()">Dang tai them...</div>
+    <div class="status-copy subtle" *ngIf="loadingMore()">Đang tải thêm...</div>
   </section>
 
   <section class="active-filters" *ngIf="activeFilterChips().length > 0">
-    <span class="active-filters-label">Dang loc theo</span>
+    <span class="active-filters-label">Đang lọc theo</span>
     <button
       class="filter-chip"
       type="button"
       *ngFor="let chip of activeFilterChips()"
       (click)="removeFilterChip(chip.key)"
-      [title]="'Bo loc ' + chip.label"
+      [title]="'Bỏ lọc ' + chip.label"
     >
       <strong>{{ chip.label }}:</strong> {{ chip.value }}
       <span class="chip-remove">x</span>
@@ -135,23 +193,69 @@
 
   <section class="loading-panel" *ngIf="loading() && materials().length === 0">
     <div class="spinner"></div>
-    <p>Dang tai danh sach tai lieu...</p>
+    <p>Đang tải danh sách tài liệu...</p>
   </section>
 
   <ng-container *ngIf="visibleMaterials() as visible">
     <section class="empty-card" *ngIf="!loading() && visible.length === 0">
-      <h3>{{ hasActiveFilters() ? 'Khong tim thay tai lieu phu hop' : 'Chua co tai lieu nao' }}</h3>
+      <h3>{{ hasActiveFilters() ? 'Không tìm thấy tài liệu phù hợp' : 'Chưa có tài liệu nào' }}</h3>
       <p>
         {{ hasActiveFilters()
-          ? 'Thu doi bo loc hoac bo bớt dieu kien tim kiem de thay nhieu ket qua hon.'
-          : 'Tai len bo tai lieu dau tien de moi user va AI co du lieu su dung.' }}
+          ? 'Thử đổi bộ lọc hoặc bỏ bớt điều kiện tìm kiếm để thấy nhiều kết quả hơn.'
+          : 'Tải lên bộ tài liệu đầu tiên để người dùng và AI có dữ liệu sử dụng.' }}
       </p>
-      <button class="btn primary" type="button" (click)="hasActiveFilters() ? resetFilters() : openUploadModal()">
-        {{ hasActiveFilters() ? 'Dat lai bo loc' : 'Tai len tai lieu' }}
+      <button
+        class="btn primary"
+        type="button"
+        *ngIf="hasActiveFilters() || canManageMaterials()"
+        (click)="hasActiveFilters() ? resetFilters() : openUploadModal()"
+      >
+        {{ hasActiveFilters() ? 'Đặt lại bộ lọc' : 'Tải lên tài liệu' }}
       </button>
     </section>
 
-    <section class="materials-grid" *ngIf="visible.length > 0">
+    <section class="curriculum-list" *ngIf="activeTab === 'curriculum' && visible.length > 0">
+      <article class="curriculum-row" *ngFor="let group of curriculumGroups()">
+        <div class="curriculum-main">
+          <span class="chip slate">{{ group.courseLabel }}</span>
+          <h3>{{ group.lessonLabel }}</h3>
+          <p>{{ group.unitLabel }}</p>
+        </div>
+        <div class="curriculum-counts">
+          <strong>{{ curriculumCompletion(group) }}% du bo</strong>
+          <span>{{ group.teachingCount }} tài liệu dạy</span>
+          <span>{{ group.homeworkCount }} bài tập</span>
+          <span>{{ quizzesForGroup(group).length }} quiz cau truc</span>
+        </div>
+        <div class="curriculum-slots">
+          <button
+            type="button"
+            class="slot-chip"
+            *ngFor="let slot of curriculumSlots(group)"
+            [class.ok]="slot.ok"
+            [class.missing]="!slot.ok"
+            (click)="!slot.ok && canManageMaterials() ? openUploadForLesson(group, slot.key) : null"
+          >
+            {{ slot.ok ? 'OK' : 'Thieu' }} {{ slot.label }}
+          </button>
+          <span class="filter-chip quiz-chip" *ngFor="let quiz of quizzesForGroup(group)">
+            Quiz - {{ quiz.title }}
+          </span>
+        </div>
+        <div class="curriculum-files">
+          <button
+            class="filter-chip"
+            type="button"
+            *ngFor="let material of group.materials"
+            (click)="canManageMaterials() ? openEditModal(material) : downloadFile(material)"
+          >
+            {{ materialScopeLabel(material.materialScope) }} · {{ material.title }}
+          </button>
+        </div>
+      </article>
+    </section>
+
+    <section class="materials-grid" *ngIf="activeTab !== 'curriculum' && visible.length > 0">
       <article class="material-card" *ngFor="let material of visible; trackBy: trackByMaterialId">
         <div class="card-head">
           <div class="file-badge" [attr.data-type]="getFileCategory(material.fileType)">
@@ -164,10 +268,10 @@
           </div>
 
           <div class="card-actions">
-            <button class="icon-btn" type="button" title="Reprocess AI" (click)="reprocessMaterial(material)">AI</button>
-            <button class="icon-btn" type="button" title="Tai xuong" (click)="downloadFile(material)">DL</button>
-            <button class="icon-btn" type="button" title="Chinh sua" (click)="openEditModal(material)">Sua</button>
-            <button class="icon-btn danger" type="button" title="Xoa" (click)="confirmDelete(material)">Xoa</button>
+            <button class="icon-btn" type="button" title="Tải xuống" (click)="downloadFile(material)">Tải</button>
+            <button class="icon-btn" type="button" title="Xử lý lại AI" (click)="reprocessMaterial(material)" *ngIf="canManageMaterials()">AI</button>
+            <button class="icon-btn" type="button" title="Chỉnh sửa" (click)="openEditModal(material)" *ngIf="canManageMaterials()">Sửa</button>
+            <button class="icon-btn danger" type="button" title="Xóa" (click)="confirmDelete(material)" *ngIf="canManageMaterials()">Xóa</button>
           </div>
         </div>
 
@@ -179,6 +283,16 @@
         <div class="chip-row">
           <span class="chip blue" *ngIf="material.subject">{{ material.subject }}</span>
           <span class="chip green" *ngIf="material.grade">{{ material.grade }}</span>
+          <span class="chip slate" *ngIf="materialProductLabel(material)">{{ materialProductLabel(material) }}</span>
+          <span class="chip teal">{{ materialScopeLabel(material.materialScope) }}</span>
+          <span class="chip" *ngIf="material.materialType">{{ materialTypeLabel(material.materialType) }}</span>
+          <span class="chip muted" *ngIf="material.unitCode || material.unitTitle">
+            {{ materialUnitLabel(material) }}
+          </span>
+          <span class="chip muted" *ngIf="material.lessonCode || material.lessonTitle">
+            {{ materialLessonLabel(material) }}
+          </span>
+          <span class="chip green" *ngIf="material.assignableAsHomework">Giao BTVN</span>
           <span class="chip slate" *ngIf="classLabel(material)">{{ classLabel(material) }}</span>
           <span class="chip" [class.success]="materialStatusTone(material.extractionStatus) === 'success'"
                 [class.warning]="materialStatusTone(material.extractionStatus) === 'warning'"
@@ -187,15 +301,15 @@
                 *ngIf="material.extractionStatus">
             {{ extractionStatusLabel(material.extractionStatus) }}
           </span>
-          <span class="chip teal" *ngIf="material.chunkCount">{{ material.chunkCount }} chunks</span>
+          <span class="chip teal" *ngIf="material.chunkCount">{{ material.chunkCount }} đoạn</span>
           <span class="chip muted" *ngFor="let tag of material.tags">{{ tag }}</span>
-          <span class="chip purple" *ngIf="material.isShared">Chia se</span>
+          <span class="chip purple" *ngIf="material.isShared">Chia sẻ</span>
         </div>
 
         <div class="card-footer">
           <span>{{ formatSize(material.fileSize) }}</span>
           <span>{{ material.updatedAt | date: 'dd/MM/yyyy HH:mm' }}</span>
-          <span *ngIf="material.downloadCount > 0">Tai xuong {{ material.downloadCount }}</span>
+          <span *ngIf="material.downloadCount > 0">Tải xuống {{ material.downloadCount }}</span>
         </div>
       </article>
     </section>
@@ -203,25 +317,25 @@
 
   <section class="load-more" *ngIf="!loading() && meta().hasNextPage">
     <button class="btn secondary" type="button" (click)="loadMore()" [disabled]="loadingMore()">
-      {{ loadingMore() ? 'Dang tai...' : 'Tai them tai lieu' }}
+      {{ loadingMore() ? 'Đang tải...' : 'Tải thêm tài liệu' }}
     </button>
-    <p>Phu hop khi ban muon xem them tai lieu cu hon ma khong can tai toan bo danh sach ngay tu dau.</p>
+    <p>Phù hợp khi bạn muốn xem thêm tài liệu cũ hơn mà không cần tải toàn bộ danh sách ngay từ đầu.</p>
   </section>
 
   <div class="modal-backdrop" *ngIf="showModal()" (click)="closeModal()">
     <div class="modal" (click)="$event.stopPropagation()">
       <div class="modal-header">
         <div>
-          <p class="eyebrow">{{ editingMaterial ? 'Cap nhat' : 'Tai len' }}</p>
-          <h3>{{ editingMaterial ? 'Chinh sua tai lieu' : 'Them tai lieu moi' }}</h3>
+          <p class="eyebrow">{{ editingMaterial ? 'Cập nhật' : 'Tải lên' }}</p>
+          <h3>{{ editingMaterial ? 'Chỉnh sửa tài liệu' : 'Thêm tài liệu mới' }}</h3>
         </div>
-        <button class="icon-btn" type="button" (click)="closeModal()">Dong</button>
+        <button class="icon-btn" type="button" (click)="closeModal()">Đóng</button>
       </div>
 
       <form (ngSubmit)="submitMaterial()">
         <div class="modal-body">
           <div class="field" *ngIf="!editingMaterial">
-            <label>File tai lieu</label>
+            <label>File tài liệu</label>
             <div
               class="drop-zone"
               [class.has-file]="selectedFile"
@@ -230,10 +344,10 @@
               (drop)="onDrop($event)"
             >
               <ng-container *ngIf="!selectedFile; else selectedFileBlock">
-                <strong>Keo tha file vao day hoac bam de chon file</strong>
-                <p>Ho tro PDF, Word, Excel, PowerPoint, anh, video, TXT, CSV, JSON. Toi da 50MB.</p>
+                <strong>Kéo thả file vào đây hoặc bấm để chọn file</strong>
+                <p>Hỗ trợ PDF, Word, Excel, PowerPoint, ảnh, video, TXT, CSV, JSON. Tối đa 50MB.</p>
                 <label class="btn secondary inline-file-picker">
-                  Chon file
+                  Chọn file
                   <input
                     type="file"
                     hidden
@@ -249,35 +363,35 @@
                     <strong>{{ selectedFile?.name }}</strong>
                     <p>{{ selectedFile ? formatSize(selectedFile.size) : '' }}</p>
                   </div>
-                  <button class="icon-btn danger" type="button" (click)="removeFile()">Bo</button>
+                  <button class="icon-btn danger" type="button" (click)="removeFile()">Bỏ</button>
                 </div>
               </ng-template>
             </div>
           </div>
 
           <div class="field">
-            <label>Tieu de</label>
+            <label>Tiêu đề</label>
             <input name="title" [(ngModel)]="materialFormData.title" required />
           </div>
 
           <div class="field">
-            <label>Mo ta</label>
+            <label>Mô tả</label>
             <textarea name="description" [(ngModel)]="materialFormData.description" rows="3"></textarea>
           </div>
 
           <div class="field">
-            <label>Tom tat cho AI</label>
+            <label>Tóm tắt cho AI</label>
             <textarea
               name="manualSummary"
               [(ngModel)]="materialFormData.manualSummary"
               rows="4"
-              placeholder="Viet ngan gon muc tieu, noi dung chinh, doi tuong hoc vien va cach su dung tai lieu"
+              placeholder="Viết ngắn gọn mục tiêu, nội dung chính, đối tượng học viên và cách sử dụng tài liệu"
             ></textarea>
           </div>
 
           <div class="form-grid">
             <label class="field">
-              <span>Mon hoc</span>
+              <span>Môn học</span>
               <input name="subject" [(ngModel)]="materialFormData.subject" list="subjectSuggestions" />
               <datalist id="subjectSuggestions">
                 <option *ngFor="let subject of subjectOptions()" [value]="subject"></option>
@@ -285,7 +399,7 @@
             </label>
 
             <label class="field">
-              <span>Khoi lop</span>
+              <span>Khối lớp</span>
               <input name="grade" [(ngModel)]="materialFormData.grade" list="gradeSuggestions" />
               <datalist id="gradeSuggestions">
                 <option *ngFor="let grade of gradeOptions()" [value]="grade"></option>
@@ -293,10 +407,127 @@
             </label>
           </div>
 
+          <div class="taxonomy-panel">
+            <div class="form-grid">
+              <label class="field">
+                <span>Khóa học / gói sản phẩm</span>
+                <select name="productId" [(ngModel)]="materialFormData.productId">
+                  <option value="">Chưa gắn gói</option>
+                  <option *ngFor="let product of products()" [value]="product._id">
+                    {{ product.name }} ({{ product.code }})
+                  </option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Tên khóa học tự nhập</span>
+                <input name="courseName" [(ngModel)]="materialFormData.courseName" placeholder="Dùng khi chưa có gói sản phẩm" />
+              </label>
+
+              <label class="field">
+                <span>Unit code</span>
+                <input name="unitCode" [(ngModel)]="materialFormData.unitCode" placeholder="VD: U01" />
+              </label>
+
+              <label class="field">
+                <span>Tên unit</span>
+                <input name="unitTitle" [(ngModel)]="materialFormData.unitTitle" placeholder="VD: Getting Started" />
+              </label>
+
+              <label class="field">
+                <span>Mã bài</span>
+                <input name="lessonCode" [(ngModel)]="materialFormData.lessonCode" placeholder="VD: L03" />
+              </label>
+
+              <label class="field">
+                <span>Tên bài / buổi học</span>
+                <input name="lessonTitle" [(ngModel)]="materialFormData.lessonTitle" placeholder="VD: Speaking practice" />
+              </label>
+
+              <label class="field">
+                <span>Thứ tự buổi</span>
+                <input name="lessonOrder" type="number" min="1" [(ngModel)]="materialFormData.lessonOrder" />
+              </label>
+
+              <label class="field">
+                <span>Phiên bản</span>
+                <input name="version" [(ngModel)]="materialFormData.version" placeholder="VD: v1.0" />
+              </label>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Nhóm học liệu</span>
+              <select
+                name="materialScope"
+                [ngModel]="materialFormData.materialScope"
+                (ngModelChange)="onMaterialScopeFormChange($event)"
+              >
+                <option value="TEACHING">Nội dung giảng dạy</option>
+                <option value="HOMEWORK">Kho bài tập về nhà</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Loại học liệu</span>
+              <select name="materialType" [(ngModel)]="materialFormData.materialType">
+                <option value="SLIDE">Slide</option>
+                <option value="LESSON_PLAN">Giáo án</option>
+                <option value="WORKSHEET">Phiếu bài tập</option>
+                <option value="ANSWER_KEY">Đáp án</option>
+                <option value="RUBRIC">Rubric</option>
+                <option value="AUDIO">Audio</option>
+                <option value="VIDEO">Video</option>
+                <option value="HOMEWORK_SET">Bộ BTVN</option>
+                <option value="QUIZ">Quiz</option>
+                <option value="TEST">Đề kiểm tra</option>
+                <option value="OTHER">Khác</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Dùng ở giai đoạn</span>
+              <select name="usagePhase" [(ngModel)]="materialFormData.usagePhase">
+                <option value="BEFORE_CLASS">Trước buổi</option>
+                <option value="IN_CLASS">Trong buổi</option>
+                <option value="AFTER_CLASS">Sau buổi</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Độ khó</span>
+              <select name="difficulty" [(ngModel)]="materialFormData.difficulty">
+                <option value="FOUNDATION">Nền tảng</option>
+                <option value="STANDARD">Chuẩn</option>
+                <option value="ADVANCED">Nâng cao</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Thời lượng ước tính (phút)</span>
+              <input name="estimatedMinutes" type="number" min="0" [(ngModel)]="materialFormData.estimatedMinutes" />
+            </label>
+
+            <label class="field">
+              <span>Trạng thái</span>
+              <select name="status" [(ngModel)]="materialFormData.status">
+                <option value="DRAFT">Nháp</option>
+                <option value="APPROVED">Đã duyệt</option>
+                <option value="ARCHIVED">Lưu trữ</option>
+              </select>
+            </label>
+          </div>
+
           <label class="field">
-            <span>Lop hoc lien quan</span>
+            <span>Kỹ năng</span>
+            <input name="skills" [(ngModel)]="materialFormData.skills" placeholder="speaking, listening, grammar" />
+          </label>
+
+          <label class="field">
+            <span>Lớp học liên quan</span>
             <select name="classId" [(ngModel)]="materialFormData.classId">
-              <option value="">Khong gan vao lop cu the</option>
+              <option value="">Không gán vào lớp cụ thể</option>
               <option *ngFor="let classroom of classes()" [value]="classroom._id">
                 {{ classroom.name }} ({{ classroom.code }})
               </option>
@@ -305,25 +536,35 @@
 
           <label class="field">
             <span>Tags</span>
-            <input name="tags" [(ngModel)]="materialFormData.tags" placeholder="de thi, chuong 1, bai tap" />
+            <input name="tags" [(ngModel)]="materialFormData.tags" placeholder="đề thi, chương 1, bài tập" />
+          </label>
+
+          <label class="checkbox-row">
+            <input type="checkbox" name="assignableAsHomework" [(ngModel)]="materialFormData.assignableAsHomework" />
+            <span>Có thể giao trực tiếp làm bài tập về nhà</span>
+          </label>
+
+          <label class="checkbox-row">
+            <input type="checkbox" name="autoGradeable" [(ngModel)]="materialFormData.autoGradeable" />
+            <span>Bài có thể chấm tự động / có đáp án</span>
           </label>
 
           <label class="checkbox-row">
             <input type="checkbox" name="isShared" [(ngModel)]="materialFormData.isShared" />
-            <span>Chia se voi user khac</span>
+            <span>Chia sẻ với người dùng khác</span>
           </label>
 
           <div class="loading-inline" *ngIf="uploading()">
             <div class="spinner small"></div>
-            <span>{{ editingMaterial ? 'Dang cap nhat...' : 'Dang tai len...' }}</span>
+            <span>{{ editingMaterial ? 'Đang cập nhật...' : 'Đang tải lên...' }}</span>
           </div>
         </div>
 
         <div class="modal-footer">
           <button class="btn primary" type="submit" [disabled]="uploading() || (!editingMaterial && !selectedFile)">
-            {{ editingMaterial ? 'Luu thay doi' : 'Tai len' }}
+            {{ editingMaterial ? 'Lưu thay đổi' : 'Tải lên' }}
           </button>
-          <button class="btn ghost" type="button" (click)="closeModal()">Huy</button>
+          <button class="btn ghost" type="button" (click)="closeModal()">Hủy</button>
         </div>
       </form>
     </div>
@@ -333,21 +574,21 @@
     <div class="modal small" (click)="$event.stopPropagation()">
       <div class="modal-header">
         <div>
-          <p class="eyebrow">Xoa tai lieu</p>
-          <h3>Xac nhan xoa</h3>
+          <p class="eyebrow">Xóa tài liệu</p>
+          <h3>Xác nhận xóa</h3>
         </div>
       </div>
       <div class="modal-body">
         <p>
-          Ban co chac muon xoa tai lieu
+          Bạn có chắc muốn xóa tài liệu
           <strong>{{ deletingMaterial?.title }}</strong>
-          khong?
+          không?
         </p>
-        <p class="danger-text">Hanh dong nay se xoa file va du lieu AI lien quan.</p>
+        <p class="danger-text">Hành động này sẽ xóa file và dữ liệu AI liên quan.</p>
       </div>
       <div class="modal-footer">
-        <button class="btn danger" type="button" (click)="executeDelete()" [disabled]="uploading()">Xoa</button>
-        <button class="btn ghost" type="button" (click)="showDeleteConfirm.set(false)">Huy</button>
+        <button class="btn danger" type="button" (click)="executeDelete()" [disabled]="uploading()">Xóa</button>
+        <button class="btn ghost" type="button" (click)="showDeleteConfirm.set(false)">Hủy</button>
       </div>
     </div>
   </div>

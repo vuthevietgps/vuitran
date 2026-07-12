@@ -125,6 +125,7 @@ export class AuthService {
   }
 
   getDefaultAppRoute(role: string | null | undefined = this.userSignal()?.role): string {
+    if (role === Role.STUDENT) return '/app/student-quiz';
     return role === Role.SHAREHOLDER ? SHAREHOLDER_APP_ROUTE : DEFAULT_APP_ROUTE;
   }
 

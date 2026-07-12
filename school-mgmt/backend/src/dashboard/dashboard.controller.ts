@@ -103,6 +103,7 @@ export class DashboardController {
     Role.ACCOUNTING,
     Role.OPS,
     Role.TEACHER,
+    Role.EXPERIENCE_TEACHER,
     Role.PARENT,
     Role.SALE,
     Role.ADSMANAGER,

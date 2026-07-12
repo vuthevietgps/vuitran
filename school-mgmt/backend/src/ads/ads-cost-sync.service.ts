@@ -192,6 +192,13 @@ export class AdsCostSyncService {
     return 1;
   }
 
+  private convertSpendToVnd(amount: number, currency?: string): number {
+    const normalized = String(currency || '').trim().toUpperCase();
+    if (!normalized || normalized === 'VND') return amount;
+    if (normalized === 'USD') return amount * this.getExchangeRate('USD');
+    return amount;
+  }
+
   // ─── Platform-specific cost sync ───────────────────────
 
   private async syncFacebookCosts(
@@ -202,8 +209,8 @@ export class AdsCostSyncService {
 
     try {
       const url = `https://graph.facebook.com/v21.0/act_${account.platformAccountId}/insights`
-        + `?fields=spend,impressions,clicks,actions`
-        + `&level=campaign`
+        + `?fields=adset_id,adset_name,spend,impressions,clicks,actions`
+        + `&level=adset`
         + `&time_range={"since":"${dateStr}","until":"${dateStr}"}`;
 
       const response = await fetchWithRetry(url, {
@@ -217,8 +224,8 @@ export class AdsCostSyncService {
       }
 
       for (const row of data) {
-        const campaignId = row.campaign_id;
-        const group = campaignMap.get(campaignId);
+        const adsetId = row.adset_id;
+        const group = campaignMap.get(adsetId);
         if (!group) continue;
 
         const conversions = (row.actions || [])
@@ -230,7 +237,7 @@ export class AdsCostSyncService {
           adAccountId: account._id.toString(),
           platform: 'FACEBOOK',
           date: dateStr,
-          spend: Number(row.spend || 0) * this.getExchangeRate('USD'),
+          spend: this.convertSpendToVnd(Number(row.spend || 0), account.currency),
           impressions: Number(row.impressions || 0),
           clicks: Number(row.clicks || 0),
           conversions,
@@ -281,7 +288,10 @@ export class AdsCostSyncService {
         const group = campaignMap.get(campaignId);
         if (!group) continue;
 
-        const costVnd = (Number(row.metrics?.cost_micros || 0) / 1_000_000) * this.getExchangeRate('USD');
+        const costVnd = this.convertSpendToVnd(
+          Number(row.metrics?.cost_micros || 0) / 1_000_000,
+          account.currency,
+        );
 
         await this.createOrUpdateCost({
           adGroupId: group._id.toString(),
@@ -340,7 +350,7 @@ export class AdsCostSyncService {
           adAccountId: account._id.toString(),
           platform: 'TIKTOK',
           date: dateStr,
-          spend: Number(row.metrics?.spend || 0) * this.getExchangeRate('USD'),
+          spend: this.convertSpendToVnd(Number(row.metrics?.spend || 0), account.currency),
           impressions: Number(row.metrics?.impressions || 0),
           clicks: Number(row.metrics?.clicks || 0),
           conversions: Number(row.metrics?.conversions || 0),

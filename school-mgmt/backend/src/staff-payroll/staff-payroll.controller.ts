@@ -70,7 +70,7 @@ export class StaffPayrollController {
 
   /** Nhân viên xem bảng lương của mình */
   @Get('my')
-  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.EXPERIENCE_TEACHER, Role.SALE)
   findMy(
     @Req() req: AuthenticatedRequest,
     @Query('fromDate') fromDate?: string,
@@ -89,7 +89,7 @@ export class StaffPayrollController {
 
   /** Chi tiết 1 bảng lương */
   @Get(':id')
-  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.EXPERIENCE_TEACHER, Role.SALE)
   findById(
     @Param('id', ParseMongoIdPipe) id: string,
     @Req() req: AuthenticatedRequest,

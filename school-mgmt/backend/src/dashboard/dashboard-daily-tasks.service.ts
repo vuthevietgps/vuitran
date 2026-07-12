@@ -52,6 +52,7 @@ export class DashboardDailyTasksService {
       case Role.ACCOUNTING: return this.getAccountingDailyTasks();
       case Role.OPS: return this.getOpsDailyTasks(userId);
       case Role.TEACHER: return this.getTeacherDailyTasks(userId);
+      case Role.EXPERIENCE_TEACHER: return this.getExperienceTeacherDailyTasks(userId);
       case Role.PARENT: return this.getParentDailyTasks(userId);
       case Role.SALE: return this.getSaleDailyTasks(userId);
       case Role.ADSMANAGER: return this.getAdsDailyTasks();
@@ -177,14 +178,14 @@ export class DashboardDailyTasksService {
       ...trialDecisions.map((trial: any) => ({
         id: `director-trial-${String(trial._id)}`, type: 'TRIAL_ENROLLMENT',
         title: trial.status === TrialEnrollmentStatus.WAITING_DECISION
-          ? `Chot hoc thu ${trial.trialCode || ''}`.trim()
-          : `Theo doi hoc thu ${trial.trialCode || ''}`.trim(),
-        detail: trial.studentName || studentName(trial.studentId) || 'Hoc thu offline',
-        meta: compactMeta([className(trial.classId), personName(trial.saleId), `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`]),
+          ? `Chot hoc sau test ${trial.trialCode || ''}`.trim()
+          : `Theo doi test hoc sinh ${trial.trialCode || ''}`.trim(),
+        detail: trial.studentName || studentName(trial.studentId) || 'Test hoc sinh offline',
+        meta: compactMeta([className(trial.classId), personName(trial.saleId), `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} luot test`]),
         status: trial.status,
         priority: trial.status === TrialEnrollmentStatus.WAITING_DECISION ? 'HIGH'
           : (trial.trialSessionsUsed || 0) > 0 ? 'MEDIUM' : 'LOW',
-        dueAt: toIso(trial.updatedAt || trial.createdAt), route: '/app/trial-enrollments', actionLabel: 'Mo hoc thu',
+        dueAt: toIso(trial.updatedAt || trial.createdAt), route: '/app/trial-enrollments', actionLabel: 'Mo test',
         overdue: trial.status === TrialEnrollmentStatus.WAITING_DECISION && isOverdue(trial.updatedAt || trial.createdAt, today),
       })),
     ];
@@ -343,14 +344,14 @@ export class DashboardDailyTasksService {
     const trialTasks: DailyTaskItem[] = trialQueue.map((trial: any) => ({
       id: `ops-trial-${String(trial._id)}`, type: 'TRIAL_ENROLLMENT',
       title: trial.status === TrialEnrollmentStatus.WAITING_DECISION
-        ? `Chot hoc thu ${trial.trialCode || ''}`.trim()
-        : `Theo doi hoc thu ${trial.trialCode || ''}`.trim(),
-      detail: trial.studentName || studentName(trial.studentId) || 'Hoc thu offline',
-      meta: compactMeta([className(trial.classId), personName(trial.saleId), `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`]),
+        ? `Chot hoc sau test ${trial.trialCode || ''}`.trim()
+        : `Theo doi test hoc sinh ${trial.trialCode || ''}`.trim(),
+      detail: trial.studentName || studentName(trial.studentId) || 'Test hoc sinh offline',
+      meta: compactMeta([className(trial.classId), personName(trial.saleId), `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} luot test`]),
       status: trial.status,
       priority: trial.status === TrialEnrollmentStatus.WAITING_DECISION ? 'HIGH'
         : (trial.trialSessionsUsed || 0) > 0 ? 'MEDIUM' : 'LOW',
-      dueAt: toIso(trial.updatedAt || trial.createdAt), route: '/app/trial-enrollments', actionLabel: 'Mo hoc thu',
+      dueAt: toIso(trial.updatedAt || trial.createdAt), route: '/app/trial-enrollments', actionLabel: 'Mo test',
       overdue: trial.status === TrialEnrollmentStatus.WAITING_DECISION && isOverdue(trial.updatedAt || trial.createdAt, today),
     }));
 
@@ -358,7 +359,7 @@ export class DashboardDailyTasksService {
       { key: 'sessions', label: 'Buoi hoc', description: 'Nhung buoi hom nay va buoi can chot ngay.', emptyMessage: 'Khong co buoi hoc nao can xu ly them.', count: 0, tasks: sessionTasks },
       { key: 'support', label: 'Ticket', description: 'Ticket qua han dang duoc giao cho van hanh.', emptyMessage: 'Khong co ticket qua han dang giao cho ban.', count: 0, tasks: supportTasks },
       { key: 'resources', label: 'Nhan su & lop', description: 'Nhan su, lop hoc va hoc sinh can tiep nhan.', emptyMessage: 'Khong co hang muc nhan su hay lop can xu ly.', count: 0, tasks: resourceTasks },
-      { key: 'trials', label: 'Hoc thu', description: 'Hoc thu dang hoc va hoc thu can chot quyet dinh.', emptyMessage: 'Khong co hoc thu nao can xu ly.', count: 0, tasks: trialTasks },
+      { key: 'trials', label: 'Test hoc sinh', description: 'Buoi test can theo doi va ket qua test can chot phuong an.', emptyMessage: 'Khong co buoi test nao can xu ly.', count: 0, tasks: trialTasks },
     ]);
   }
 
@@ -417,6 +418,83 @@ export class DashboardDailyTasksService {
       { key: 'upcoming', label: 'Sap toi', description: 'Nhung buoi day can mo ra de chuan bi trong ngay.', emptyMessage: 'Khong co buoi day sap toi nao.', count: 0, tasks: upcomingTasks },
       { key: 'confirmations', label: 'Cho PH', description: 'Buoi hoc da nop nhung dang cho phu huynh xac nhan.', emptyMessage: 'Khong co buoi nao dang cho PH xac nhan.', count: 0, tasks: confirmationTasks },
       { key: 'support', label: 'Ho tro', description: 'Ticket giao vien dang mo can tiep tuc theo doi.', emptyMessage: 'Khong co ticket nao dang mo.', count: 0, tasks: supportTasks },
+    ]);
+  }
+
+  private async getExperienceTeacherDailyTasks(teacherUserId: string): Promise<DailyTaskBoard> {
+    const now = new Date();
+    const today = startOfDay(now);
+    const teacherObjId = new Types.ObjectId(teacherUserId);
+
+    const [pendingTrials, waitingDecisionTrials, openTickets] = await Promise.all([
+      this.trialEnrollmentModel.find({
+        experienceTeacherId: teacherObjId,
+        status: TrialEnrollmentStatus.PENDING_TRIAL,
+      }).sort({ updatedAt: 1, createdAt: 1 }).limit(10)
+        .populate('classId', 'name code').populate('saleId', 'fullName').populate('studentId', 'fullName studentCode').lean(),
+      this.trialEnrollmentModel.find({
+        experienceTeacherId: teacherObjId,
+        status: TrialEnrollmentStatus.WAITING_DECISION,
+      }).sort({ updatedAt: 1, createdAt: 1 }).limit(10)
+        .populate('classId', 'name code').populate('saleId', 'fullName').populate('studentId', 'fullName studentCode').lean(),
+      this.ticketModel.find({ createdBy: teacherObjId, status: { $in: getOpenTicketStatuses() } })
+        .sort({ updatedAt: -1, createdAt: -1 }).limit(10).lean(),
+    ]);
+
+    const testTasks: DailyTaskItem[] = pendingTrials.map((trial: any) => ({
+      id: `experience-trial-${String(trial._id)}`,
+      type: 'EXPERIENCE_TRIAL',
+      title: `Test hoc sinh ${trial.trialCode || ''}`.trim(),
+      detail: trial.studentName || studentName(trial.studentId) || 'Test hoc sinh offline',
+      meta: compactMeta([
+        className(trial.classId),
+        personName(trial.saleId),
+        `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`,
+      ]),
+      status: trial.status,
+      priority: (trial.trialSessionsUsed || 0) > 0 ? 'HIGH' : 'MEDIUM',
+      dueAt: toIso(trial.updatedAt || trial.createdAt),
+      route: '/app/trial-enrollments',
+      actionLabel: 'Mo test',
+      overdue: isOverdue(trial.updatedAt || trial.createdAt, today),
+    }));
+
+    const decisionTasks: DailyTaskItem[] = waitingDecisionTrials.map((trial: any) => ({
+      id: `experience-decision-${String(trial._id)}`,
+      type: 'EXPERIENCE_TRIAL_DECISION',
+      title: `Gui ket qua test ${trial.trialCode || ''}`.trim(),
+      detail: trial.studentName || studentName(trial.studentId) || 'Ket qua test cho sale tu van',
+      meta: compactMeta([
+        className(trial.classId),
+        personName(trial.saleId),
+        trial.recommendedLevel ? `Level: ${trial.recommendedLevel}` : undefined,
+      ]),
+      status: trial.status,
+      priority: 'HIGH' as const,
+      dueAt: toIso(trial.assessmentUpdatedAt || trial.updatedAt || trial.createdAt),
+      route: '/app/trial-enrollments',
+      actionLabel: 'Mo ket qua test',
+      overdue: isOverdue(trial.updatedAt || trial.createdAt, today),
+    }));
+
+    const supportTasks: DailyTaskItem[] = openTickets.map((ticket: any) => ({
+      id: `experience-ticket-${String(ticket._id)}`,
+      type: 'EXPERIENCE_OPEN_TICKET',
+      title: `Theo doi ticket ${ticket.ticketCode || ''}`.trim(),
+      detail: ticket.subject || 'Ticket dang mo',
+      meta: compactMeta([ticket.priority]),
+      status: ticket.status,
+      priority: mapTicketPriority(ticket.priority),
+      dueAt: toIso(ticket.dueDate),
+      route: '/app/tickets',
+      actionLabel: 'Mo ticket',
+      overdue: isOverdue(ticket.dueDate, now),
+    }));
+
+    return buildDailyTaskBoard(Role.EXPERIENCE_TEACHER, [
+      { key: 'tests', label: 'Test dau vao', description: 'Hoc sinh duoc giao can test va ghi nhan ket qua.', emptyMessage: 'Khong co hoc sinh nao can test.', count: 0, tasks: testTasks },
+      { key: 'closing', label: 'Ho tro chot sale', description: 'Ket qua test dang cho sale va van hanh chot phuong an.', emptyMessage: 'Khong co ket qua test nao dang cho tu van.', count: 0, tasks: decisionTasks },
+      { key: 'support', label: 'Ho tro', description: 'Ticket dang mo can tiep tuc theo doi.', emptyMessage: 'Khong co ticket nao dang mo.', count: 0, tasks: supportTasks },
     ]);
   }
 
@@ -531,14 +609,14 @@ export class DashboardDailyTasksService {
     const trialTasks: DailyTaskItem[] = trialQueue.map((trial: any) => ({
       id: `sale-trial-${String(trial._id)}`, type: 'TRIAL_ENROLLMENT',
       title: trial.status === TrialEnrollmentStatus.WAITING_DECISION
-        ? `Chot PH sau hoc thu ${trial.trialCode || ''}`.trim()
-        : `Xep hoc thu ${trial.trialCode || ''}`.trim(),
-      detail: trial.studentName || studentName(trial.studentId) || 'Hoc thu offline',
+        ? `Chot PH sau test ${trial.trialCode || ''}`.trim()
+        : `Xep test hoc sinh ${trial.trialCode || ''}`.trim(),
+      detail: trial.studentName || studentName(trial.studentId) || 'Test hoc sinh offline',
       meta: compactMeta([className(trial.classId), `${trial.trialSessionsUsed || 0}/${trial.maxTrialSessions || 2} buoi`, trial.parentPhone]),
       status: trial.status,
       priority: trial.status === TrialEnrollmentStatus.WAITING_DECISION ? 'HIGH'
         : (trial.trialSessionsUsed || 0) > 0 ? 'MEDIUM' : 'LOW',
-      dueAt: toIso(trial.updatedAt || trial.createdAt), route: '/app/trial-enrollments', actionLabel: 'Mo hoc thu',
+      dueAt: toIso(trial.updatedAt || trial.createdAt), route: '/app/trial-enrollments', actionLabel: 'Mo test',
       overdue: trial.status === TrialEnrollmentStatus.WAITING_DECISION && isOverdue(trial.updatedAt || trial.createdAt, today),
     }));
 
@@ -546,7 +624,7 @@ export class DashboardDailyTasksService {
       { key: 'followups', label: 'Follow-up', description: 'Lead den han va lead da qua han can lien he ngay.', emptyMessage: 'Khong co lead nao den han follow-up.', count: 0, tasks: followUpTasks },
       { key: 'orders', label: 'Don hang', description: 'Don dang cho duyet, bo sung hoac tiep tuc handover.', emptyMessage: 'Khong co don hang nao can theo doi hom nay.', count: 0, tasks: orderTasks },
       { key: 'finance', label: 'Hoa don', description: 'Hoa don do sale tao dang cho duyet.', emptyMessage: 'Khong co hoa don nao dang cho duyet.', count: 0, tasks: financeTasks },
-      { key: 'trials', label: 'Hoc thu', description: 'Ban ghi hoc thu dang hoc va hoc thu can chot voi phu huynh.', emptyMessage: 'Khong co hoc thu nao can theo doi.', count: 0, tasks: trialTasks },
+      { key: 'trials', label: 'Test hoc sinh', description: 'Ban ghi test can chot voi phu huynh.', emptyMessage: 'Khong co buoi test nao can theo doi.', count: 0, tasks: trialTasks },
     ]);
   }
 

@@ -13,6 +13,8 @@ function buildService(overrides: Partial<Record<string, any>> = {}) {
     overrides.studentModel ?? {},
     overrides.attendanceModel ?? {},
     overrides.reportTemplateModel ?? {},
+    overrides.teachingMaterialModel ?? {},
+    overrides.quizModel ?? {},
     overrides.walletsService ?? {},
     overrides.notificationsService ?? {},
     overrides.payrollTxService ?? {},

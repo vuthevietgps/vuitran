@@ -45,6 +45,10 @@ const HANDBOOK_BANNERS: Record<string, HandbookBanner> = {
     title: 'Cam nang sale',
     summary: 'Flow lead, order, landing page, chatbot va hoa hong duoc gom vao mot diem vao chung.',
   },
+  EXPERIENCE_TEACHER: {
+    title: 'Cam nang giao vien trai nghiem',
+    summary: 'Theo doi hoc thu duoc giao, nhap ket qua test va ho tro sale chot phuong an hoc.',
+  },
   ADSMANAGER: {
     title: 'Cam nang ads',
     summary: 'Checklist theo doi ads-management, ads-analytics va chatbot-settings cho nhan vien ads.',

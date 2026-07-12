@@ -240,6 +240,7 @@ async function topUpWallet(token, userId, amount, description) {
       amount,
       direction: 'ADD',
       description,
+      reason: description,
     },
   });
 }
@@ -561,6 +562,24 @@ async function main() {
     ensure(findSessionById(pending, state.sessionId), 'Director filter must see pending report session');
   });
 
+  await runner.test('Teacher must explain when lesson progress is not completed', async () => {
+    await request({
+      method: 'PATCH',
+      reqPath: `/sessions/${state.sessionId}/teaching-report`,
+      token: auth.teacher.token,
+      expectedStatus: [400],
+      body: {
+        lessonContent:
+          'Teaching-report workflow partial progress content that should fail without deviation reason.',
+        lessonProgressStatus: 'PARTIAL',
+        progressPercent: 70,
+        studentPerformance: 3,
+        studentEngagement: 3,
+        comprehensionLevel: 2,
+      },
+    });
+  });
+
   await runner.test('Teacher submits the teaching report and session moves to completed list', async () => {
     const submitted = await request({
       method: 'PATCH',
@@ -573,9 +592,35 @@ async function main() {
         studentAttitude: 'Hop tac tot va hoan thanh bai tap tren lop.',
         teacherComment: 'Can tiep tuc luyen noi theo chu de da hoc.',
         homework: 'Hoan thanh phan nghe trong workbook va viet 5 cau vi du.',
+        lessonProgressStatus: 'PARTIAL',
+        progressPercent: 70,
+        studentPerformance: 3,
+        studentEngagement: 4,
+        comprehensionLevel: 2,
+        deviationReason: 'Hoc sinh tiep thu cham, can them thoi gian luyen phan trong tam.',
+        nextSessionPlan: 'On lai phan trong tam va luyen them bai tap cung co.',
+        overallComment: 'Buoi hoc dat muc tieu mot phan, can theo doi tiep thu o buoi sau.',
       },
     });
     ensure(submitted.data && submitted.data.hasTeachingReport === true, 'Report must be stored on session');
+    ensure(
+      submitted.data &&
+        submitted.data.evaluation &&
+        submitted.data.evaluation.lessonProgressStatus === 'PARTIAL',
+      'Submitted report must persist lessonProgressStatus in evaluation',
+    );
+    ensure(
+      submitted.data &&
+        submitted.data.evaluation &&
+        Number(submitted.data.evaluation.progressPercent) === 70,
+      'Submitted report must persist progressPercent in evaluation',
+    );
+    ensure(
+      submitted.data &&
+        submitted.data.evaluation &&
+        submitted.data.evaluation.deviationReason,
+      'Submitted report must persist deviationReason in evaluation',
+    );
 
     const pendingRes = await request({
       method: 'GET',
@@ -606,9 +651,11 @@ async function main() {
       !findSessionById(extractSessionList(pendingRes), state.sessionId),
       'Session must leave pending list after report submit',
     );
+    const completedSession = findSessionById(extractSessionList(completedRes), state.sessionId);
+    ensure(completedSession, 'Session must appear in completed list after report submit');
     ensure(
-      findSessionById(extractSessionList(completedRes), state.sessionId),
-      'Session must appear in completed list after report submit',
+      completedSession.evaluation && completedSession.evaluation.lessonProgressStatus === 'PARTIAL',
+      'Completed list must expose lessonProgressStatus for report review',
     );
   });
 
@@ -666,6 +713,13 @@ async function main() {
         studentAttitude: 'Da chu dong hon sau khi duoc nhac nho.',
         teacherComment: 'Can on lai tu vung truoc buoi hoc tiep theo.',
         homework: 'Lam them 10 cau luyen ngu phap.',
+        lessonProgressStatus: 'COMPLETED',
+        progressPercent: 100,
+        studentPerformance: 4,
+        studentEngagement: 4,
+        comprehensionLevel: 4,
+        nextSessionPlan: 'Chuyen sang bai tiep theo neu hoc sinh on dinh.',
+        overallComment: 'Buoi cap nhat cho thay hoc sinh da nam bai tot hon.',
       },
     });
 
@@ -680,6 +734,13 @@ async function main() {
         updated.data.teachingReport &&
         String(updated.data.teachingReport.lessonContent || '').includes('updated lesson content'),
       'Updated lessonContent must persist',
+    );
+    ensure(
+      updated.data &&
+        updated.data.evaluation &&
+        updated.data.evaluation.lessonProgressStatus === 'COMPLETED' &&
+        Number(updated.data.evaluation.progressPercent) === 100,
+      'Updated report must persist completed progress evaluation',
     );
   });
 

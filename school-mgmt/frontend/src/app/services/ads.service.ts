@@ -108,10 +108,39 @@ export interface AdAnalyticsRow {
   leadCount: number;
   orderCount: number;
   revenue: number;
+  bookedRevenue: number;
+  recognizedRevenue: number;
+  saleCommission: number;
+  estimatedTeacherCost: number;
+  directParentExpense: number;
+  allocatedGroupExpense: number;
+  allocatedGlobalExpense: number;
+  allocatedStaffLaborCost: number;
+  otherCost: number;
+  operatingCost: number;
+  totalCost: number;
+  orderProfit: number;
+  sessionNetProfit: number;
+  projectedOrderNetProfit: number;
+  realizedNetProfit: number;
+  collectedRevenue: number;
+  cohortRealizedRevenue: number;
+  netRealizedRevenue: number;
+  projectedCohortRevenue: number;
+  remainingSessionUnits: number;
+  estimatedRemainingRefund: number;
+  estimatedRemainingTeacherCost: number;
+  estimatedRemainingOtherCost: number;
+  actualCohortNetProfit: number;
+  projectedCohortNetProfit: number;
+  effectiveCohortNetProfit: number;
+  cohortMatureRowCount: number;
+  cohortImmatureRowCount: number;
   costPerLead: number | null;
   costPerOrder: number | null;
   netProfit: number;
   roi: number;
+  profitBasis?: string;
 }
 
 export interface AdAnalyticsSummary {
@@ -119,10 +148,41 @@ export interface AdAnalyticsSummary {
   totalLeads: number;
   totalOrders: number;
   totalRevenue: number;
+  totalBookedRevenue: number;
+  totalRecognizedRevenue: number;
+  totalSaleCommission: number;
+  totalEstimatedTeacherCost: number;
+  totalDirectParentExpense: number;
+  totalAllocatedGroupExpense: number;
+  totalAllocatedGlobalExpense: number;
+  totalAllocatedStaffLaborCost: number;
+  totalOtherCost: number;
+  totalOperatingCost: number;
+  totalCost: number;
+  totalOrderProfit: number;
+  totalSessionNetProfit: number;
+  totalProjectedOrderNetProfit: number;
+  totalRealizedNetProfit: number;
+  totalCollectedRevenue: number;
+  totalCohortRealizedRevenue: number;
+  totalNetRealizedRevenue: number;
+  totalProjectedCohortRevenue: number;
+  totalRemainingSessionUnits: number;
+  totalEstimatedRemainingRefund: number;
+  totalEstimatedRemainingTeacherCost: number;
+  totalEstimatedRemainingOtherCost: number;
+  totalActualCohortNetProfit: number;
+  totalProjectedCohortNetProfit: number;
+  totalEffectiveCohortNetProfit: number;
   totalNetProfit: number;
   avgCostPerLead: number;
   avgCostPerOrder: number;
   avgRoi: number;
+  profitBasis?: string;
+  cohortBasis?: string;
+  maturityDays?: number;
+  refundRatePercentX?: number | null;
+  realizedThrough?: string;
 }
 
 export interface AdAnalyticsResponse {
@@ -381,6 +441,36 @@ export interface ActionableSuggestion {
     dailyProfitChange: number;
     monthlyProfitChange: number;
   };
+  draftRecommendations?: CampaignDraftRecommendation[];
+}
+
+export interface CampaignDraftRecommendation {
+  draftName: string;
+  platform: string;
+  adAccountId?: string;
+  sourceAdGroupId?: string;
+  sourceAdGroupName?: string;
+  dailyBudget: number;
+  targetAudience: string;
+  trackingKey: string;
+  objective: string;
+  offerAngle: string;
+  kpi: {
+    targetCpl: number | null;
+    targetCpo: number | null;
+    targetDailyNetProfit: number;
+  };
+  payload: {
+    name: string;
+    adAccountId?: string;
+    platform: string;
+    dailyBudget: number;
+    targetAudience: string;
+    trackingKeys: string[];
+    notes: string;
+  };
+  missingFields: string[];
+  launchChecklist: string[];
 }
 
 export interface ActionsRequiredResponse {
@@ -393,6 +483,16 @@ export interface ActionsRequiredResponse {
     totalOptimalDailySpend: number;
     overallNetProfit7d: number;
     overallEffectiveNetProfit: number;
+    dataReadiness?: {
+      score: number;
+      level: 'PRODUCTION_READY' | 'GOOD' | 'NEEDS_REVIEW' | 'WEAK';
+      groupsAnalyzed: number;
+      groupsWithModel: number;
+      groupsWithCohortSignal: number;
+      matureCohortRows: number;
+      attributionCoveragePercent: number;
+      warnings: string[];
+    };
     generatedAt: string;
   };
 }
@@ -651,10 +751,19 @@ export class AdsService {
 
   // â”€â”€â”€ Analytics â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-  async getAnalytics(startDate: string, endDate: string, adGroupId?: string, platform?: string): Promise<AdAnalyticsResponse> {
+  async getAnalytics(
+    startDate: string,
+    endDate: string,
+    adGroupId?: string,
+    platform?: string,
+    maturityDays?: number,
+    refundRatePercentX?: number,
+  ): Promise<AdAnalyticsResponse> {
     let params = new HttpParams().set('startDate', startDate).set('endDate', endDate);
     if (adGroupId) params = params.set('adGroupId', adGroupId);
     if (platform) params = params.set('platform', platform);
+    if (maturityDays !== undefined) params = params.set('maturityDays', String(maturityDays));
+    if (refundRatePercentX !== undefined) params = params.set('refundRatePercentX', String(refundRatePercentX));
     return this.http.get<AdAnalyticsResponse>(
       `${this.apiUrl}/analytics`, { params },
     ).toPromise() as Promise<AdAnalyticsResponse>;
@@ -731,5 +840,14 @@ export class AdsService {
     return this.http.get<ActionsRequiredResponse>(
       `${this.apiUrl}/actions-required`, { params: httpParams },
     ).toPromise() as Promise<ActionsRequiredResponse>;
+  }
+
+  async createAdGroupDraftAction(payload: CampaignDraftRecommendation['payload']): Promise<any> {
+    return this.http.post(`${environment.apiBase}/ai/actions/preview`, {
+      actionKey: 'CREATE_AD_GROUP_DRAFT',
+      entityType: 'ad_group',
+      payload,
+      sourceMessage: 'Created from ads actions draft recommendation',
+    }).toPromise();
   }
 }

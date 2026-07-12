@@ -15,6 +15,8 @@ import {
   SessionDocument,
   SessionStatus,
   CancelledByRole,
+  HomeworkSubmissionMode,
+  LessonProgressStatus,
 } from './schemas/session.schema';
 import { Classroom, ClassDocument } from '../classes/schemas/class.schema';
 import { Student, StudentDocument } from '../students/schemas/student.schema';
@@ -30,6 +32,7 @@ import { CancelSessionDto } from './dto/cancel-session.dto';
 import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
 import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
+import { GradeHomeworkDto } from './dto/grade-homework.dto';
 import { SessionSettlementService } from './session-settlement.service';
 import { Role } from '../common/interfaces/role.enum';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
@@ -67,6 +70,13 @@ import {
   ReportTemplateDocument,
   ReportTemplateDynamicField,
 } from '../report-templates/schemas/report-template.schema';
+import {
+  MaterialScope,
+  MaterialStatus,
+  TeachingMaterial,
+  TeachingMaterialDocument,
+} from '../teaching-materials/schemas/teaching-material.schema';
+import { Quiz, QuizDocument, QuizStatus } from '../quizzes/schemas/quiz.schema';
 
 // ─── Constants ───────────────────────────────────────────────────────
 const TEACHING_REPORT_DEADLINE_HOURS = 24;
@@ -89,6 +99,18 @@ type TeachingReportInput = Pick<
   | 'recordingUrl'
   | 'teacherComment'
   | 'homework'
+  | 'homeworkSubmissionMode'
+  | 'homeworkDeadline'
+  | 'homeworkMaterialIds'
+  | 'homeworkQuizIds'
+  | 'lessonProgressStatus'
+  | 'progressPercent'
+  | 'studentPerformance'
+  | 'studentEngagement'
+  | 'comprehensionLevel'
+  | 'deviationReason'
+  | 'nextSessionPlan'
+  | 'overallComment'
   | 'additionalNotes'
   | 'templateId'
   | 'dynamicFieldValues'
@@ -101,6 +123,18 @@ type PreparedTeachingReportPayload = {
   recordingFileKey?: string;
   teacherComment?: string;
   homework?: string;
+  homeworkSubmissionMode?: HomeworkSubmissionMode;
+  homeworkDeadline?: Date;
+  homeworkMaterialIds?: Types.ObjectId[];
+  homeworkQuizIds?: Types.ObjectId[];
+  lessonProgressStatus?: LessonProgressStatus;
+  progressPercent?: number;
+  studentPerformance?: number;
+  studentEngagement?: number;
+  comprehensionLevel?: number;
+  deviationReason?: string;
+  nextSessionPlan?: string;
+  overallComment?: string;
   additionalNotes?: string;
   templateId?: Types.ObjectId;
   templateTitle?: string;
@@ -120,6 +154,10 @@ export class SessionWorkflowService {
     @InjectModel(Attendance.name) private attendanceModel: Model<AttendanceDocument>,
     @InjectModel(ReportTemplate.name)
     private reportTemplateModel: Model<ReportTemplateDocument>,
+    @InjectModel(TeachingMaterial.name)
+    private teachingMaterialModel: Model<TeachingMaterialDocument>,
+    @InjectModel(Quiz.name)
+    private quizModel: Model<QuizDocument>,
     @Inject(forwardRef(() => WalletsService))
     private walletsService: WalletsService,
     private notificationsService: NotificationsService,
@@ -183,6 +221,69 @@ export class SessionWorkflowService {
     }
 
     return typeof value === 'string' && value.trim().length > 0;
+  }
+
+  private async validateAssignableHomeworkMaterials(
+    materialIds?: Types.ObjectId[],
+  ): Promise<Types.ObjectId[] | undefined> {
+    if (!Array.isArray(materialIds) || materialIds.length === 0) {
+      return undefined;
+    }
+
+    const uniqueIds = Array.from(
+      new Map(materialIds.map((id) => [id.toString(), id])).values(),
+    );
+    const materials = await this.teachingMaterialModel
+      .find({
+        _id: { $in: uniqueIds },
+        materialScope: MaterialScope.HOMEWORK,
+        assignableAsHomework: true,
+        status: MaterialStatus.APPROVED,
+        isShared: true,
+      })
+      .select('_id')
+      .lean();
+    const validIds = new Set(materials.map((material) => material._id.toString()));
+    const invalidIds = uniqueIds
+      .map((id) => id.toString())
+      .filter((id) => !validIds.has(id));
+
+    if (invalidIds.length > 0) {
+      throw new BadRequestException(
+        'Tai lieu bai tap khong ton tai, chua duoc duyet/chia se hoac khong duoc phep giao BTVN',
+      );
+    }
+
+    return uniqueIds;
+  }
+
+  private async validateAssignableHomeworkQuizzes(
+    quizIds?: Types.ObjectId[],
+  ): Promise<Types.ObjectId[] | undefined> {
+    if (!Array.isArray(quizIds) || quizIds.length === 0) {
+      return undefined;
+    }
+
+    const uniqueIds = Array.from(
+      new Map(quizIds.map((id) => [id.toString(), id])).values(),
+    );
+    const quizzes = await this.quizModel
+      .find({
+        _id: { $in: uniqueIds },
+        status: QuizStatus.APPROVED,
+      })
+      .select('_id')
+      .lean();
+    const validIds = new Set(quizzes.map((quiz) => quiz._id.toString()));
+    const invalidIds = uniqueIds
+      .map((id) => id.toString())
+      .filter((id) => !validIds.has(id));
+
+    if (invalidIds.length > 0) {
+      throw new BadRequestException('Quiz BTVN khong ton tai hoac chua duoc duyet');
+    }
+
+    return uniqueIds;
   }
 
   private formatDynamicValueForSummary(value: TeachingReportDynamicValue): string {
@@ -416,6 +517,62 @@ export class SessionWorkflowService {
       dto.recordingUrl,
       dynamicFieldValues,
     );
+    const homework = this.resolveLegacyTeachingReportValue(
+      'homework',
+      dto.homework,
+      dynamicFieldValues,
+    );
+    const homeworkSubmissionMode = Object.values(HomeworkSubmissionMode).includes(
+      dto.homeworkSubmissionMode as HomeworkSubmissionMode,
+    )
+      ? dto.homeworkSubmissionMode
+      : homework
+        ? HomeworkSubmissionMode.HYBRID
+        : undefined;
+    const homeworkDeadline = dto.homeworkDeadline
+      ? new Date(dto.homeworkDeadline)
+      : undefined;
+    if (homeworkDeadline && Number.isNaN(homeworkDeadline.getTime())) {
+      throw new BadRequestException('Han nop bai tap khong hop le');
+    }
+    const homeworkMaterialIds = Array.isArray(dto.homeworkMaterialIds)
+      ? dto.homeworkMaterialIds
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id))
+      : undefined;
+    const validatedHomeworkMaterialIds = await this.validateAssignableHomeworkMaterials(
+      homeworkMaterialIds,
+    );
+    const homeworkQuizIds = Array.isArray(dto.homeworkQuizIds)
+      ? dto.homeworkQuizIds
+          .filter((id) => Types.ObjectId.isValid(id))
+          .map((id) => new Types.ObjectId(id))
+      : undefined;
+    const validatedHomeworkQuizIds = await this.validateAssignableHomeworkQuizzes(
+      homeworkQuizIds,
+    );
+    const lessonProgressStatus = Object.values(LessonProgressStatus).includes(
+      dto.lessonProgressStatus as LessonProgressStatus,
+    )
+      ? dto.lessonProgressStatus
+      : LessonProgressStatus.COMPLETED;
+    const progressPercent =
+      typeof dto.progressPercent === 'number'
+        ? dto.progressPercent
+        : lessonProgressStatus === LessonProgressStatus.COMPLETED
+          ? 100
+          : undefined;
+    const deviationReason =
+      typeof dto.deviationReason === 'string' && dto.deviationReason.trim()
+        ? dto.deviationReason.trim()
+        : undefined;
+    if (
+      (lessonProgressStatus !== LessonProgressStatus.COMPLETED ||
+        (progressPercent ?? 100) < 100) &&
+      !deviationReason
+    ) {
+      throw new BadRequestException('Can ghi ly do khi bai hoc chua hoan thanh dung tien do');
+    }
 
     return {
       lessonContent,
@@ -432,11 +589,25 @@ export class SessionWorkflowService {
         dto.teacherComment,
         dynamicFieldValues,
       ),
-      homework: this.resolveLegacyTeachingReportValue(
-        'homework',
-        dto.homework,
-        dynamicFieldValues,
-      ),
+      homework,
+      homeworkSubmissionMode,
+      homeworkDeadline,
+      homeworkMaterialIds: validatedHomeworkMaterialIds,
+      homeworkQuizIds: validatedHomeworkQuizIds,
+      lessonProgressStatus,
+      progressPercent,
+      studentPerformance: dto.studentPerformance,
+      studentEngagement: dto.studentEngagement,
+      comprehensionLevel: dto.comprehensionLevel,
+      deviationReason,
+      nextSessionPlan:
+        typeof dto.nextSessionPlan === 'string' && dto.nextSessionPlan.trim()
+          ? dto.nextSessionPlan.trim()
+          : undefined,
+      overallComment:
+        typeof dto.overallComment === 'string' && dto.overallComment.trim()
+          ? dto.overallComment.trim()
+          : undefined,
       additionalNotes: this.resolveLegacyTeachingReportValue(
         'additionalNotes',
         dto.additionalNotes,
@@ -492,6 +663,8 @@ export class SessionWorkflowService {
     if (dto.studentPerformance) evaluation.studentPerformance = dto.studentPerformance;
     if (dto.studentEngagement) evaluation.studentEngagement = dto.studentEngagement;
     if (dto.comprehensionLevel) evaluation.comprehensionLevel = dto.comprehensionLevel;
+    if (dto.lessonProgressStatus) evaluation.lessonProgressStatus = dto.lessonProgressStatus;
+    if (dto.deviationReason) evaluation.deviationReason = dto.deviationReason;
     if (dto.strengthsObserved) evaluation.strengthsObserved = dto.strengthsObserved;
     if (dto.areasOfImprovement) evaluation.areasOfImprovement = dto.areasOfImprovement;
     if (dto.homeworkAssigned) {
@@ -511,6 +684,66 @@ export class SessionWorkflowService {
     const savedSession = await session.save();
     await this.ensureAttendanceForCompletedSession(savedSession);
     this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'teacherComplete');
+    return savedSession;
+  }
+
+  async gradeHomework(
+    sessionId: string,
+    actor: JwtPayload,
+    dto: GradeHomeworkDto,
+    reviewFiles: Express.Multer.File[] = [],
+  ): Promise<SessionDocument> {
+    const session = await this.sessionModel.findById(sessionId);
+    if (!session) throw new NotFoundException('Buoi hoc khong ton tai');
+
+    const canGrade =
+      [Role.DIRECTOR, Role.OPS].includes(actor.role as Role) ||
+      actor.role === Role.EXPERIENCE_TEACHER;
+    if (!canGrade) {
+      throw new ForbiddenException('Ban khong co quyen cham bai tap ve nha');
+    }
+
+    const evaluation = (session.evaluation || {}) as any;
+    const assignedMaterials = Array.isArray(evaluation.homeworkMaterialIds)
+      ? evaluation.homeworkMaterialIds
+      : [];
+    const assignedQuizzes = Array.isArray(evaluation.homeworkQuizIds)
+      ? evaluation.homeworkQuizIds
+      : [];
+    if (
+      !evaluation.homeworkAssigned
+      && assignedMaterials.length === 0
+      && assignedQuizzes.length === 0
+      && !session.homework
+      && !(session.teachingReport as any)?.homework
+    ) {
+      throw new BadRequestException('Buoi hoc nay chua co bai tap ve nha');
+    }
+
+    evaluation.homeworkScore = dto.score;
+    evaluation.homeworkFeedback = dto.feedback?.trim() || undefined;
+    evaluation.homeworkStatus = 'GRADED';
+    evaluation.homeworkGradedBy = new Types.ObjectId(actor.sub);
+    evaluation.homeworkGradedAt = new Date();
+    if (reviewFiles.length > 0) {
+      const uploadedFiles = reviewFiles.map((file) => ({
+        fileUrl: `/uploads/homework-reviews/${file.filename}`,
+        originalName: file.originalname,
+        fileType: file.mimetype,
+        fileSize: file.size,
+        uploadedAt: new Date(),
+      }));
+      evaluation.homeworkReviewFiles = [
+        ...(Array.isArray(evaluation.homeworkReviewFiles)
+          ? evaluation.homeworkReviewFiles
+          : []),
+        ...uploadedFiles,
+      ];
+    }
+    session.evaluation = evaluation;
+
+    const savedSession = await session.save();
+    this.triggerStudentSupportSnapshotRefreshForSession(savedSession, 'gradeHomework');
     return savedSession;
   }
 
@@ -596,6 +829,47 @@ export class SessionWorkflowService {
       lastUpdatedAt: now,
     };
     session.hasTeachingReport = true;
+    const evaluation = session.evaluation || {} as any;
+    evaluation.lessonProgressStatus = preparedTeachingReport.lessonProgressStatus;
+    if (preparedTeachingReport.progressPercent !== undefined) {
+      evaluation.progressPercent = preparedTeachingReport.progressPercent;
+    }
+    if (preparedTeachingReport.studentPerformance !== undefined) {
+      evaluation.studentPerformance = preparedTeachingReport.studentPerformance;
+    }
+    if (preparedTeachingReport.studentEngagement !== undefined) {
+      evaluation.studentEngagement = preparedTeachingReport.studentEngagement;
+    }
+    if (preparedTeachingReport.comprehensionLevel !== undefined) {
+      evaluation.comprehensionLevel = preparedTeachingReport.comprehensionLevel;
+    }
+    evaluation.deviationReason = preparedTeachingReport.deviationReason;
+    evaluation.nextSessionPlan = preparedTeachingReport.nextSessionPlan;
+    evaluation.overallComment = preparedTeachingReport.overallComment;
+    if (preparedTeachingReport.homework) {
+      evaluation.homeworkAssigned = preparedTeachingReport.homework;
+    }
+    if (preparedTeachingReport.homeworkDeadline) {
+      evaluation.homeworkDeadline = preparedTeachingReport.homeworkDeadline;
+    }
+    if (preparedTeachingReport.homeworkSubmissionMode) {
+      evaluation.homeworkSubmissionMode = preparedTeachingReport.homeworkSubmissionMode;
+    }
+    if (preparedTeachingReport.homeworkMaterialIds?.length) {
+      evaluation.homeworkMaterialIds = preparedTeachingReport.homeworkMaterialIds;
+    }
+    if (preparedTeachingReport.homeworkQuizIds?.length) {
+      evaluation.homeworkQuizIds = preparedTeachingReport.homeworkQuizIds;
+    }
+    if (
+      (preparedTeachingReport.homework ||
+        preparedTeachingReport.homeworkMaterialIds?.length ||
+        preparedTeachingReport.homeworkQuizIds?.length) &&
+      (!evaluation.homeworkStatus || evaluation.homeworkStatus === 'NOT_ASSIGNED')
+    ) {
+      evaluation.homeworkStatus = 'ASSIGNED';
+    }
+    session.evaluation = evaluation;
 
     if (toSafeNumber(session.teacherPayout, 0) <= 0 && !shouldKeepZeroTeacherPayout(session)) {
       const classroomId = objectIdToString(session.classId);
@@ -765,31 +1039,71 @@ export class SessionWorkflowService {
         dto,
       );
 
-      await this.sessionModel.findByIdAndUpdate(sess._id, {
-        $set: {
-          teachingReport: {
-            lessonContent: preparedTeachingReport.lessonContent,
-            studentAttitude: preparedTeachingReport.studentAttitude,
-            recordingUrl: preparedTeachingReport.recordingUrl,
-            recordingFileKey: preparedTeachingReport.recordingFileKey,
-            teacherComment: preparedTeachingReport.teacherComment,
-            homework: preparedTeachingReport.homework,
-            additionalNotes: preparedTeachingReport.additionalNotes,
-            templateId: preparedTeachingReport.templateId,
-            templateTitle: preparedTeachingReport.templateTitle,
-            templateVersion: preparedTeachingReport.templateVersion,
-            dynamicFieldValues: preparedTeachingReport.dynamicFieldValues,
-            dynamicFieldSchemaSnapshot: preparedTeachingReport.dynamicFieldSchemaSnapshot,
-            submittedAt: isUpdate ? (sess as any).teachingReport.submittedAt : now,
-            deadline,
-            isLateSubmission: isUpdate ? (sess as any).teachingReport.isLateSubmission : isLate,
-            lateSubmissionHours: isUpdate ? (sess as any).teachingReport.lateSubmissionHours : lateHours,
-            version: currentVersion + 1,
-            lastUpdatedAt: now,
-          },
-          hasTeachingReport: true,
+      const updateSet: Record<string, unknown> = {
+        teachingReport: {
+          lessonContent: preparedTeachingReport.lessonContent,
+          studentAttitude: preparedTeachingReport.studentAttitude,
+          recordingUrl: preparedTeachingReport.recordingUrl,
+          recordingFileKey: preparedTeachingReport.recordingFileKey,
+          teacherComment: preparedTeachingReport.teacherComment,
+          homework: preparedTeachingReport.homework,
+          additionalNotes: preparedTeachingReport.additionalNotes,
+          templateId: preparedTeachingReport.templateId,
+          templateTitle: preparedTeachingReport.templateTitle,
+          templateVersion: preparedTeachingReport.templateVersion,
+          dynamicFieldValues: preparedTeachingReport.dynamicFieldValues,
+          dynamicFieldSchemaSnapshot: preparedTeachingReport.dynamicFieldSchemaSnapshot,
+          submittedAt: isUpdate ? (sess as any).teachingReport.submittedAt : now,
+          deadline,
+          isLateSubmission: isUpdate ? (sess as any).teachingReport.isLateSubmission : isLate,
+          lateSubmissionHours: isUpdate ? (sess as any).teachingReport.lateSubmissionHours : lateHours,
+          version: currentVersion + 1,
+          lastUpdatedAt: now,
         },
-      });
+        hasTeachingReport: true,
+        'evaluation.lessonProgressStatus': preparedTeachingReport.lessonProgressStatus,
+      };
+      if (preparedTeachingReport.progressPercent !== undefined) {
+        updateSet['evaluation.progressPercent'] = preparedTeachingReport.progressPercent;
+      }
+      if (preparedTeachingReport.studentPerformance !== undefined) {
+        updateSet['evaluation.studentPerformance'] = preparedTeachingReport.studentPerformance;
+      }
+      if (preparedTeachingReport.studentEngagement !== undefined) {
+        updateSet['evaluation.studentEngagement'] = preparedTeachingReport.studentEngagement;
+      }
+      if (preparedTeachingReport.comprehensionLevel !== undefined) {
+        updateSet['evaluation.comprehensionLevel'] = preparedTeachingReport.comprehensionLevel;
+      }
+      updateSet['evaluation.deviationReason'] = preparedTeachingReport.deviationReason;
+      updateSet['evaluation.nextSessionPlan'] = preparedTeachingReport.nextSessionPlan;
+      updateSet['evaluation.overallComment'] = preparedTeachingReport.overallComment;
+      if (
+        preparedTeachingReport.homework ||
+        preparedTeachingReport.homeworkMaterialIds?.length ||
+        preparedTeachingReport.homeworkQuizIds?.length
+      ) {
+        if (preparedTeachingReport.homework) {
+          updateSet['evaluation.homeworkAssigned'] = preparedTeachingReport.homework;
+        }
+        if (preparedTeachingReport.homeworkDeadline) {
+          updateSet['evaluation.homeworkDeadline'] = preparedTeachingReport.homeworkDeadline;
+        }
+        if (preparedTeachingReport.homeworkSubmissionMode) {
+          updateSet['evaluation.homeworkSubmissionMode'] = preparedTeachingReport.homeworkSubmissionMode;
+        }
+        if (preparedTeachingReport.homeworkMaterialIds?.length) {
+          updateSet['evaluation.homeworkMaterialIds'] = preparedTeachingReport.homeworkMaterialIds;
+        }
+        if (preparedTeachingReport.homeworkQuizIds?.length) {
+          updateSet['evaluation.homeworkQuizIds'] = preparedTeachingReport.homeworkQuizIds;
+        }
+        if (!(sess as any).evaluation?.homeworkStatus || (sess as any).evaluation?.homeworkStatus === 'NOT_ASSIGNED') {
+          updateSet['evaluation.homeworkStatus'] = 'ASSIGNED';
+        }
+      }
+
+      await this.sessionModel.findByIdAndUpdate(sess._id, { $set: updateSet });
 
       results.push({ sessionId: sess._id.toString(), status: sess.status, action: isUpdate ? 'UPDATED' : 'SUBMITTED' });
       updatedCount++;

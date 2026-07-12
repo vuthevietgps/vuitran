@@ -73,6 +73,9 @@ export class Student {
   @Prop({ type: [{ type: SchemaTypes.ObjectId, ref: 'User' }], default: [] })
   parentUserIds?: Types.ObjectId[]; // All linked parent accounts, primary parent kept in parentUserId
 
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User', required: false, index: true })
+  studentUserId?: Types.ObjectId; // Optional login account for the student
+
   @Prop({ required: true, trim: true })
   parentName!: string;
 

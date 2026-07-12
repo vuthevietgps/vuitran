@@ -24,6 +24,7 @@ import {
 } from '../marketing-attribution/schemas/parent-attribution.schema';
 
 import { NetProfitDailyRow, SuggestionModel } from './ads.types';
+import { AdsGroupProfitCostService } from './ads-group-profit-cost.service';
 
 import {
   getUtcDateRange,
@@ -32,6 +33,7 @@ import {
   splitGroupDayKey,
   daysInMonth,
   fitLogCurve,
+  roundCurrency,
   toUtcDateOnlyString,
 } from './ads.utils';
 
@@ -51,6 +53,7 @@ export class AdsDataService {
     @InjectModel(Student.name) private studentModel: Model<StudentDocument>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
     @InjectModel(ParentAttribution.name) private parentAttributionModel: Model<ParentAttributionDocument>,
+    private readonly groupProfitCostService: AdsGroupProfitCostService,
   ) {}
 
   // ─── Net Profit Daily Rows ─────────────────────────────
@@ -275,7 +278,7 @@ export class AdsDataService {
       { $match: leadMatch },
       { $group: { _id: '$adGroupId', leadCount: { $sum: 1 } } },
     ]);
-    const leadMap = new Map(leadsByGroup.map(l => [l._id.toString(), l.leadCount]));
+    const leadMap = new Map(leadsByGroup.map((l) => [l._id.toString(), l.leadCount]));
 
     const orderMatch: any = {
       adGroupId: { $exists: true, $ne: null },
@@ -290,18 +293,22 @@ export class AdsDataService {
         $group: {
           _id: '$adGroupId',
           orderCount: { $sum: 1 },
-          revenue: { $sum: '$finalAmount' },
+          revenue: { $sum: { $ifNull: ['$finalAmount', 0] } },
+          saleCommission: { $sum: { $ifNull: ['$saleCommission', 0] } },
         },
       },
     ]);
-    const orderMap = new Map(ordersByGroup.map(o => [o._id.toString(), o]));
+    const orderMap = new Map(ordersByGroup.map((o) => [o._id.toString(), o]));
+    const costBreakdownByGroup = await this.groupProfitCostService.buildBreakdownByAdGroup(start, end);
 
     const dailyNetProfit = await this.buildNetProfitDailyRows(start, end, adGroupObjectId);
     const netProfitByGroup = new Map<string, number>();
+    const recognizedRevenueByGroup = new Map<string, number>();
     const netProfitMetaByGroup = new Map<string, { adGroupName: string; platform: string }>();
     for (const row of dailyNetProfit) {
       if (platform && row.platform !== platform) continue;
       netProfitByGroup.set(row.adGroupId, (netProfitByGroup.get(row.adGroupId) || 0) + row.netProfit);
+      recognizedRevenueByGroup.set(row.adGroupId, (recognizedRevenueByGroup.get(row.adGroupId) || 0) + row.revenue);
       if (!netProfitMetaByGroup.has(row.adGroupId)) {
         netProfitMetaByGroup.set(row.adGroupId, {
           adGroupName: row.adGroupName || '',
@@ -315,6 +322,7 @@ export class AdsDataService {
     for (const gId of leadMap.keys()) allGroupIds.add(gId);
     for (const gId of orderMap.keys()) allGroupIds.add(gId);
     for (const gId of netProfitByGroup.keys()) allGroupIds.add(gId);
+    for (const gId of costBreakdownByGroup.keys()) allGroupIds.add(gId);
     if (adGroupObjectId) allGroupIds.add(adGroupObjectId.toString());
 
     const adGroupMetaMap = new Map<string, { name: string; platform: string }>();
@@ -344,9 +352,30 @@ export class AdsDataService {
         if (platform && resolvedPlatform !== platform) return null;
 
         const leadCount = leadMap.get(gId) || 0;
-        const orderData = orderMap.get(gId) || { orderCount: 0, revenue: 0 };
-        const netProfit = netProfitByGroup.get(gId) || 0;
+        const orderData = orderMap.get(gId) || { orderCount: 0, revenue: 0, saleCommission: 0 };
+        const sessionNetProfit = netProfitByGroup.get(gId) || 0;
+        const recognizedRevenue = recognizedRevenueByGroup.get(gId) || 0;
+        const bookedRevenue = roundCurrency(Number(orderData.revenue || 0));
+        const saleCommission = roundCurrency(Number(orderData.saleCommission || 0));
         const totalSpend = Number(cost?.totalSpend || 0);
+        const costBreakdown = costBreakdownByGroup.get(gId);
+        const estimatedTeacherCost = roundCurrency(Number(costBreakdown?.estimatedTeacherCost || 0));
+        const directParentExpense = roundCurrency(Number(costBreakdown?.directParentExpense || 0));
+        const allocatedGroupExpense = roundCurrency(Number(costBreakdown?.allocatedGroupExpense || 0));
+        const allocatedGlobalExpense = roundCurrency(Number(costBreakdown?.allocatedGlobalExpense || 0));
+        const allocatedStaffLaborCost = roundCurrency(Number(costBreakdown?.allocatedStaffLaborCost || 0));
+        const otherCost = roundCurrency(directParentExpense + allocatedGroupExpense + allocatedGlobalExpense);
+        const operatingCost = roundCurrency(otherCost + allocatedStaffLaborCost);
+        const totalCost = roundCurrency(
+          totalSpend
+          + saleCommission
+          + estimatedTeacherCost
+          + operatingCost,
+        );
+        const orderProfit = roundCurrency(bookedRevenue - saleCommission - estimatedTeacherCost);
+        const netProfit = roundCurrency(bookedRevenue - totalCost);
+        const projectedOrderNetProfit = netProfit;
+        const realizedNetProfit = sessionNetProfit;
         const roi = totalSpend > 0 ? (netProfit / totalSpend) * 100 : 0;
 
         return {
@@ -359,11 +388,27 @@ export class AdsDataService {
           totalConversions: Number(cost?.totalConversions || 0),
           leadCount,
           orderCount: orderData.orderCount,
-          revenue: orderData.revenue,
+          revenue: bookedRevenue,
+          bookedRevenue,
+          recognizedRevenue,
+          saleCommission,
+          estimatedTeacherCost,
+          directParentExpense,
+          allocatedGroupExpense,
+          allocatedGlobalExpense,
+          allocatedStaffLaborCost,
+          otherCost,
+          operatingCost,
+          totalCost,
+          orderProfit,
+          sessionNetProfit,
+          projectedOrderNetProfit,
+          realizedNetProfit,
           costPerLead: leadCount > 0 ? Math.round(totalSpend / leadCount) : null,
           costPerOrder: orderData.orderCount > 0 ? Math.round(totalSpend / orderData.orderCount) : null,
           netProfit,
           roi: Math.round(roi * 100) / 100,
+          profitBasis: 'ORDER_REVENUE_MINUS_ALL_ALLOCATED_COSTS',
         };
       })
       .filter((row): row is NonNullable<typeof row> => row !== null)
@@ -374,10 +419,26 @@ export class AdsDataService {
       totalLeads: rows.reduce((s, r) => s + r.leadCount, 0),
       totalOrders: rows.reduce((s, r) => s + r.orderCount, 0),
       totalRevenue: rows.reduce((s, r) => s + r.revenue, 0),
+      totalBookedRevenue: rows.reduce((s, r) => s + r.bookedRevenue, 0),
+      totalRecognizedRevenue: rows.reduce((s, r) => s + r.recognizedRevenue, 0),
+      totalSaleCommission: rows.reduce((s, r) => s + r.saleCommission, 0),
+      totalEstimatedTeacherCost: rows.reduce((s, r) => s + r.estimatedTeacherCost, 0),
+      totalDirectParentExpense: rows.reduce((s, r) => s + r.directParentExpense, 0),
+      totalAllocatedGroupExpense: rows.reduce((s, r) => s + r.allocatedGroupExpense, 0),
+      totalAllocatedGlobalExpense: rows.reduce((s, r) => s + r.allocatedGlobalExpense, 0),
+      totalAllocatedStaffLaborCost: rows.reduce((s, r) => s + r.allocatedStaffLaborCost, 0),
+      totalOtherCost: rows.reduce((s, r) => s + r.otherCost, 0),
+      totalOperatingCost: rows.reduce((s, r) => s + r.operatingCost, 0),
+      totalCost: rows.reduce((s, r) => s + r.totalCost, 0),
+      totalOrderProfit: rows.reduce((s, r) => s + r.orderProfit, 0),
+      totalSessionNetProfit: rows.reduce((s, r) => s + r.sessionNetProfit, 0),
+      totalProjectedOrderNetProfit: rows.reduce((s, r) => s + r.projectedOrderNetProfit, 0),
+      totalRealizedNetProfit: rows.reduce((s, r) => s + r.realizedNetProfit, 0),
       totalNetProfit: rows.reduce((s, r) => s + r.netProfit, 0),
       avgCostPerLead: 0,
       avgCostPerOrder: 0,
       avgRoi: 0,
+      profitBasis: 'ORDER_REVENUE_MINUS_ALL_ALLOCATED_COSTS',
     };
 
     if (summary.totalLeads > 0) summary.avgCostPerLead = Math.round(summary.totalSpend / summary.totalLeads);

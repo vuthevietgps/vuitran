@@ -548,9 +548,10 @@ export class GoogleAdsProvider
         const group = campaignMap.get(campaignId);
         if (!group) continue;
 
-        const costVnd =
-          (Number(row.metrics?.cost_micros || 0) / 1_000_000) *
-          this.getExchangeRate("USD");
+        const costVnd = this.convertSpendToVnd(
+          Number(row.metrics?.cost_micros || 0) / 1_000_000,
+          account.currency,
+        );
 
         await this.createOrUpdateCost({
           adGroupId: group._id.toString(),

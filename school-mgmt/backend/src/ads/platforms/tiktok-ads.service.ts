@@ -446,7 +446,7 @@ export class TikTokAdsProvider extends BaseAdPlatformService implements IAdPlatf
             adAccountId: account._id.toString(),
             platform: 'TIKTOK',
             date: dateStr,
-            spend: Number(row.metrics?.spend || 0) * this.getExchangeRate('USD'),
+            spend: this.convertSpendToVnd(Number(row.metrics?.spend || 0), account.currency),
             impressions: Number(row.metrics?.impressions || 0),
             clicks: Number(row.metrics?.clicks || 0),
             conversions: Number(row.metrics?.conversions || 0),

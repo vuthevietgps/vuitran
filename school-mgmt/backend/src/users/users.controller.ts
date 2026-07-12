@@ -46,6 +46,12 @@ export class UsersController {
     return this.usersService.findByRole(Role.SALE);
   }
 
+  @Get('experience-teachers')
+  @Roles(Role.DIRECTOR, Role.SALE, Role.OPS, Role.ACCOUNTING, Role.EXPERIENCE_TEACHER)
+  findExperienceTeachers() {
+    return this.usersService.findByRole(Role.EXPERIENCE_TEACHER);
+  }
+
   @Get('parents')
   @Roles(Role.DIRECTOR, Role.OPS, Role.SALE, Role.ACCOUNTING)
   findParents(@Req() req: AuthenticatedRequest) {

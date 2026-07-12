@@ -35,6 +35,42 @@ export enum CancelledByRole {
   SYSTEM = 'SYSTEM',
 }
 
+export enum LessonProgressStatus {
+  COMPLETED = 'COMPLETED',
+  PARTIAL = 'PARTIAL',
+  REVIEW_NEEDED = 'REVIEW_NEEDED',
+  SKIPPED = 'SKIPPED',
+  REPLACED = 'REPLACED',
+}
+
+export enum HomeworkSubmissionMode {
+  OFFLINE_UPLOAD = 'OFFLINE_UPLOAD',
+  ONLINE_TEXT = 'ONLINE_TEXT',
+  HYBRID = 'HYBRID',
+  NO_SUBMISSION = 'NO_SUBMISSION',
+}
+
+@Schema({ _id: false })
+export class HomeworkAttachment {
+  @Prop({ type: String, required: true, trim: true })
+  fileUrl!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  originalName!: string;
+
+  @Prop({ type: String, required: true, trim: true })
+  fileType!: string;
+
+  @Prop({ type: Number, min: 0, default: 0 })
+  fileSize!: number;
+
+  @Prop({ type: Date, default: Date.now })
+  uploadedAt!: Date;
+}
+
+export const HomeworkAttachmentSchema =
+  SchemaFactory.createForClass(HomeworkAttachment);
+
 // ─── Sub-schemas ────────────────────────────────────────────────────
 
 @Schema({ _id: false })
@@ -112,6 +148,16 @@ export class SessionEvaluation {
   @Prop({ type: Number, min: 1, max: 5 })
   comprehensionLevel?: number; // Mức độ hiểu bài (1=Chưa hiểu, 5=Hiểu hoàn toàn)
 
+  @Prop({
+    type: String,
+    enum: Object.values(LessonProgressStatus),
+    default: LessonProgressStatus.COMPLETED,
+  })
+  lessonProgressStatus?: LessonProgressStatus;
+
+  @Prop({ type: String, trim: true })
+  deviationReason?: string;
+
   @Prop({ type: String, trim: true })
   strengthsObserved?: string; // Điểm mạnh quan sát được
 
@@ -125,14 +171,51 @@ export class SessionEvaluation {
   @Prop({ type: Date })
   homeworkDeadline?: Date; // Hạn nộp bài tập
 
-  @Prop({ type: String, enum: ['NOT_ASSIGNED', 'ASSIGNED', 'SUBMITTED', 'REVIEWED'], default: 'NOT_ASSIGNED' })
+  @Prop({ type: String, enum: ['NOT_ASSIGNED', 'ASSIGNED', 'SUBMITTED', 'REVIEWED', 'GRADED'], default: 'NOT_ASSIGNED' })
   homeworkStatus?: string; // Trạng thái BTVN
+
+  @Prop({
+    type: String,
+    enum: Object.values(HomeworkSubmissionMode),
+    default: HomeworkSubmissionMode.HYBRID,
+  })
+  homeworkSubmissionMode?: HomeworkSubmissionMode;
+
+  @Prop({ type: [{ type: SchemaTypes.ObjectId, ref: 'TeachingMaterial' }], default: [] })
+  homeworkMaterialIds?: Types.ObjectId[];
+
+  @Prop({ type: [{ type: SchemaTypes.ObjectId, ref: 'Quiz' }], default: [] })
+  homeworkQuizIds?: Types.ObjectId[];
+
+  @Prop({ type: String, trim: true })
+  homeworkSubmissionText?: string;
+
+  @Prop({ type: String, trim: true })
+  homeworkSubmissionVideoUrl?: string;
+
+  @Prop({ type: [HomeworkAttachmentSchema], default: [] })
+  homeworkSubmissionFiles?: HomeworkAttachment[];
+
+  @Prop({ type: Date })
+  homeworkSubmittedAt?: Date;
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  homeworkSubmittedBy?: Types.ObjectId;
 
   @Prop({ type: Number, min: 0, max: 10 })
   homeworkScore?: number; // Điểm BTVN (0-10)
 
   @Prop({ type: String, trim: true })
   homeworkFeedback?: string; // Nhận xét BTVN
+
+  @Prop({ type: SchemaTypes.ObjectId, ref: 'User' })
+  homeworkGradedBy?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  homeworkGradedAt?: Date;
+
+  @Prop({ type: [HomeworkAttachmentSchema], default: [] })
+  homeworkReviewFiles?: HomeworkAttachment[];
 
   // ── Tiến độ & kế hoạch tiếp theo ──
   @Prop({ type: Number, min: 0, max: 100 })
@@ -538,6 +621,10 @@ SessionSchema.index({ classId: 1, status: 1, scheduledDate: -1 });
 SessionSchema.index({ status: 1, 'confirmation.teacherCompletedAt': 1 }); // For auto-confirm cron
 SessionSchema.index({ classId: 1, sessionNumber: 1 });
 SessionSchema.index({ teacherId: 1, hasTeachingReport: 1, status: 1 }); // Payroll + báo cáo giảng dạy
+SessionSchema.index({ parentUserId: 1, 'evaluation.homeworkStatus': 1, scheduledDate: -1 });
+SessionSchema.index({ 'evaluation.homeworkStatus': 1, 'evaluation.homeworkSubmittedAt': -1 });
+SessionSchema.index({ 'evaluation.homeworkMaterialIds': 1, scheduledDate: -1 });
+SessionSchema.index({ 'evaluation.homeworkQuizIds': 1, scheduledDate: -1 });
 SessionSchema.index({
   status: 1,
   isPaid: 1,

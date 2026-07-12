@@ -49,7 +49,7 @@ type SystemLandingPageItem = {
   title: string;
   summary: string;
   publicPath: string;
-  sourceCode: 'ERP_CLUSTER';
+  sourceCode: 'ERP_CLUSTER' | 'INTERNAL_GUIDE';
   roleSummary: string;
   sectionCount: number;
   milestoneCount: number;
@@ -68,11 +68,60 @@ export class LandingPagesManagementComponent implements OnInit {
   readonly pages = signal<LandingPageItem[]>([]);
   readonly submissions = signal<LandingPageSubmissionItem[]>([]);
   readonly allGroups = signal<AdGroupItem[]>([]);
-  readonly systemPages = computed<SystemLandingPageItem[]>(() =>
-    [erpLaunchClusterContent.hubPage, ...erpLaunchClusterContent.detailPages].map((page) =>
+  readonly systemPages = computed<SystemLandingPageItem[]>(() => {
+    const erpPages = [erpLaunchClusterContent.hubPage, ...erpLaunchClusterContent.detailPages].map((page) =>
       this.toSystemPage(page),
-    ),
-  );
+    );
+
+    const guidePages: SystemLandingPageItem[] = [
+      {
+        slug: 'teacher-hub',
+        title: 'Giáo viên hub',
+        summary: 'Sổ tay hướng dẫn cho Giáo viên',
+        publicPath: '/app/teacher-hub',
+        sourceCode: 'INTERNAL_GUIDE',
+        roleSummary: 'Giáo viên',
+        sectionCount: 0,
+        milestoneCount: 0,
+        primaryCta: 'Xem hướng dẫn',
+      },
+      {
+        slug: 'sale-hub',
+        title: 'Sale hub',
+        summary: 'Sổ tay hướng dẫn cho Sale',
+        publicPath: '/app/sale-hub',
+        sourceCode: 'INTERNAL_GUIDE',
+        roleSummary: 'Tư vấn tuyển sinh',
+        sectionCount: 0,
+        milestoneCount: 0,
+        primaryCta: 'Xem hướng dẫn',
+      },
+      {
+        slug: 'ads-hub',
+        title: 'Ads hub',
+        summary: 'Sổ tay hướng dẫn cho Ads',
+        publicPath: '/app/ads-hub',
+        sourceCode: 'INTERNAL_GUIDE',
+        roleSummary: 'Ads Manager | Vận hành',
+        sectionCount: 0,
+        milestoneCount: 0,
+        primaryCta: 'Xem hướng dẫn',
+      },
+      {
+        slug: 'accounting-hub',
+        title: 'Kế toán hub',
+        summary: 'Sổ tay hướng dẫn cho Kế toán',
+        publicPath: '/app/accounting-hub',
+        sourceCode: 'INTERNAL_GUIDE',
+        roleSummary: 'Kế toán',
+        sectionCount: 0,
+        milestoneCount: 0,
+        primaryCta: 'Xem hướng dẫn',
+      },
+    ];
+
+    return [...erpPages, ...guidePages];
+  });
   readonly error = signal('');
   readonly loading = signal(false);
   readonly showModal = signal(false);
@@ -83,9 +132,6 @@ readonly pageSearch = signal('');
   readonly pageStatus = signal('');
   readonly submissionSearch = signal('');
   readonly submissionLandingPageId = signal('');
-  readonly totalLandingLinks = computed(
-    () => this.filteredSystemPages().length + this.filteredPages().length,
-  );
 
   form: any = this.createEmptyForm();
 
@@ -278,6 +324,20 @@ readonly pageSearch = signal('');
 
   async copyPublicUrlBySlug(slug: string) {
     const url = this.publicUrl(slug);
+    try {
+      await navigator.clipboard.writeText(url);
+      alert(`Đã copy: ${url}`);
+    } catch {
+      prompt('Copy link landing page', url);
+    }
+  }
+
+  getSystemLink(page: SystemLandingPageItem): string {
+    return `${window.location.origin}${page.publicPath}`;
+  }
+
+  async copySystemLink(page: SystemLandingPageItem) {
+    const url = this.getSystemLink(page);
     try {
       await navigator.clipboard.writeText(url);
       alert(`Đã copy: ${url}`);

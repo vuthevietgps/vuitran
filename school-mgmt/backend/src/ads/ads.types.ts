@@ -2,6 +2,7 @@ export type NetProfitDailyRow = {
   date: string;
   adGroupId: string;
   adGroupName: string;
+  adAccountId?: string;
   platform: string;
   sessionCount: number;
   revenue: number;
@@ -14,6 +15,49 @@ export type NetProfitDailyRow = {
   adSpend: number;
   netProfit: number;
   netMargin: number;
+};
+
+export type SaleFunnelDiagnosticRow = {
+  adGroupId: string;
+  adGroupName: string;
+  platform: string;
+  saleId: string | null;
+  saleName: string;
+  leadCount: number;
+  assignedLeadCount: number;
+  contactedLeadCount: number;
+  staleLeadCount: number;
+  convertedOrderCount: number;
+  approvedOrderCount: number;
+  revenue: number;
+  saleCommission: number;
+  profit: number;
+  netProfit: number | null;
+  profitBasis: 'ORDER_REVENUE_MINUS_SALE_COMMISSION';
+  netProfitBasis: null;
+};
+
+export type SaleFunnelDiagnosticsResponse = {
+  query: {
+    startDate: string;
+    endDate: string;
+    adGroupId: string | null;
+    saleId: string | null;
+    staleAfterDays: number;
+  };
+  rows: SaleFunnelDiagnosticRow[];
+  summary: {
+    leadCount: number;
+    assignedLeadCount: number;
+    contactedLeadCount: number;
+    staleLeadCount: number;
+    convertedOrderCount: number;
+    approvedOrderCount: number;
+    revenue: number;
+    saleCommission: number;
+    profit: number;
+    netProfit: number | null;
+  };
 };
 
 export type ParentProfitabilityRow = {
@@ -296,6 +340,36 @@ export interface ActionableSuggestion {
     dailyProfitChange: number;
     monthlyProfitChange: number;
   };
+  draftRecommendations?: CampaignDraftRecommendation[];
+}
+
+export interface CampaignDraftRecommendation {
+  draftName: string;
+  platform: string;
+  adAccountId?: string;
+  sourceAdGroupId?: string;
+  sourceAdGroupName?: string;
+  dailyBudget: number;
+  targetAudience: string;
+  trackingKey: string;
+  objective: string;
+  offerAngle: string;
+  kpi: {
+    targetCpl: number | null;
+    targetCpo: number | null;
+    targetDailyNetProfit: number;
+  };
+  payload: {
+    name: string;
+    adAccountId?: string;
+    platform: string;
+    dailyBudget: number;
+    targetAudience: string;
+    trackingKeys: string[];
+    notes: string;
+  };
+  missingFields: string[];
+  launchChecklist: string[];
 }
 
 export interface ActionsRequiredSummary {
@@ -306,6 +380,16 @@ export interface ActionsRequiredSummary {
   totalOptimalDailySpend: number;
   overallNetProfit7d: number;
   overallEffectiveNetProfit: number;
+  dataReadiness?: {
+    score: number;
+    level: 'PRODUCTION_READY' | 'GOOD' | 'NEEDS_REVIEW' | 'WEAK';
+    groupsAnalyzed: number;
+    groupsWithModel: number;
+    groupsWithCohortSignal: number;
+    matureCohortRows: number;
+    attributionCoveragePercent: number;
+    warnings: string[];
+  };
   generatedAt: string;
 }
 

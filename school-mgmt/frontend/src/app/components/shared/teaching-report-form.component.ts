@@ -17,14 +17,29 @@ import {
   ReportTemplate,
   ReportTemplateDynamicFieldDefinition,
 } from '../../services/report-template.service';
+import { TeachingMaterial } from '../../services/teacher.service';
+import { Quiz } from '../../services/quiz.service';
 
 export type ReportDynamicFieldValue = string | number | boolean;
+export type LessonProgressStatus = 'COMPLETED' | 'PARTIAL' | 'REVIEW_NEEDED' | 'SKIPPED' | 'REPLACED';
 export interface ReportFormValues {
   lessonContent: string;
   studentAttitude: string;
   recordingUrl: string;
   teacherComment: string;
   homework: string;
+  homeworkSubmissionMode?: 'OFFLINE_UPLOAD' | 'ONLINE_TEXT' | 'HYBRID' | 'NO_SUBMISSION';
+  homeworkDeadline?: string;
+  homeworkMaterialIds?: string[];
+  homeworkQuizIds?: string[];
+  lessonProgressStatus?: LessonProgressStatus;
+  progressPercent?: number;
+  studentPerformance?: number;
+  studentEngagement?: number;
+  comprehensionLevel?: number;
+  deviationReason?: string;
+  nextSessionPlan?: string;
+  overallComment?: string;
   additionalNotes: string;
   templateId?: string;
   templateTitle?: string;
@@ -54,6 +69,22 @@ const LEGACY_FIELDS: LegacyFieldConfig[] = [
   { key: 'teacherComment', label: 'Nhận xét chung', placeholder: 'Nhận xét tổng quan về buổi học...', testId: 'report-teacher-comment', full: true, rows: 2, maxLength: 1000, type: 'textarea' },
   { key: 'homework', label: 'Bài tập về nhà', placeholder: 'Bài tập giao cho HS...', testId: 'report-homework', rows: 2, maxLength: 1000, type: 'textarea' },
   { key: 'additionalNotes', label: 'Ghi chú thêm', placeholder: 'Ghi chú khác nếu có...', testId: 'report-additional-notes', rows: 2, maxLength: 500, type: 'textarea' },
+];
+
+const LESSON_PROGRESS_OPTIONS: Array<{ value: LessonProgressStatus; label: string }> = [
+  { value: 'COMPLETED', label: 'Hoàn thành đúng bài' },
+  { value: 'PARTIAL', label: 'Hoàn thành một phần' },
+  { value: 'REVIEW_NEEDED', label: 'Cần ôn lại buổi sau' },
+  { value: 'SKIPPED', label: 'Tạm bỏ qua bài' },
+  { value: 'REPLACED', label: 'Thay bằng nội dung khác' },
+];
+
+const RATING_OPTIONS = [
+  { value: 1, label: '1 - Yếu' },
+  { value: 2, label: '2 - Cần hỗ trợ' },
+  { value: 3, label: '3 - Đạt' },
+  { value: 4, label: '4 - Tốt' },
+  { value: 5, label: '5 - Rất tốt' },
 ];
 
 @Component({
@@ -107,6 +138,97 @@ const LEGACY_FIELDS: LegacyFieldConfig[] = [
       </div>
     </ng-template>
 
+    <section class="homework-standard lesson-evaluation">
+      <div class="standard-header">
+        <strong>Đánh giá buổi học</strong>
+        <span>Ghi nhận mức độ hoàn thành bài và tình hình tiếp thu</span>
+      </div>
+      <div class="standard-grid">
+        <label>
+          <span>Tiến độ bài học</span>
+          <select [(ngModel)]="form.lessonProgressStatus" (change)="onDraftInput()">
+            <option *ngFor="let option of lessonProgressOptions" [value]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label [class.has-error]="errors['progressPercent']">
+          <span>% hoàn thành</span>
+          <input type="number" min="0" max="100" step="1" [(ngModel)]="form.progressPercent" (input)="onDraftInput()">
+          <span class="error-msg" *ngIf="errors['progressPercent']">{{ errors['progressPercent'] }}</span>
+        </label>
+        <label>
+          <span>Năng lực học sinh</span>
+          <select [(ngModel)]="form.studentPerformance" (change)="onDraftInput()">
+            <option *ngFor="let option of ratingOptions" [ngValue]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
+          <span>Mức độ tham gia</span>
+          <select [(ngModel)]="form.studentEngagement" (change)="onDraftInput()">
+            <option *ngFor="let option of ratingOptions" [ngValue]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label>
+          <span>Mức độ hiểu bài</span>
+          <select [(ngModel)]="form.comprehensionLevel" (change)="onDraftInput()">
+            <option *ngFor="let option of ratingOptions" [ngValue]="option.value">{{ option.label }}</option>
+          </select>
+        </label>
+        <label class="full" [class.has-error]="errors['deviationReason']" *ngIf="requiresDeviationReason()">
+          <span>Lý do chưa hoàn thành đúng tiến độ</span>
+          <textarea rows="2" maxlength="500" [(ngModel)]="form.deviationReason" placeholder="Ví dụ: học sinh tiếp thu chậm, cần thêm 1 buổi để luyện phần này..." (input)="onDraftInput()"></textarea>
+          <span class="error-msg" *ngIf="errors['deviationReason']">{{ errors['deviationReason'] }}</span>
+        </label>
+        <label class="full" [class.has-error]="errors['nextSessionPlan']">
+          <span>Kế hoạch buổi sau</span>
+          <textarea rows="2" maxlength="500" [(ngModel)]="form.nextSessionPlan" placeholder="Nội dung cần dạy/ôn/luyện ở buổi tiếp theo..." (input)="onDraftInput()"></textarea>
+          <span class="error-msg" *ngIf="errors['nextSessionPlan']">{{ errors['nextSessionPlan'] }}</span>
+        </label>
+        <label class="full" [class.has-error]="errors['overallComment']">
+          <span>Nhận xét tổng quan</span>
+          <textarea rows="2" maxlength="1000" [(ngModel)]="form.overallComment" placeholder="Đánh giá ngắn về buổi học..." (input)="onDraftInput()"></textarea>
+          <span class="error-msg" *ngIf="errors['overallComment']">{{ errors['overallComment'] }}</span>
+        </label>
+      </div>
+    </section>
+
+    <section class="homework-standard">
+      <div class="standard-header">
+        <strong>Chuan giao bai tap</strong>
+        <span>Ap dung khi co BTVN hoac chon bai trong kho</span>
+      </div>
+      <div class="standard-grid">
+        <label>
+          <span>Cach nop bai</span>
+          <select [(ngModel)]="form.homeworkSubmissionMode" (change)="onDraftInput()">
+            <option value="HYBRID">Text hoac upload file</option>
+            <option value="OFFLINE_UPLOAD">Lam ra vo/giay roi upload anh</option>
+            <option value="ONLINE_TEXT">Lam truc tiep bang text</option>
+            <option value="NO_SUBMISSION">Khong can nop tren he thong</option>
+          </select>
+        </label>
+        <label>
+          <span>Han nop</span>
+          <input type="date" [(ngModel)]="form.homeworkDeadline" (input)="onDraftInput()">
+        </label>
+        <label class="full">
+          <span>Chon bai tu kho BTVN</span>
+          <select multiple [ngModel]="form.homeworkMaterialIds || []" (ngModelChange)="onHomeworkMaterialIdsChange($event)">
+            <option *ngFor="let material of homeworkMaterials" [value]="material._id">
+              {{ materialLabel(material) }}
+            </option>
+          </select>
+        </label>
+        <label class="full">
+          <span>Chon quiz cau truc</span>
+          <select multiple [ngModel]="form.homeworkQuizIds || []" (ngModelChange)="onHomeworkQuizIdsChange($event)">
+            <option *ngFor="let quiz of quizzes" [value]="quiz._id">
+              {{ quizLabel(quiz) }}
+            </option>
+          </select>
+        </label>
+      </div>
+    </section>
+
     <div class="form-actions">
       <span class="draft-hint" *ngIf="draftSaving()">Đang lưu nháp...</span>
       <span class="draft-hint saved" *ngIf="!draftSaving() && draftSaved()">💾 Đã lưu nháp</span>
@@ -115,12 +237,14 @@ const LEGACY_FIELDS: LegacyFieldConfig[] = [
     </div>
   `,
   styles: [`
-    .template-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}.template-bar label{font-size:12px;color:#64748b;font-weight:600}.template-select{padding:5px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;background:#fff;min-width:220px;cursor:pointer}.active-template{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:700}.btn-chip{border:1px solid #bfdbfe;background:#fff;color:#1d4ed8;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}.template-error{margin-bottom:10px;color:#dc2626;font-size:12px;font-weight:600}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.form-group{display:flex;flex-direction:column;gap:4px}.form-group.full{grid-column:1/-1}.form-group label{font-size:13px;font-weight:600;color:#475569;display:flex;justify-content:space-between;align-items:center;gap:8px}.required{color:#ef4444}.char-count{font-size:11px;font-weight:400;color:#94a3b8}.form-group textarea,.form-group input,.form-group select{padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;background:#fff}.form-group.has-error textarea,.form-group.has-error input,.form-group.has-error select,.form-group.has-error .checkbox-field{border-color:#ef4444;background:#fef2f2}.checkbox-field{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;font-size:14px;font-weight:500}.error-msg{font-size:12px;color:#dc2626}.form-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:14px}.draft-hint{font-size:12px;color:#64748b;margin-right:auto}.draft-hint.saved{color:#16a34a}.btn{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}.btn.primary{background:#2563eb;color:#fff}.btn.primary:disabled{background:#93c5fd;cursor:not-allowed}.btn.secondary{background:#f1f5f9;color:#475569}@media (max-width:768px){.form-grid{grid-template-columns:1fr}}
+    .template-bar{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap}.template-bar label{font-size:12px;color:#64748b;font-weight:600}.template-select{padding:5px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:13px;background:#fff;min-width:220px;cursor:pointer}.active-template{display:inline-flex;align-items:center;padding:4px 10px;border-radius:999px;background:#eff6ff;color:#1d4ed8;font-size:12px;font-weight:700}.btn-chip{border:1px solid #bfdbfe;background:#fff;color:#1d4ed8;border-radius:999px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer}.template-error{margin-bottom:10px;color:#dc2626;font-size:12px;font-weight:600}.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.form-group{display:flex;flex-direction:column;gap:4px}.form-group.full{grid-column:1/-1}.form-group label{font-size:13px;font-weight:600;color:#475569;display:flex;justify-content:space-between;align-items:center;gap:8px}.required{color:#ef4444}.char-count{font-size:11px;font-weight:400;color:#94a3b8}.form-group textarea,.form-group input,.form-group select{padding:8px 12px;border:1px solid #cbd5e1;border-radius:6px;font-size:14px;font-family:inherit;resize:vertical;background:#fff}.form-group.has-error textarea,.form-group.has-error input,.form-group.has-error select,.form-group.has-error .checkbox-field{border-color:#ef4444;background:#fef2f2}.checkbox-field{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;font-size:14px;font-weight:500}.error-msg{font-size:12px;color:#dc2626}.homework-standard{margin-top:14px;padding:12px;border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff}.lesson-evaluation{background:#f8fafc;border-color:#cbd5e1}.standard-header{display:flex;justify-content:space-between;gap:10px;margin-bottom:10px;color:#1e3a8a}.standard-header strong{font-size:13px}.standard-header span{font-size:12px;color:#475569}.standard-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.standard-grid label{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:700;color:#334155}.standard-grid label.full{grid-column:1/-1}.standard-grid input,.standard-grid select,.standard-grid textarea{padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;font:inherit}.standard-grid textarea{resize:vertical}.standard-grid label.has-error input,.standard-grid label.has-error textarea,.standard-grid label.has-error select{border-color:#ef4444;background:#fef2f2}.standard-grid select[multiple]{min-height:96px}.form-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:14px}.draft-hint{font-size:12px;color:#64748b;margin-right:auto}.draft-hint.saved{color:#16a34a}.btn{padding:8px 18px;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}.btn.primary{background:#2563eb;color:#fff}.btn.primary:disabled{background:#93c5fd;cursor:not-allowed}.btn.secondary{background:#f1f5f9;color:#475569}@media (max-width:768px){.form-grid,.standard-grid{grid-template-columns:1fr}}
   `],
 })
 export class TeachingReportFormComponent implements OnInit, OnDestroy, OnChanges {
   @Input() initialValues: ReportFormValues = emptyForm();
   @Input() templates: ReportTemplate[] = [];
+  @Input() homeworkMaterials: TeachingMaterial[] = [];
+  @Input() quizzes: Quiz[] = [];
   @Input() contextClassId = '';
   @Input() submitting = false;
   @Input() submitLabel = '📤 Nộp báo cáo';
@@ -131,6 +255,8 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy, OnChanges
   @Output() draftChange = new EventEmitter<ReportFormValues>();
 
   readonly legacyFields = LEGACY_FIELDS;
+  readonly lessonProgressOptions = LESSON_PROGRESS_OPTIONS;
+  readonly ratingOptions = RATING_OPTIONS;
   form: ReportFormValues = emptyForm();
   errors: Record<string, string> = {};
   draftSaved = signal(false);
@@ -243,6 +369,40 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy, OnChanges
   dynamicTextLength(field: ReportTemplateDynamicFieldDefinition): number { return this.dynamicStringValue(field.key).length; }
   legacyValueLength(key: LegacyFieldKey): number { return (this.form[key] || '').length; }
 
+  onHomeworkMaterialIdsChange(ids: string[]): void {
+    this.form = { ...this.form, homeworkMaterialIds: Array.isArray(ids) ? ids : [] };
+    this.onDraftInput();
+  }
+
+  onHomeworkQuizIdsChange(ids: string[]): void {
+    this.form = { ...this.form, homeworkQuizIds: Array.isArray(ids) ? ids : [] };
+    this.onDraftInput();
+  }
+
+  materialLabel(material: TeachingMaterial): string {
+    return [
+      material.courseName,
+      material.unitTitle || material.unitCode,
+      material.lessonTitle || material.lessonCode,
+      material.title,
+    ].filter(Boolean).join(' - ');
+  }
+
+  quizLabel(quiz: Quiz): string {
+    return [
+      quiz.courseName,
+      quiz.unitCode,
+      quiz.lessonCode,
+      quiz.title,
+    ].filter(Boolean).join(' - ');
+  }
+
+  requiresDeviationReason(): boolean {
+    const status = this.form.lessonProgressStatus || 'COMPLETED';
+    const progress = Number(this.form.progressPercent ?? 100);
+    return status !== 'COMPLETED' || (!Number.isNaN(progress) && progress < 100);
+  }
+
   private validate(): boolean {
     const nextErrors: Record<string, string> = {};
     if (this.usesDynamicTemplate) {
@@ -276,12 +436,30 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy, OnChanges
       if ((this.form.homework || '').length > 1000) nextErrors['homework'] = 'Bài tập về nhà không được vượt quá 1000 ký tự';
       if ((this.form.additionalNotes || '').length > 500) nextErrors['additionalNotes'] = 'Ghi chú thêm không được vượt quá 500 ký tự';
     }
+    const progress = Number(this.form.progressPercent ?? 100);
+    if (!Number.isInteger(progress) || progress < 0 || progress > 100) {
+      nextErrors['progressPercent'] = '% hoàn thành phải là số nguyên từ 0 đến 100';
+    }
+    for (const key of ['studentPerformance', 'studentEngagement', 'comprehensionLevel'] as const) {
+      const value = Number(this.form[key] ?? 3);
+      if (!Number.isInteger(value) || value < 1 || value > 5) {
+        nextErrors[key] = 'Mức đánh giá phải từ 1 đến 5';
+      }
+    }
+    if (this.requiresDeviationReason() && !(this.form.deviationReason || '').trim()) {
+      nextErrors['deviationReason'] = 'Cần ghi lý do khi bài học chưa hoàn thành đúng tiến độ';
+    }
+    if ((this.form.deviationReason || '').length > 500) nextErrors['deviationReason'] = 'Lý do không được vượt quá 500 ký tự';
+    if ((this.form.nextSessionPlan || '').length > 500) nextErrors['nextSessionPlan'] = 'Kế hoạch buổi sau không được vượt quá 500 ký tự';
+    if ((this.form.overallComment || '').length > 1000) nextErrors['overallComment'] = 'Nhận xét tổng quan không được vượt quá 1000 ký tự';
     this.errors = nextErrors;
     return Object.keys(nextErrors).length === 0;
   }
 
   private buildSubmitPayload(): ReportFormValues {
-    if (!this.usesDynamicTemplate) return { lessonContent: this.form.lessonContent || '', studentAttitude: this.form.studentAttitude || '', recordingUrl: this.form.recordingUrl || '', teacherComment: this.form.teacherComment || '', homework: this.form.homework || '', additionalNotes: this.form.additionalNotes || '' };
+    const homeworkStandard = this.buildHomeworkStandardPayload();
+    const lessonEvaluation = this.buildLessonEvaluationPayload();
+    if (!this.usesDynamicTemplate) return { lessonContent: this.form.lessonContent || '', studentAttitude: this.form.studentAttitude || '', recordingUrl: this.form.recordingUrl || '', teacherComment: this.form.teacherComment || '', homework: this.form.homework || '', additionalNotes: this.form.additionalNotes || '', ...homeworkStandard, ...lessonEvaluation };
     const normalizedDynamicValues = this.normalizeDynamicValuesForSubmit();
     return {
       lessonContent: this.buildDynamicLessonContent(normalizedDynamicValues),
@@ -295,6 +473,30 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy, OnChanges
       templateVersion: this.activeTemplate?.version ?? this.form.templateVersion ?? 1,
       dynamicFieldValues: normalizedDynamicValues,
       dynamicFieldSchemaSnapshot: this.activeDynamicFields,
+      ...homeworkStandard,
+      ...lessonEvaluation,
+    };
+  }
+
+  private buildLessonEvaluationPayload(): Partial<ReportFormValues> {
+    return {
+      lessonProgressStatus: this.form.lessonProgressStatus || 'COMPLETED',
+      progressPercent: Number(this.form.progressPercent ?? 100),
+      studentPerformance: Number(this.form.studentPerformance ?? 3),
+      studentEngagement: Number(this.form.studentEngagement ?? 3),
+      comprehensionLevel: Number(this.form.comprehensionLevel ?? 3),
+      deviationReason: (this.form.deviationReason || '').trim() || undefined,
+      nextSessionPlan: (this.form.nextSessionPlan || '').trim() || undefined,
+      overallComment: (this.form.overallComment || '').trim() || undefined,
+    };
+  }
+
+  private buildHomeworkStandardPayload(): Partial<ReportFormValues> {
+    return {
+      homeworkSubmissionMode: this.form.homeworkSubmissionMode || 'HYBRID',
+      homeworkDeadline: this.form.homeworkDeadline || undefined,
+      homeworkMaterialIds: this.form.homeworkMaterialIds?.length ? [...this.form.homeworkMaterialIds] : undefined,
+      homeworkQuizIds: this.form.homeworkQuizIds?.length ? [...this.form.homeworkQuizIds] : undefined,
     };
   }
 
@@ -389,13 +591,34 @@ export class TeachingReportFormComponent implements OnInit, OnDestroy, OnChanges
   }
 
   private snapshotForDraft(): ReportFormValues {
-    if (!this.usesDynamicTemplate) return { lessonContent: this.form.lessonContent || '', studentAttitude: this.form.studentAttitude || '', recordingUrl: this.form.recordingUrl || '', teacherComment: this.form.teacherComment || '', homework: this.form.homework || '', additionalNotes: this.form.additionalNotes || '' };
-    return { lessonContent: this.form.lessonContent || '', studentAttitude: this.form.studentAttitude || '', recordingUrl: this.form.recordingUrl || '', teacherComment: this.form.teacherComment || '', homework: this.form.homework || '', additionalNotes: this.form.additionalNotes || '', templateId: this.activeTemplateId || this.form.templateId, templateTitle: this.activeTemplateTitle || this.form.templateTitle, templateVersion: this.activeTemplate?.version ?? this.form.templateVersion ?? 1, dynamicFieldValues: { ...(this.form.dynamicFieldValues || {}) }, dynamicFieldSchemaSnapshot: this.activeDynamicFields };
+    const homeworkStandard = this.buildHomeworkStandardPayload();
+    const lessonEvaluation = this.buildLessonEvaluationPayload();
+    if (!this.usesDynamicTemplate) return { lessonContent: this.form.lessonContent || '', studentAttitude: this.form.studentAttitude || '', recordingUrl: this.form.recordingUrl || '', teacherComment: this.form.teacherComment || '', homework: this.form.homework || '', additionalNotes: this.form.additionalNotes || '', ...homeworkStandard, ...lessonEvaluation };
+    return { lessonContent: this.form.lessonContent || '', studentAttitude: this.form.studentAttitude || '', recordingUrl: this.form.recordingUrl || '', teacherComment: this.form.teacherComment || '', homework: this.form.homework || '', additionalNotes: this.form.additionalNotes || '', templateId: this.activeTemplateId || this.form.templateId, templateTitle: this.activeTemplateTitle || this.form.templateTitle, templateVersion: this.activeTemplate?.version ?? this.form.templateVersion ?? 1, dynamicFieldValues: { ...(this.form.dynamicFieldValues || {}) }, dynamicFieldSchemaSnapshot: this.activeDynamicFields, ...homeworkStandard, ...lessonEvaluation };
   }
 }
 
 export function emptyForm(): ReportFormValues {
-  return { lessonContent: '', studentAttitude: '', recordingUrl: '', teacherComment: '', homework: '', additionalNotes: '' };
+  return {
+    lessonContent: '',
+    studentAttitude: '',
+    recordingUrl: '',
+    teacherComment: '',
+    homework: '',
+    homeworkSubmissionMode: 'HYBRID',
+    homeworkDeadline: '',
+    homeworkMaterialIds: [],
+    homeworkQuizIds: [],
+    lessonProgressStatus: 'COMPLETED',
+    progressPercent: 100,
+    studentPerformance: 3,
+    studentEngagement: 3,
+    comprehensionLevel: 3,
+    deviationReason: '',
+    nextSessionPlan: '',
+    overallComment: '',
+    additionalNotes: '',
+  };
 }
 
 function normalizeFormValues(values?: Partial<ReportFormValues>): ReportFormValues {
@@ -405,6 +628,18 @@ function normalizeFormValues(values?: Partial<ReportFormValues>): ReportFormValu
     recordingUrl: values?.recordingUrl || '',
     teacherComment: values?.teacherComment || '',
     homework: values?.homework || '',
+    homeworkSubmissionMode: values?.homeworkSubmissionMode || 'HYBRID',
+    homeworkDeadline: values?.homeworkDeadline || '',
+    homeworkMaterialIds: Array.isArray(values?.homeworkMaterialIds) ? [...values.homeworkMaterialIds] : [],
+    homeworkQuizIds: Array.isArray(values?.homeworkQuizIds) ? [...values.homeworkQuizIds] : [],
+    lessonProgressStatus: values?.lessonProgressStatus || 'COMPLETED',
+    progressPercent: Number(values?.progressPercent ?? 100),
+    studentPerformance: Number(values?.studentPerformance ?? 3),
+    studentEngagement: Number(values?.studentEngagement ?? 3),
+    comprehensionLevel: Number(values?.comprehensionLevel ?? 3),
+    deviationReason: values?.deviationReason || '',
+    nextSessionPlan: values?.nextSessionPlan || '',
+    overallComment: values?.overallComment || '',
     additionalNotes: values?.additionalNotes || '',
     templateId: values?.templateId,
     templateTitle: values?.templateTitle,

@@ -8,6 +8,8 @@ import { AdsAnalyticsParentService } from './ads-analytics-parent.service';
 import { AdsAnalyticsCohortService } from './ads-analytics-cohort.service';
 import { AdsAnalyticsSuggestionsService } from './ads-analytics-suggestions.service';
 import { AdsAnalyticsActionsService } from './ads-analytics-actions.service';
+import { AdsOptimizationPlanService } from './ads-optimization-plan.service';
+import { AdsGroupProfitCostService } from './ads-group-profit-cost.service';
 import { AdsTokenService } from './ads-token.service';
 import { AdsCrudService } from './ads-crud.service';
 import { AdsFacebookSyncService } from './ads-facebook-sync.service';
@@ -17,6 +19,7 @@ import { GoogleAdsProvider } from './platforms/google-ads.service';
 import { TikTokAdsProvider } from './platforms/tiktok-ads.service';
 import { AdAccount, AdAccountSchema } from './schemas/ad-account.schema';
 import { AdGroup, AdGroupSchema } from './schemas/ad-group.schema';
+import { AdsOptimizationPlan, AdsOptimizationPlanSchema } from './schemas/ads-optimization-plan.schema';
 import { ApiToken, ApiTokenSchema } from './schemas/api-token.schema';
 import { AdCost, AdCostSchema } from './schemas/ad-cost.schema';
 import { Order, OrderSchema } from '../orders/schemas/order.schema';
@@ -28,6 +31,7 @@ import { Student, StudentSchema } from '../students/schemas/student.schema';
 import { Fanpage, FanpageSchema } from '../chatbot/schemas/fanpage.schema';
 import { Conversation, ConversationSchema } from '../chatbot/schemas/conversation.schema';
 import { LedgerEntry, LedgerEntrySchema } from '../wallets/schemas/ledger-entry.schema';
+import { StaffPayroll, StaffPayrollSchema } from '../staff-payroll/schemas/staff-payroll.schema';
 import { MarketingAttributionModule } from '../marketing-attribution/marketing-attribution.module';
 
 @Module({
@@ -35,6 +39,7 @@ import { MarketingAttributionModule } from '../marketing-attribution/marketing-a
     MongooseModule.forFeature([
       { name: AdAccount.name, schema: AdAccountSchema },
       { name: AdGroup.name, schema: AdGroupSchema },
+      { name: AdsOptimizationPlan.name, schema: AdsOptimizationPlanSchema },
       { name: ApiToken.name, schema: ApiTokenSchema },
       { name: AdCost.name, schema: AdCostSchema },
       { name: Order.name, schema: OrderSchema },
@@ -46,6 +51,7 @@ import { MarketingAttributionModule } from '../marketing-attribution/marketing-a
       { name: Fanpage.name, schema: FanpageSchema },
       { name: Conversation.name, schema: ConversationSchema },
       { name: LedgerEntry.name, schema: LedgerEntrySchema },
+      { name: StaffPayroll.name, schema: StaffPayrollSchema },
     ]),
     MarketingAttributionModule,
   ],
@@ -58,6 +64,8 @@ import { MarketingAttributionModule } from '../marketing-attribution/marketing-a
     AdsAnalyticsCohortService,
     AdsAnalyticsSuggestionsService,
     AdsAnalyticsActionsService,
+    AdsOptimizationPlanService,
+    AdsGroupProfitCostService,
     AdsTokenService,
     AdsCrudService,
     AdsFacebookSyncService,
@@ -66,6 +74,6 @@ import { MarketingAttributionModule } from '../marketing-attribution/marketing-a
     GoogleAdsProvider,
     TikTokAdsProvider,
   ],
-  exports: [AdsService, AdsAnalyticsService],
+  exports: [AdsService, AdsAnalyticsService, AdsOptimizationPlanService],
 })
 export class AdsModule {}

@@ -1,16 +1,20 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import { DashboardService } from '../../services/dashboard.service';
 
 @Component({
   selector: 'app-accounting-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, RouterLink],
   template: `
   <div class="dashboard">
     <div class="header">
-      <h2>Dashboard Kế toán</h2>
+      <div class="header-left">
+        <h2>Dashboard Kế toán</h2>
+        <a [routerLink]="'/app/accounting-hub'" class="hub-cta">&#128218; Mở Cẩm nang Kế toán</a>
+      </div>
       <div class="date-range">
         <input type="date" [(ngModel)]="fromDate" (change)="load()">
         <input type="date" [(ngModel)]="toDate" (change)="load()">
@@ -118,6 +122,9 @@ import { DashboardService } from '../../services/dashboard.service';
   styles: [`
     .dashboard { padding: 24px; }
     .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; flex-wrap:wrap; gap:12px; }
+    .header-left { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+    .hub-cta { font-size:13px; font-weight:600; padding:7px 14px; border-radius:8px; background:rgba(16,185,129,0.1); color:#059669; border:1px solid rgba(16,185,129,0.25); text-decoration:none; }
+    .hub-cta:hover { background:rgba(16,185,129,0.18); }
     .header h2 { margin:0; color:#1e293b; }
     .date-range { display:flex; gap:8px; }
     .date-range input { padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; }

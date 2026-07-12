@@ -219,18 +219,26 @@ type AnalyticsTab = 'overview' | 'parents' | 'optimize-x';
       <h3>Tổng hợp nhóm QC theo funnel</h3>
       <p class="desc">Bảng này giữ lại view tổng hợp theo group để đối chiếu nhanh lead, đơn và doanh thu ghi nhận.</p>
       <div class="table-wrap">
-        <table class="data">
+        <table class="data wide-table">
           <thead>
             <tr>
               <th (click)="sortBy('adGroupName')" class="sortable">Nhóm QC</th>
               <th>Nền tảng</th>
-              <th (click)="sortBy('totalSpend')" class="sortable">Chi phí</th>
+              <th (click)="sortBy('totalSpend')" class="sortable">Ads spend</th>
+              <th (click)="sortBy('saleCommission')" class="sortable">Hoa hồng</th>
+              <th (click)="sortBy('estimatedTeacherCost')" class="sortable">GV dự kiến</th>
+              <th (click)="sortBy('otherCost')" class="sortable">Chi phí khác</th>
+              <th (click)="sortBy('allocatedStaffLaborCost')" class="sortable">Nhân công PB</th>
+              <th (click)="sortBy('totalCost')" class="sortable">Tổng chi phí</th>
               <th (click)="sortBy('leadCount')" class="sortable">Leads</th>
               <th (click)="sortBy('orderCount')" class="sortable">Đơn hàng</th>
-              <th (click)="sortBy('revenue')" class="sortable">Doanh thu</th>
+              <th (click)="sortBy('revenue')" class="sortable">Doanh thu order</th>
+              <th (click)="sortBy('collectedRevenue')" class="sortable">Đã thu</th>
+              <th (click)="sortBy('recognizedRevenue')" class="sortable">DT ghi nhận</th>
               <th (click)="sortBy('costPerLead')" class="sortable">CP/Lead</th>
               <th (click)="sortBy('costPerOrder')" class="sortable">CP/Đơn</th>
-              <th (click)="sortBy('netProfit')" class="sortable">Lợi nhuận</th>
+              <th (click)="sortBy('realizedNetProfit')" class="sortable">LN đã ghi nhận</th>
+              <th (click)="sortBy('effectiveCohortNetProfit')" class="sortable">LN dự kiến cohort</th>
               <th (click)="sortBy('roi')" class="sortable">ROI %</th>
             </tr>
           </thead>
@@ -239,12 +247,20 @@ type AnalyticsTab = 'overview' | 'parents' | 'optimize-x';
               <td><strong>{{r.adGroupName || r.adGroupId}}</strong></td>
               <td><span class="badge platform" [attr.data-platform]="r.platform">{{platformLabel(r.platform)}}</span></td>
               <td class="amount">{{r.totalSpend | number}}đ</td>
+              <td class="amount">{{r.saleCommission | number}}đ</td>
+              <td class="amount">{{r.estimatedTeacherCost | number}}đ</td>
+              <td class="amount">{{r.otherCost | number}}đ</td>
+              <td class="amount">{{r.allocatedStaffLaborCost | number}}đ</td>
+              <td class="amount">{{r.totalCost | number}}đ</td>
               <td>{{r.leadCount}}</td>
               <td>{{r.orderCount}}</td>
               <td class="amount">{{r.revenue | number}}đ</td>
+              <td class="amount">{{r.collectedRevenue | number}}đ</td>
+              <td class="amount">{{r.recognizedRevenue | number}}đ</td>
               <td>{{r.costPerLead !== null ? (r.costPerLead | number) + 'đ' : '-'}}</td>
               <td>{{r.costPerOrder !== null ? (r.costPerOrder | number) + 'đ' : '-'}}</td>
-              <td [class.amount-green]="r.netProfit >= 0" [class.amount-red]="r.netProfit < 0">{{r.netProfit | number}}đ</td>
+              <td [class.amount-green]="r.realizedNetProfit >= 0" [class.amount-red]="r.realizedNetProfit < 0">{{r.realizedNetProfit | number}}đ</td>
+              <td [class.amount-green]="r.effectiveCohortNetProfit >= 0" [class.amount-red]="r.effectiveCohortNetProfit < 0">{{r.effectiveCohortNetProfit | number}}đ</td>
               <td>
                 <span class="roi-badge" [class.roi-high]="r.roi >= 100" [class.roi-mid]="r.roi >= 0 && r.roi < 100" [class.roi-low]="r.roi < 0">
                   {{r.roi}}%
@@ -802,6 +818,8 @@ export class AdsAnalyticsComponent implements OnInit {
           this.endDate,
           this.filterAdGroup || undefined,
           this.filterPlatform || undefined,
+          this.maturityDays,
+          refundRatePercentX,
         ),
         this.adsService.getRealizedCohortAnalytics(
           this.startDate,

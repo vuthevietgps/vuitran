@@ -2,6 +2,8 @@ import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { SessionItem } from '../../services/session.service';
 import { ReportTemplate } from '../../services/report-template.service';
+import { TeachingMaterial } from '../../services/teacher.service';
+import { Quiz } from '../../services/quiz.service';
 import {
   TeachingReportFormComponent,
   ReportFormValues,
@@ -61,6 +63,8 @@ export interface PendingMeta {
           [contextClassId]="s.classId._id || ''"
           [draftStorageKey]="draftStorageKey(s._id)"
           [templates]="templates"
+          [homeworkMaterials]="homeworkMaterials"
+          [quizzes]="quizzes"
           [submitting]="submitting"
           submitLabel="📤 Nộp báo cáo"
           (formSubmit)="onSubmit(s._id, $event)"
@@ -122,6 +126,8 @@ export interface PendingMeta {
 export class TeachingReportPendingComponent {
   @Input() sessions: SessionItem[] = [];
   @Input() templates: ReportTemplate[] = [];
+  @Input() homeworkMaterials: TeachingMaterial[] = [];
+  @Input() quizzes: Quiz[] = [];
   @Input() submitting = false;
   @Input() canEdit = false;
   @Input() teacherView = false;

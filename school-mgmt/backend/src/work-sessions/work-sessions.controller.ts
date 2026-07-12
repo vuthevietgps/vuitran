@@ -29,7 +29,7 @@ export class WorkSessionsController {
   }
 
   @Get('my')
-  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.SALE)
+  @Roles(Role.DIRECTOR, Role.ACCOUNTING, Role.OPS, Role.TEACHER, Role.EXPERIENCE_TEACHER, Role.SALE)
   findMy(
     @Req() req: AuthenticatedRequest,
     @Query() query: QueryWorkSessionsDto,

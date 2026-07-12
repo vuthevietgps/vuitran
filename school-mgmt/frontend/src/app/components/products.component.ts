@@ -1,7 +1,9 @@
-import { Component, computed, signal } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ProductService, ProductItem } from '../services/product.service';
+import { AuthService } from '../services/auth.service';
+import { Role } from '../models/role.enum';
 
 import { FlowGuideComponent } from './shared/flow-guide.component';
 
@@ -33,6 +35,8 @@ interface ProductForm {
   defaultSessions: number;
   suggestedPrice: number;
   defaultSessionDuration: number;
+  description: string;
+  highlightsText: string;
   isActive: boolean;
 }
 
@@ -44,9 +48,9 @@ interface ProductForm {
   <header class="page-header">
     <div>
       <h2>Quan ly goi san pham</h2>
-      <p>Danh muc goi dung cho quan ly hoc sinh.</p>
+      <p>Bang gia, so buoi va chuong trinh uu dai de tu van phu huynh.</p>
     </div>
-    <button class="primary" (click)="openModal()">+ Them goi</button>
+    <button class="primary" *ngIf="canManage()" (click)="openModal()">+ Them goi</button>
   </header>
 
   <app-flow-guide featureKey="products"></app-flow-guide>
@@ -69,9 +73,11 @@ interface ProductForm {
         <th>Hinh thuc</th>
         <th>So buoi</th>
         <th>So tien</th>
+        <th>Don gia/buoi</th>
         <th>Thoi luong/buoi (phut)</th>
+        <th>Uu dai / ghi chu tu van</th>
         <th>Trang thai</th>
-        <th>Hanh dong</th>
+        <th *ngIf="canManage()">Hanh dong</th>
       </tr>
     </thead>
     <tbody>
@@ -83,13 +89,15 @@ interface ProductForm {
         <td>{{ modeLabel(p.teachingMode) }}</td>
         <td class="center">{{ p.defaultSessions || 0 }}</td>
         <td class="right">{{ (p.suggestedPrice || 0) | number }}d</td>
+        <td class="right">{{ pricePerSession(p) | number }}d</td>
         <td class="center">{{ p.defaultSessionDuration || 0 }}</td>
+        <td class="notes">{{ promotionText(p) }}</td>
         <td>
           <span class="badge" [class.active]="p.isActive !== false" [class.off]="p.isActive === false">
             {{ p.isActive !== false ? 'Dang ban' : 'Dung ban' }}
           </span>
         </td>
-        <td class="actions-cell">
+        <td class="actions-cell" *ngIf="canManage()">
           <button class="btn-sm" (click)="openEdit(p)">Sua</button>
           <button class="btn-sm danger" (click)="remove(p)">Xoa</button>
         </td>
@@ -131,6 +139,14 @@ interface ProductForm {
           <input name="defaultSessionDuration" type="number" min="15" [(ngModel)]="form.defaultSessionDuration" />
         </label>
 
+        <label>Uu dai / ghi chu tu van
+          <textarea name="description" rows="3" [(ngModel)]="form.description" placeholder="VD: Tang 2 buoi, uu dai thang 5, dieu kien ap dung..."></textarea>
+        </label>
+
+        <label>Diem noi bat
+          <textarea name="highlightsText" rows="3" [(ngModel)]="form.highlightsText" placeholder="Moi dong la mot y tu van"></textarea>
+        </label>
+
         <label class="checkbox-label">
           <input type="checkbox" name="isActive" [(ngModel)]="form.isActive" /> Dang ban
         </label>
@@ -149,12 +165,14 @@ interface ProductForm {
     .page-header h2 { margin:0 0 4px; }
     .page-header p { margin:0; color:#64748b; }
     .filters { display:flex; gap:10px; margin-bottom:16px; padding:0 16px; }
-    input, select { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; }
+    input, select, textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-size:13px; }
+    textarea { resize:vertical; font-family:inherit; }
     .data { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
     th, td { padding:8px 10px; border:1px solid #e2e8f0; }
     thead { background:#f1f5f9; font-size:12px; text-transform:uppercase; color:#64748b; }
     .center { text-align:center; }
     .right { text-align:right; }
+    .notes { max-width:260px; white-space:pre-line; color:#334155; }
     .inactive { opacity:0.6; }
     .badge { font-size:11px; padding:2px 8px; border-radius:9px; font-weight:600; }
     .badge.active { background:#dcfce7; color:#166534; }
@@ -175,6 +193,9 @@ interface ProductForm {
   `],
 })
 export class ProductsComponent {
+  private productService = inject(ProductService);
+  private auth = inject(AuthService);
+
   items = signal<ProductItem[]>([]);
   keyword = '';
   filterActive = '';
@@ -182,10 +203,11 @@ export class ProductsComponent {
   error = signal('');
   editingId: string | null = null;
   subjectOptions = Object.entries(SUBJECT_LABELS).map(([value, label]) => ({ value, label }));
+  canManage = computed(() => this.auth.userSignal()?.role === Role.DIRECTOR);
 
   form: ProductForm = this.emptyForm();
 
-  constructor(private productService: ProductService) {
+  constructor() {
     this.reload();
   }
 
@@ -205,6 +227,8 @@ export class ProductsComponent {
       defaultSessions: 24,
       suggestedPrice: 0,
       defaultSessionDuration: 90,
+      description: '',
+      highlightsText: '',
       isActive: true,
     };
   }
@@ -225,6 +249,7 @@ export class ProductsComponent {
   });
 
   openModal() {
+    if (!this.canManage()) return;
     this.editingId = null;
     this.form = this.emptyForm();
     this.error.set('');
@@ -232,6 +257,7 @@ export class ProductsComponent {
   }
 
   openEdit(p: ProductItem) {
+    if (!this.canManage()) return;
     this.editingId = p._id;
     this.form = {
       name: p.name || '',
@@ -240,6 +266,8 @@ export class ProductsComponent {
       defaultSessions: p.defaultSessions || 24,
       suggestedPrice: p.suggestedPrice || 0,
       defaultSessionDuration: p.defaultSessionDuration || 90,
+      description: p.description || '',
+      highlightsText: (p.highlights || []).join('\n'),
       isActive: p.isActive !== false,
     };
     this.error.set('');
@@ -257,6 +285,7 @@ export class ProductsComponent {
   }
 
   async submit() {
+    if (!this.canManage()) return;
     const sessions = Number(this.form.defaultSessions || 0);
     const totalPrice = Number(this.form.suggestedPrice || 0);
 
@@ -287,6 +316,11 @@ export class ProductsComponent {
       defaultSessions: sessions,
       suggestedPrice: totalPrice,
       defaultSessionDuration: Number(this.form.defaultSessionDuration),
+      description: this.form.description.trim(),
+      highlights: this.form.highlightsText
+        .split('\n')
+        .map((item) => item.trim())
+        .filter(Boolean),
       isActive: !!this.form.isActive,
       // Keep compatibility for old flows still reading price per session.
       pricePerSession: sessions > 0 ? Math.round(totalPrice / sessions) : 0,
@@ -311,8 +345,23 @@ export class ProductsComponent {
   }
 
   async remove(p: ProductItem) {
+    if (!this.canManage()) return;
     if (!confirm(`Xoa goi "${p.name}"?`)) return;
     await this.productService.remove(p._id);
     await this.reload();
+  }
+
+  pricePerSession(p: ProductItem): number {
+    if (p.pricePerSession) return p.pricePerSession;
+    const sessions = Number(p.defaultSessions || 0);
+    return sessions > 0 ? Math.round(Number(p.suggestedPrice || 0) / sessions) : 0;
+  }
+
+  promotionText(p: ProductItem): string {
+    const lines = [
+      ...(p.highlights || []),
+      p.description || '',
+    ].map((item) => item.trim()).filter(Boolean);
+    return lines.length ? lines.join('\n') : '-';
   }
 }

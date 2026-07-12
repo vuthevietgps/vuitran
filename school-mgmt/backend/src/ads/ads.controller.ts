@@ -4,6 +4,7 @@ import {
 } from '@nestjs/common';
 import { AdsService } from './ads.service';
 import { AdsAnalyticsService } from './ads-analytics.service';
+import { AdsOptimizationPlanService } from './ads-optimization-plan.service';
 import { CreateAdAccountDto } from './dto/create-ad-account.dto';
 import { UpdateAdAccountDto } from './dto/update-ad-account.dto';
 import { QueryAdAccountDto } from './dto/query-ad-account.dto';
@@ -20,6 +21,14 @@ import { QueryAdsSuggestionsDto } from './dto/query-ads-suggestions.dto';
 import { QueryActionsRequiredDto } from './dto/query-actions-required.dto';
 import { QueryParentProfitDto } from './dto/query-parent-profit.dto';
 import { QueryRealizedCohortDto } from './dto/query-realized-cohort.dto';
+import { QuerySaleFunnelDiagnosticsDto } from './dto/query-sale-funnel-diagnostics.dto';
+import {
+  DecideAdsOptimizationPlanItemDto,
+  ExecuteAdsOptimizationPlanDto,
+  GenerateAdsOptimizationPlanDto,
+  QueryAdsOptimizationFollowUpDto,
+  QueryAdsOptimizationPlansDto,
+} from './dto/ads-optimization-plan.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
@@ -35,6 +44,7 @@ export class AdsController {
   constructor(
     private readonly adsAnalyticsService: AdsAnalyticsService,
     private readonly adsService: AdsService,
+    private readonly adsOptimizationPlanService: AdsOptimizationPlanService,
     private readonly auditLogService: AuditLogService,
   ) {}
 
@@ -227,6 +237,8 @@ export class AdsController {
       query.endDate,
       query.adGroupId,
       query.platform,
+      query.maturityDays,
+      query.refundRatePercentX,
     );
   }
 
@@ -237,6 +249,17 @@ export class AdsController {
       query.startDate,
       query.endDate,
       query.adGroupId,
+    );
+  }
+
+  @Get('sale-funnel-diagnostics')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER, Role.SHAREHOLDER)
+  async getSaleFunnelDiagnostics(@Query() query: QuerySaleFunnelDiagnosticsDto) {
+    return this.adsAnalyticsService.getSaleFunnelDiagnostics(
+      query.startDate,
+      query.endDate,
+      query.adGroupId,
+      query.saleId,
     );
   }
 
@@ -354,6 +377,143 @@ export class AdsController {
       targetProfitableRatio: query.targetProfitableRatio,
       totalBudget: query.totalBudget,
     });
+  }
+
+  @Post('optimization-plans/generate')
+  @Roles(Role.DIRECTOR, Role.ADSMANAGER)
+  async generateOptimizationPlan(
+    @Body() dto: GenerateAdsOptimizationPlanDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const plan = await this.adsOptimizationPlanService.generateFromActionsRequired(dto, req.user);
+    await this.auditLogService.log({
+      userId: req.user._id,
+      userEmail: req.user.email,
+      userFullName: req.user.fullName,
+      userRole: req.user.role,
+      action: AuditAction.CREATE,
+      module: AuditModule.ADS,
+      targetId: (plan as any)._id?.toString(),
+      targetName: plan.title,
+      description: `Generated ads optimization plan with ${plan.items?.length || 0} item(s).`,
+      newValue: {
+        operation: 'GENERATE_ADS_OPTIMIZATION_PLAN',
+        planId: (plan as any)._id?.toString(),
+        status: plan.status,
+        itemCount: plan.items?.length || 0,
+        generationOptions: plan.generationOptions,
+      },
+      ipAddress: req.ip,
+    });
+    return plan;
+  }
+
+  @Get('optimization-plans')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
+  async findOptimizationPlans(@Query() query: QueryAdsOptimizationPlansDto) {
+    return this.adsOptimizationPlanService.findAll(query);
+  }
+
+  @Get('optimization-plans/:id')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
+  async findOptimizationPlan(@Param('id', ParseMongoIdPipe) id: string) {
+    return this.adsOptimizationPlanService.findOne(id);
+  }
+
+  @Post('optimization-plans/:id/items/:itemId/approve')
+  @Roles(Role.DIRECTOR, Role.ADSMANAGER)
+  async approveOptimizationPlanItem(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: DecideAdsOptimizationPlanItemDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const plan = await this.adsOptimizationPlanService.approveItem(id, itemId, dto, req.user);
+    await this.auditLogService.log({
+      userId: req.user._id,
+      userEmail: req.user.email,
+      userFullName: req.user.fullName,
+      userRole: req.user.role,
+      action: AuditAction.APPROVE,
+      module: AuditModule.ADS,
+      targetId: id,
+      targetName: plan.title,
+      description: `Approved ads optimization item ${itemId}.`,
+      newValue: {
+        operation: 'APPROVE_ADS_OPTIMIZATION_ITEM',
+        planId: id,
+        itemId,
+        status: plan.status,
+      },
+      ipAddress: req.ip,
+    });
+    return plan;
+  }
+
+  @Post('optimization-plans/:id/items/:itemId/reject')
+  @Roles(Role.DIRECTOR, Role.ADSMANAGER)
+  async rejectOptimizationPlanItem(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Param('itemId') itemId: string,
+    @Body() dto: DecideAdsOptimizationPlanItemDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const plan = await this.adsOptimizationPlanService.rejectItem(id, itemId, dto, req.user);
+    await this.auditLogService.log({
+      userId: req.user._id,
+      userEmail: req.user.email,
+      userFullName: req.user.fullName,
+      userRole: req.user.role,
+      action: AuditAction.REJECT,
+      module: AuditModule.ADS,
+      targetId: id,
+      targetName: plan.title,
+      description: `Rejected ads optimization item ${itemId}.`,
+      newValue: {
+        operation: 'REJECT_ADS_OPTIMIZATION_ITEM',
+        planId: id,
+        itemId,
+        status: plan.status,
+      },
+      ipAddress: req.ip,
+    });
+    return plan;
+  }
+
+  @Post('optimization-plans/:id/execute')
+  @Roles(Role.DIRECTOR)
+  async executeOptimizationPlan(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: ExecuteAdsOptimizationPlanDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const result = await this.adsOptimizationPlanService.execute(id, dto, req.user);
+    await this.auditLogService.log({
+      userId: req.user._id,
+      userEmail: req.user.email,
+      userFullName: req.user.fullName,
+      userRole: req.user.role,
+      action: AuditAction.UPDATE,
+      module: AuditModule.ADS,
+      targetId: id,
+      targetName: `Ads optimization plan ${id}`,
+      description: `Executed ads optimization plan: ${result.executedCount} executed, ${result.skippedCount} skipped, ${result.failedCount} failed.`,
+      newValue: {
+        operation: 'EXECUTE_ADS_OPTIMIZATION_PLAN',
+        ...result,
+      },
+      ipAddress: req.ip,
+    });
+    return result;
+  }
+
+  @Get('optimization-plans/:id/follow-up')
+  @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
+  async getOptimizationPlanFollowUp(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Query() query: QueryAdsOptimizationFollowUpDto,
+  ) {
+    return this.adsOptimizationPlanService.getFollowUp(id, query.days);
   }
 
   @Get('suggestions')

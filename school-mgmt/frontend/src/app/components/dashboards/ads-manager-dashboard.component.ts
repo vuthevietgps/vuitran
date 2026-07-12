@@ -9,63 +9,63 @@ import { RouterLink } from '@angular/router';
   template: `
     <section class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">Ads manager workspace</p>
-        <h2>Bat dau ngay lam viec tu 3 man hinh chinh</h2>
-        <p>
-          Role nay duoc thiet ke de theo doi nhom quang cao, doc hieu qua theo loi nhuan va
-          chinh fanpage/chatbot ma khong mo rong sang cac module van hanh khac.
-        </p>
-        <div class="hero-actions">
-          <a routerLink="/app/ads-management" class="primary">Mo Ads management</a>
-          <a routerLink="/app/ads-analytics" class="ghost">Mo Ads analytics</a>
-          <a routerLink="/app/chatbot-settings" class="ghost">Mo Chatbot settings</a>
-        </div>
+          <p class="eyebrow">Ads Manager Workspace</p>
+          <h2>Bắt đầu ngay — làm việc từ 3 màn hình chính</h2>
+          <p>
+            Role này được thiết kế để theo dõi nhóm quảng cáo, đọc hiệu quả theo lợi nhuận và
+            chỉnh fanpage/chatbot mà không mở rộng sang các module vận hành khác.
+          </p>
+          <div class="hero-actions">
+            <a routerLink="/app/ads-hub" class="primary">Mở Cẩm nang Ads</a>
+            <a routerLink="/app/ads-management" class="ghost">Mở Ads Management</a>
+            <a routerLink="/app/ads-analytics" class="ghost">Mở Ads Analytics</a>
+          </div>
       </div>
 
       <div class="hero-metrics">
         <article class="metric-card">
-          <span class="metric-label">Pham vi quyen</span>
+          <span class="metric-label">Phạm vi quyền</span>
           <strong>3 module</strong>
-          <p>Ads management, Ads analytics, Chatbot settings</p>
+          <p>Ads Management, Ads Analytics, Chatbot Settings</p>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Muc tieu ngay</span>
-          <strong>Theo doi loi nhuan</strong>
-          <p>Khong chi nhin spend, ma can doi chieu lead, PH moi va cohort profit</p>
+          <span class="metric-label">Mục tiêu ngày</span>
+          <strong>Theo dõi lợi nhuận</strong>
+          <p>Không chỉ nhìn chi phí, mà cần đối chiếu lead, phụ huynh mới và cohort profit</p>
         </article>
         <article class="metric-card">
-          <span class="metric-label">Nhip thao tac</span>
-          <strong>Quan sat → phan tich → toi uu</strong>
-          <p>Vao management de dieu chinh, analytics de quyet dinh, chatbot de khoa luong chat</p>
+          <span class="metric-label">Nhịp thao tác</span>
+          <strong>Quan sát → Phân tích → Tối ưu</strong>
+          <p>Vào Ads Management để điều chỉnh, Analytics để quyết định, Chatbot để khoá luồng chat</p>
         </article>
       </div>
     </section>
 
     <section class="content-grid">
       <article class="panel">
-        <h3>Checklist dau ngay</h3>
+        <h3>Checklist đầu ngày</h3>
         <ul>
-          <li>Mo Ads management de xem tai khoan, nhom QC, chi phi va viec can lam.</li>
-          <li>Rao soat nhom nao can sua budget, tracking key hoac trang thai.</li>
-          <li>Kiem tra fanpage/chatbot nao dang bat AI, token nao dang duoc gan.</li>
+          <li>Mở Cẩm nang Ads để nắm luồng quy trình và điểm kiểm soát trong ngày.</li>
+          <li>Mở Ads Management để xem tài khoản, nhóm QC, chi phí và việc cần làm.</li>
+          <li>Rà soát nhóm nào cần sửa budget, tracking key hoặc trạng thái.</li>
         </ul>
       </article>
 
       <article class="panel">
-        <h3>Checklist giua ngay</h3>
+        <h3>Checklist giữa ngày</h3>
         <ul>
-          <li>Mo Ads analytics de doc cohort, parent profit va xu huong ROI.</li>
-          <li>So sanh nhom lai, nhom hoa von va nhom dang lo truoc khi de xuat thay doi.</li>
-          <li>Ghi chu cac nhom can theo doi them truoc khi chinh sua lon.</li>
+          <li>Mở Ads Analytics để đọc cohort, parent profit và xu hướng ROI.</li>
+          <li>So sánh nhóm lãi, nhóm hoà vốn và nhóm đang lỗ trước khi đề xuất thay đổi.</li>
+          <li>Ghi chú các nhóm cần theo dõi thêm trước khi chỉnh sửa lớn.</li>
         </ul>
       </article>
 
       <article class="panel">
-        <h3>Checklist cuoi ngay</h3>
+        <h3>Checklist cuối ngày</h3>
         <ul>
-          <li>Cap nhat fanpage hoac chatbot settings neu co thay doi van ban, token gan hoac ad account.</li>
-          <li>Xac nhan nhom da doi tracking key khop voi cac quy uoc landing/chatbot.</li>
-          <li>Mo Cam nang Ads de doi chieu quy trinh neu can onboard hoac ban giao.</li>
+          <li>Cập nhật fanpage hoặc chatbot settings nếu có thay đổi văn bản, token gắn hoặc ad account.</li>
+          <li>Xác nhận nhóm đã đổi tracking key khớp với quy ước landing/chatbot.</li>
+          <li>Mở Cẩm nang Ads để đối chiếu quy trình nếu cần onboard hoặc bàn giao.</li>
         </ul>
       </article>
     </section>

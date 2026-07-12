@@ -20,10 +20,10 @@ export function isDirector(user: JwtPayload | { role: Role }): boolean {
 }
 
 /**
- * Check if user is TEACHER
+ * Check if user is teacher-like for classroom/attendance ownership checks.
  */
 export function isTeacher(user: JwtPayload | { role: Role }): boolean {
-  return user.role === Role.TEACHER;
+  return [Role.TEACHER, Role.EXPERIENCE_TEACHER].includes(user.role);
 }
 
 /**

@@ -45,5 +45,11 @@ export class Message {
 export const MessageSchema = SchemaFactory.createForClass(Message);
 
 MessageSchema.index({ conversationId: 1, createdAt: 1 });
-MessageSchema.index({ platformMessageId: 1 });
+MessageSchema.index(
+  { conversationId: 1, platformMessageId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { platformMessageId: { $type: 'string' } },
+  },
+);
 MessageSchema.index({ createdAt: -1 });

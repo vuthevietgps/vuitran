@@ -130,6 +130,46 @@ export class StaffPayroll {
   @Prop({ type: Number, min: 0, default: 0 })
   latePenaltyAmount!: number;
 
+  /** So lan dung gio */
+  @Prop({ type: Number, min: 0, default: 0 })
+  onTimeDays!: number;
+
+  /** Thuong dung gio / lan (snapshot) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  punctualityBonusPerTime!: number;
+
+  /** Tong thuong dung gio */
+  @Prop({ type: Number, min: 0, default: 0 })
+  punctualityBonusAmount!: number;
+
+  /** So case trai nghiem da test trong ky */
+  @Prop({ type: Number, min: 0, default: 0 })
+  experienceCaseCount!: number;
+
+  /** Don gia / case trai nghiem (snapshot) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  experienceCaseRate!: number;
+
+  /** Tong luong case trai nghiem */
+  @Prop({ type: Number, min: 0, default: 0 })
+  experienceCaseAmount!: number;
+
+  /** So case trai nghiem chuyen doi thanh cong */
+  @Prop({ type: Number, min: 0, default: 0 })
+  successfulExperienceCaseCount!: number;
+
+  /** So bai tap ve nha da cham trong ky */
+  @Prop({ type: Number, min: 0, default: 0 })
+  homeworkGradingCount!: number;
+
+  /** Don gia / bai tap da cham (snapshot) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  homeworkGradingRate!: number;
+
+  /** Tong luong cham bai tap */
+  @Prop({ type: Number, min: 0, default: 0 })
+  homeworkGradingAmount!: number;
+
   // ══════════════ ĐIỀU CHỈNH THỦ CÔNG ══════════════
 
   /** Thưởng thêm */

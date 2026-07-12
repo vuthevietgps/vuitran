@@ -24,6 +24,9 @@ export interface SalaryConfig {
   standardHours: number;
   scheduledStartTime: string;
   latePenaltyAmount: number;
+  punctualityBonusAmount?: number;
+  experienceCaseRate?: number;
+  homeworkGradingRate?: number;
   commissionEnabled: boolean;
   commissionType?: string;
   commissionTiers?: CommissionTier[];

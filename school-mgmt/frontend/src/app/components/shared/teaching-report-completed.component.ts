@@ -5,6 +5,8 @@ import {
   ReportTemplate,
   ReportTemplateDynamicFieldDefinition,
 } from '../../services/report-template.service';
+import { TeachingMaterial } from '../../services/teacher.service';
+import { Quiz } from '../../services/quiz.service';
 import {
   TeachingReportFormComponent,
   ReportFormValues,
@@ -65,6 +67,8 @@ type CompletedReportRow = { label: string; value: string; isUrl?: boolean };
           [initialValues]="editInitialValues"
           [draftStorageKey]="draftStorageKey(s._id)"
           [templates]="templates"
+          [homeworkMaterials]="homeworkMaterials"
+          [quizzes]="quizzes"
           [submitting]="submitting"
           submitLabel="💾 Cập nhật báo cáo"
           (formSubmit)="onSubmit(s._id, $event)"
@@ -86,6 +90,8 @@ type CompletedReportRow = { label: string; value: string; isUrl?: boolean };
 export class TeachingReportCompletedComponent {
   @Input() sessions: SessionItem[] = [];
   @Input() templates: ReportTemplate[] = [];
+  @Input() homeworkMaterials: TeachingMaterial[] = [];
+  @Input() quizzes: Quiz[] = [];
   @Input() submitting = false;
   @Input() canEdit = false;
   @Input() teacherView = false;
@@ -105,6 +111,7 @@ export class TeachingReportCompletedComponent {
   }
 
   startEdit(session: SessionItem) {
+    const evaluation = (session as any).evaluation || {};
     this.editingId = session._id;
     this.editInitialValues = {
       lessonContent: session.teachingReport?.lessonContent || '',
@@ -112,6 +119,26 @@ export class TeachingReportCompletedComponent {
       recordingUrl: session.teachingReport?.recordingUrl || '',
       teacherComment: session.teachingReport?.teacherComment || '',
       homework: session.teachingReport?.homework || '',
+      homeworkSubmissionMode: evaluation.homeworkSubmissionMode || 'HYBRID',
+      homeworkDeadline: evaluation.homeworkDeadline ? String(evaluation.homeworkDeadline).slice(0, 10) : '',
+      homeworkMaterialIds: Array.isArray(evaluation.homeworkMaterialIds)
+        ? evaluation.homeworkMaterialIds
+            .map((material: any) => material?._id || material)
+            .filter(Boolean)
+        : [],
+      homeworkQuizIds: Array.isArray(evaluation.homeworkQuizIds)
+        ? evaluation.homeworkQuizIds
+            .map((quiz: any) => quiz?._id || quiz)
+            .filter(Boolean)
+        : [],
+      lessonProgressStatus: evaluation.lessonProgressStatus || 'COMPLETED',
+      progressPercent: evaluation.progressPercent ?? 100,
+      studentPerformance: evaluation.studentPerformance ?? 3,
+      studentEngagement: evaluation.studentEngagement ?? 3,
+      comprehensionLevel: evaluation.comprehensionLevel ?? 3,
+      deviationReason: evaluation.deviationReason || '',
+      nextSessionPlan: evaluation.nextSessionPlan || '',
+      overallComment: evaluation.overallComment || '',
       additionalNotes: session.teachingReport?.additionalNotes || '',
       templateId: session.teachingReport?.templateId,
       templateTitle: session.teachingReport?.templateTitle,
@@ -146,10 +173,15 @@ export class TeachingReportCompletedComponent {
 
   reportRows(session: SessionItem): CompletedReportRow[] {
     const teachingReport = session.teachingReport;
+    const evaluation = (session as any).evaluation || {};
+    const evaluationRows = this.evaluationRows(evaluation);
     const dynamicFields = this.normalizeDynamicFields(teachingReport?.dynamicFieldSchemaSnapshot);
     if (dynamicFields.length > 0) {
       const values = teachingReport?.dynamicFieldValues || {};
-      return dynamicFields.map((field) => ({ label: field.label, value: this.formatDynamicValue(values[field.key]), isUrl: field.type === 'url' }));
+      return [
+        ...dynamicFields.map((field) => ({ label: field.label, value: this.formatDynamicValue(values[field.key]), isUrl: field.type === 'url' })),
+        ...evaluationRows,
+      ];
     }
     return [
       { label: 'Nội dung học', value: teachingReport?.lessonContent || '—' },
@@ -158,7 +190,36 @@ export class TeachingReportCompletedComponent {
       { label: 'Nhận xét', value: teachingReport?.teacherComment || '—' },
       { label: 'Bài tập', value: teachingReport?.homework || '—' },
       { label: 'Ghi chú', value: teachingReport?.additionalNotes || '—' },
+      ...evaluationRows,
     ];
+  }
+
+  private evaluationRows(evaluation: any): CompletedReportRow[] {
+    return [
+      { label: 'Tiến độ bài học', value: this.formatLessonProgressStatus(evaluation.lessonProgressStatus) },
+      { label: '% hoàn thành', value: evaluation.progressPercent != null ? `${evaluation.progressPercent}%` : '—' },
+      { label: 'Năng lực HS', value: this.formatRating(evaluation.studentPerformance) },
+      { label: 'Mức độ tham gia', value: this.formatRating(evaluation.studentEngagement) },
+      { label: 'Mức độ hiểu bài', value: this.formatRating(evaluation.comprehensionLevel) },
+      { label: 'Lý do lệch bài', value: evaluation.deviationReason || '—' },
+      { label: 'Kế hoạch buổi sau', value: evaluation.nextSessionPlan || '—' },
+      { label: 'Nhận xét tổng quan', value: evaluation.overallComment || '—' },
+    ];
+  }
+
+  private formatLessonProgressStatus(status?: string): string {
+    const labels: Record<string, string> = {
+      COMPLETED: 'Hoàn thành đúng bài',
+      PARTIAL: 'Hoàn thành một phần',
+      REVIEW_NEEDED: 'Cần ôn lại buổi sau',
+      SKIPPED: 'Tạm bỏ qua bài',
+      REPLACED: 'Thay bằng nội dung khác',
+    };
+    return status ? labels[status] || status : '—';
+  }
+
+  private formatRating(value?: number): string {
+    return value != null ? `${value}/5` : '—';
   }
 
   private formatDynamicValue(value: unknown): string {
@@ -176,5 +237,24 @@ export class TeachingReportCompletedComponent {
 }
 
 function emptyForm(): ReportFormValues {
-  return { lessonContent: '', studentAttitude: '', recordingUrl: '', teacherComment: '', homework: '', additionalNotes: '' };
+  return {
+    lessonContent: '',
+    studentAttitude: '',
+    recordingUrl: '',
+    teacherComment: '',
+    homework: '',
+    homeworkSubmissionMode: 'HYBRID',
+    homeworkDeadline: '',
+    homeworkMaterialIds: [],
+    homeworkQuizIds: [],
+    lessonProgressStatus: 'COMPLETED',
+    progressPercent: 100,
+    studentPerformance: 3,
+    studentEngagement: 3,
+    comprehensionLevel: 3,
+    deviationReason: '',
+    nextSessionPlan: '',
+    overallComment: '',
+    additionalNotes: '',
+  };
 }

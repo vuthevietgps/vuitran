@@ -43,6 +43,10 @@ export class CreateStudentDto {
   @IsMongoId({ each: true })
   parentUserIds?: string[];
 
+  @IsOptional()
+  @IsMongoId()
+  studentUserId?: string;
+
   @IsString()
   @IsNotEmpty()
   faceImage!: string;

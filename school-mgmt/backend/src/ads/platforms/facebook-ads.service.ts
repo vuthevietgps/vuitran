@@ -712,7 +712,7 @@ export class FacebookAdsProvider
           adAccountId: account._id.toString(),
           platform: "FACEBOOK",
           date: dateStr,
-          spend: Number(row.spend || 0) * this.getExchangeRate("USD"),
+          spend: this.convertSpendToVnd(Number(row.spend || 0), account.currency),
           impressions: Number(row.impressions || 0),
           clicks: Number(row.clicks || 0),
           conversions,

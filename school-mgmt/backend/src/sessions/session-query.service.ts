@@ -100,9 +100,32 @@ export class SessionQueryService {
             teacherComment: session.teachingReport.teacherComment,
             homework: session.teachingReport.homework,
             additionalNotes: session.teachingReport.additionalNotes,
+            templateId: session.teachingReport.templateId,
+            templateTitle: session.teachingReport.templateTitle,
+            templateVersion: session.teachingReport.templateVersion,
+            dynamicFieldValues: session.teachingReport.dynamicFieldValues,
+            dynamicFieldSchemaSnapshot: session.teachingReport.dynamicFieldSchemaSnapshot,
             submittedAt: session.teachingReport.submittedAt,
             deadline: session.teachingReport.deadline,
             isLateSubmission: session.teachingReport.isLateSubmission,
+          }
+        : undefined,
+      evaluation: session?.evaluation
+        ? {
+            lessonProgressStatus: session.evaluation.lessonProgressStatus,
+            progressPercent: session.evaluation.progressPercent,
+            studentPerformance: session.evaluation.studentPerformance,
+            studentEngagement: session.evaluation.studentEngagement,
+            comprehensionLevel: session.evaluation.comprehensionLevel,
+            deviationReason: session.evaluation.deviationReason,
+            nextSessionPlan: session.evaluation.nextSessionPlan,
+            overallComment: session.evaluation.overallComment,
+            homeworkSubmissionMode: session.evaluation.homeworkSubmissionMode,
+            homeworkDeadline: session.evaluation.homeworkDeadline,
+            homeworkMaterialIds: session.evaluation.homeworkMaterialIds,
+            homeworkQuizIds: session.evaluation.homeworkQuizIds,
+            homeworkAssigned: session.evaluation.homeworkAssigned,
+            homeworkStatus: session.evaluation.homeworkStatus,
           }
         : undefined,
       hasTeachingReport: session?.hasTeachingReport === true,
@@ -417,9 +440,11 @@ export class SessionQueryService {
         status: { $in: ['TEACHER_COMPLETED', 'PARENT_CONFIRMED', 'FINALIZED'] },
       })
       .select(
-        'studentId classId evaluation teachingReport hasTeachingReport scheduledDate status',
+        'studentId classId evaluation teachingReport hasTeachingReport homework scheduledDate scheduledStartTime scheduledEndTime status',
       )
       .populate('classId', 'name code curriculum')
+      .populate('evaluation.homeworkMaterialIds', 'title courseName unitTitle lessonTitle fileUrl materialType')
+      .populate('evaluation.homeworkQuizIds', 'title subject grade courseName unitCode lessonCode passingScore')
       .sort({ scheduledDate: -1 })
       .lean();
 
@@ -471,19 +496,39 @@ export class SessionQueryService {
           : null;
 
       const homeworkList = studentSessions
-        .filter(
-          (s) =>
-            s.evaluation?.homeworkAssigned &&
-            s.evaluation.homeworkStatus !== 'GRADED',
-        )
-        .map((s) => ({
-          sessionDate: s.scheduledDate,
-          className: (s.classId as any)?.name || '',
-          homework: s.evaluation.homeworkAssigned,
-          deadline: s.evaluation.homeworkDeadline,
-          status: s.evaluation.homeworkStatus || 'ASSIGNED',
-          score: s.evaluation.homeworkScore,
-        }));
+        .filter((s) => {
+          const materialIds = Array.isArray(s.evaluation?.homeworkMaterialIds)
+            ? s.evaluation.homeworkMaterialIds
+            : [];
+          const quizIds = Array.isArray(s.evaluation?.homeworkQuizIds)
+            ? s.evaluation.homeworkQuizIds
+            : [];
+          return !!(s.evaluation?.homeworkAssigned || s.teachingReport?.homework || s.homework || materialIds.length || quizIds.length);
+        })
+        .map((s) => {
+          const topic = s.evaluation?.homeworkAssigned || s.teachingReport?.homework || s.homework || '';
+          return {
+            sessionId: objectIdToString((s as any)._id),
+            sessionDate: s.scheduledDate,
+            assignedDate: s.scheduledDate,
+            className: (s.classId as any)?.name || '',
+            homework: topic,
+            topic,
+            deadline: s.evaluation?.homeworkDeadline,
+            dueDate: s.evaluation?.homeworkDeadline,
+            status: s.evaluation?.homeworkStatus || 'ASSIGNED',
+            score: s.evaluation?.homeworkScore,
+            feedback: s.evaluation?.homeworkFeedback,
+            submissionMode: s.evaluation?.homeworkSubmissionMode || 'HYBRID',
+            submissionText: s.evaluation?.homeworkSubmissionText || '',
+            submissionVideoUrl: s.evaluation?.homeworkSubmissionVideoUrl || '',
+            submissionFiles: s.evaluation?.homeworkSubmissionFiles || [],
+            submittedAt: s.evaluation?.homeworkSubmittedAt,
+            reviewFiles: s.evaluation?.homeworkReviewFiles || [],
+            materialIds: s.evaluation?.homeworkMaterialIds || [],
+            quizIds: s.evaluation?.homeworkQuizIds || [],
+          };
+        });
 
       const recentComments = studentSessions
         .filter((s) => s.teachingReport?.teacherComment || s.evaluation?.overallComment)

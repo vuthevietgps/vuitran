@@ -259,10 +259,7 @@
     <label>
       Model
       <select [(ngModel)]="tokenForm.model">
-        <option value="gpt-4o-mini">gpt-4o-mini</option>
-        <option value="gpt-4o">gpt-4o</option>
-        <option value="gpt-4-turbo">gpt-4-turbo</option>
-        <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+        <option *ngFor="let model of openaiModelOptions" [value]="model.value">{{ model.label }}</option>
       </select>
     </label>
     <label>Temperature <input type="number" min="0" max="2" step="0.1" [(ngModel)]="tokenForm.temperature" /></label>
@@ -295,9 +292,17 @@
     <label>
       Loai AI
       <select [(ngModel)]="aiProfileForm.assistantType" [disabled]="!!editingAiProfile">
+        <option value="DIRECTOR_OPERATIONS">Tro ly Giam doc</option>
+        <option value="ACCOUNTING_OPERATIONS">Tro ly Ke toan</option>
+        <option value="OPS_OPERATIONS">Tro ly Van hanh</option>
         <option value="PARENT_SUPPORT">Cham soc phu huynh</option>
         <option value="INTERNAL_SUPPORT">Ho tro noi bo</option>
         <option value="TEACHER_SUPPORT">Tro ly giao vien</option>
+        <option value="EXPERIENCE_TEACHER_SUPPORT">Tro ly giao vien review</option>
+        <option value="STUDENT_SUPPORT">Ho tro hoc sinh</option>
+        <option value="SALE_OPERATIONS">Tro ly Sales</option>
+        <option value="ADS_OPERATIONS">Tro ly Ads</option>
+        <option value="SHAREHOLDER_INSIGHTS">Bao cao co dong</option>
         <option value="LEAD_CARE">Cham soc lead</option>
       </select>
     </label>

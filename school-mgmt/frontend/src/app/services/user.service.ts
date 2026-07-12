@@ -82,6 +82,9 @@ export interface CreateUserSalaryConfigPayload {
   standardHours: number;
   scheduledStartTime: string;
   latePenaltyAmount: number;
+  punctualityBonusAmount?: number;
+  experienceCaseRate?: number;
+  homeworkGradingRate?: number;
   commissionEnabled?: boolean;
   commissionType?: string;
   commissionTiers?: CreateUserCommissionTierPayload[];
@@ -140,6 +143,16 @@ export class UserService {
     try {
       return await firstValueFrom(
         this.http.get<UserItem[]>(`${environment.apiBase}/users/sales`, { withCredentials: true }),
+      );
+    } catch {
+      return [];
+    }
+  }
+
+  async listExperienceTeachers(): Promise<UserItem[]> {
+    try {
+      return await firstValueFrom(
+        this.http.get<UserItem[]>(`${environment.apiBase}/users/experience-teachers`, { withCredentials: true }),
       );
     } catch {
       return [];

@@ -15,6 +15,8 @@ import {
 import { TicketsService } from '../tickets/tickets.service';
 import { TicketPriority, TicketType } from '../tickets/schemas/ticket.schema';
 import { Role } from '../common/interfaces/role.enum';
+import { buildOpenAIChatBody } from '../common/utils/openai-chat-options';
+import { extractOpenAIApiKey } from '../common/utils/openai-api-key';
 import { StudentSupportSnapshotService } from './student-support-snapshot.service';
 import {
   ActiveUserLean,
@@ -267,6 +269,13 @@ export class ParentSupportAiHelper {
       return null;
     }
 
+    const rawKey = this.decrypt(token.apiKey);
+    const key = extractOpenAIApiKey(rawKey);
+    if (!key) {
+      this.logger.warn(`Parent support OpenAI token ${token._id?.toString()} does not contain a valid sk- API key`);
+      return null;
+    }
+
     await this.openaiTokenModel.updateOne(
       { _id: token._id },
       { lastUsedAt: new Date() },
@@ -274,8 +283,8 @@ export class ParentSupportAiHelper {
 
     return {
       tokenId: token._id as Types.ObjectId,
-      key: this.decrypt(token.apiKey),
-      model: token.model || 'gpt-4o-mini',
+      key,
+      model: token.model || 'gpt-5.4-mini',
       temperature: typeof token.temperature === 'number' ? token.temperature : 0.3,
       maxTokens: Math.min(Math.max(token.maxTokens || 500, 150), 800),
       systemPromptPrefix: token.systemPromptPrefix || undefined,
@@ -309,12 +318,12 @@ export class ParentSupportAiHelper {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${tokenData.key}`,
           },
-          body: JSON.stringify({
+          body: JSON.stringify(buildOpenAIChatBody({
             model: tokenData.model,
             messages,
             temperature: tokenData.temperature,
-            max_tokens: tokenData.maxTokens,
-          }),
+            maxTokens: tokenData.maxTokens,
+          })),
         });
 
         if (!response.ok) {

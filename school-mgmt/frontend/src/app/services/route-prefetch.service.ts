@@ -35,6 +35,12 @@ const PREFETCH_LOADERS: Partial<Record<Role, Loader[]>> = {
     () => import('../components/teacher-calendar.component'),
     () => import('../components/teaching-materials.component'),
   ],
+  [Role.EXPERIENCE_TEACHER]: [
+    () => import('../components/trial-enrollments.component'),
+    () => import('../components/homework-grading.component'),
+    () => import('../components/work-sessions.component'),
+    () => import('../components/staff-payroll.component'),
+  ],
   [Role.PARENT]: [
     () => import('../components/student-progress.component'),
     () => import('../components/parent-support-chat.component'),

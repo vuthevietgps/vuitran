@@ -1,15 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { AdCost, AdCostDocument } from './schemas/ad-cost.schema';
 import { AdGroup, AdGroupDocument } from './schemas/ad-group.schema';
 import { Expense, ExpenseDocument } from '../expenses/schemas/expense.schema';
-import { Lead, LeadDocument } from '../leads/schemas/lead.schema';
-import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { Lead, LeadDocument, LeadStatus } from '../leads/schemas/lead.schema';
+import { Order, OrderDocument, OrderStatus } from '../orders/schemas/order.schema';
 import { Session, SessionDocument } from '../sessions/schemas/session.schema';
 import { SessionStatus } from '../sessions/schemas/session.schema';
 import { PaymentStatus } from '../expenses/schemas/expense.schema';
-import { NetProfitDailyRow } from './ads.types';
+import { NetProfitDailyRow, SaleFunnelDiagnosticsResponse } from './ads.types';
+import { AdsGroupProfitCostService } from './ads-group-profit-cost.service';
 
 import {
   getUtcDateRange,
@@ -23,6 +24,7 @@ import {
 export class AdsAnalyticsProfitService {
   private readonly logger = new Logger(AdsAnalyticsProfitService.name);
   private readonly maxAnalyticsRangeDays = 366;
+  private readonly staleLeadDays = 7;
 
   constructor(
     @InjectModel(AdCost.name) private readonly adCostModel: Model<AdCostDocument>,
@@ -31,7 +33,283 @@ export class AdsAnalyticsProfitService {
     @InjectModel(Lead.name) private readonly leadModel: Model<LeadDocument>,
     @InjectModel(Order.name) private readonly orderModel: Model<OrderDocument>,
     @InjectModel(Session.name) private readonly sessionModel: Model<SessionDocument>,
+    private readonly groupProfitCostService: AdsGroupProfitCostService,
   ) {}
+
+  private parseOptionalFilterObjectId(id: string | undefined, fieldName: string): Types.ObjectId | undefined {
+    if (!id) return undefined;
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(`${fieldName} khong hop le`);
+    }
+    return new Types.ObjectId(id);
+  }
+
+  private saleFunnelKey(adGroupId: unknown, saleId: unknown): string {
+    return `${String(adGroupId || '')}::${saleId ? String(saleId) : ''}`;
+  }
+
+  async getSaleFunnelDiagnostics(
+    startDate: string,
+    endDate: string,
+    adGroupId?: string,
+    saleId?: string,
+  ): Promise<SaleFunnelDiagnosticsResponse> {
+    const { start, end } = getUtcDateRange(startDate, endDate, this.maxAnalyticsRangeDays);
+    const adGroupObjectId = parseOptionalObjectId(adGroupId);
+    const saleObjectId = this.parseOptionalFilterObjectId(saleId, 'saleId');
+    const staleCutoff = new Date(Date.now() - this.staleLeadDays * 24 * 60 * 60 * 1000);
+    const activeLeadStatuses = [LeadStatus.NEW, LeadStatus.CONTACTED, LeadStatus.CONSULTING, LeadStatus.INTERESTED];
+    const contactedLeadStatuses = [
+      LeadStatus.CONTACTED,
+      LeadStatus.CONSULTING,
+      LeadStatus.INTERESTED,
+      LeadStatus.CONVERTED,
+    ];
+    const convertedOrderStatuses = [
+      OrderStatus.DRAFT,
+      OrderStatus.SUBMITTED,
+      OrderStatus.NEEDS_INFO,
+      OrderStatus.APPROVED,
+      OrderStatus.COMPLETED,
+    ];
+    const approvedOrderStatuses = [OrderStatus.APPROVED, OrderStatus.COMPLETED];
+
+    const leadMatch: any = {
+      adGroupId: { $exists: true, $ne: null },
+      createdAt: { $gte: start, $lte: end },
+    };
+    if (adGroupObjectId) leadMatch.adGroupId = adGroupObjectId;
+    if (saleObjectId) leadMatch.saleId = saleObjectId;
+
+    const orderMatch: any = {
+      adGroupId: { $exists: true, $ne: null },
+      createdAt: { $gte: start, $lte: end },
+    };
+    if (adGroupObjectId) orderMatch.adGroupId = adGroupObjectId;
+    if (saleObjectId) orderMatch.saleId = saleObjectId;
+
+    const [leadRows, orderRows] = await Promise.all([
+      this.leadModel.aggregate([
+        { $match: leadMatch },
+        {
+          $group: {
+            _id: {
+              adGroupId: '$adGroupId',
+              saleId: { $ifNull: ['$saleId', null] },
+            },
+            adGroupName: { $first: '$adGroupName' },
+            saleName: { $first: '$saleName' },
+            leadCount: { $sum: 1 },
+            assignedLeadCount: {
+              $sum: {
+                $cond: [{ $ne: [{ $ifNull: ['$saleId', null] }, null] }, 1, 0],
+              },
+            },
+            contactedLeadCount: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $ne: [{ $ifNull: ['$lastContactAt', null] }, null] },
+                      { $in: ['$status', contactedLeadStatuses] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+            staleLeadCount: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $ne: [{ $ifNull: ['$saleId', null] }, null] },
+                      { $in: ['$status', activeLeadStatuses] },
+                      {
+                        $or: [
+                          {
+                            $and: [
+                              {
+                                $eq: [{ $ifNull: ['$lastContactAt', null] }, null],
+                              },
+                              {
+                                $ne: [{ $ifNull: ['$assignedAt', null] }, null],
+                              },
+                              { $lte: ['$assignedAt', staleCutoff] },
+                            ],
+                          },
+                          {
+                            $and: [
+                              {
+                                $ne: [{ $ifNull: ['$lastContactAt', null] }, null],
+                              },
+                              { $lte: ['$lastContactAt', staleCutoff] },
+                            ],
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]),
+      this.orderModel.aggregate([
+        { $match: orderMatch },
+        {
+          $group: {
+            _id: {
+              adGroupId: '$adGroupId',
+              saleId: { $ifNull: ['$saleId', null] },
+            },
+            adGroupName: { $first: '$adGroupName' },
+            saleName: { $first: '$saleName' },
+            convertedOrderCount: {
+              $sum: {
+                $cond: [{ $in: ['$status', convertedOrderStatuses] }, 1, 0],
+              },
+            },
+            approvedOrderCount: {
+              $sum: {
+                $cond: [{ $in: ['$status', approvedOrderStatuses] }, 1, 0],
+              },
+            },
+            revenue: {
+              $sum: {
+                $cond: [{ $in: ['$status', approvedOrderStatuses] }, { $ifNull: ['$finalAmount', 0] }, 0],
+              },
+            },
+            saleCommission: {
+              $sum: {
+                $cond: [{ $in: ['$status', approvedOrderStatuses] }, { $ifNull: ['$saleCommission', 0] }, 0],
+              },
+            },
+          },
+        },
+      ]),
+    ]);
+
+    const leadMap = new Map<string, any>();
+    const orderMap = new Map<string, any>();
+    const allKeys = new Set<string>();
+    const adGroupIds = new Set<string>();
+
+    for (const row of leadRows as any[]) {
+      const rowAdGroupId = row._id?.adGroupId?.toString?.();
+      if (!rowAdGroupId) continue;
+      const rowSaleId = row._id?.saleId?.toString?.() || '';
+      const key = this.saleFunnelKey(rowAdGroupId, rowSaleId);
+      leadMap.set(key, row);
+      allKeys.add(key);
+      adGroupIds.add(rowAdGroupId);
+    }
+
+    for (const row of orderRows as any[]) {
+      const rowAdGroupId = row._id?.adGroupId?.toString?.();
+      if (!rowAdGroupId) continue;
+      const rowSaleId = row._id?.saleId?.toString?.() || '';
+      const key = this.saleFunnelKey(rowAdGroupId, rowSaleId);
+      orderMap.set(key, row);
+      allKeys.add(key);
+      adGroupIds.add(rowAdGroupId);
+    }
+
+    if (adGroupObjectId && allKeys.size === 0) {
+      const key = this.saleFunnelKey(adGroupObjectId.toString(), saleObjectId?.toString() || '');
+      allKeys.add(key);
+      adGroupIds.add(adGroupObjectId.toString());
+    }
+
+    const adGroupObjectIds = Array.from(adGroupIds)
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+    const adGroups =
+      adGroupObjectIds.length > 0
+        ? await this.adGroupModel
+            .find({ _id: { $in: adGroupObjectIds } })
+            .select('_id name platform')
+            .lean()
+        : [];
+    const adGroupMetaMap = new Map<string, { name: string; platform: string }>();
+    for (const group of adGroups as any[]) {
+      adGroupMetaMap.set(group._id.toString(), {
+        name: group.name || '',
+        platform: group.platform || '',
+      });
+    }
+
+    const rows = Array.from(allKeys)
+      .map((key) => {
+        const [rowAdGroupId, rowSaleId] = key.split('::');
+        if (!rowAdGroupId) return null;
+
+        const leadData = leadMap.get(key);
+        const orderData = orderMap.get(key);
+        const adGroupMeta = adGroupMetaMap.get(rowAdGroupId);
+        const revenue = roundCurrency(Number(orderData?.revenue || 0));
+        const saleCommission = roundCurrency(Number(orderData?.saleCommission || 0));
+        const profit = roundCurrency(revenue - saleCommission);
+        const saleName = leadData?.saleName || orderData?.saleName || (rowSaleId ? '' : 'UNASSIGNED');
+
+        return {
+          adGroupId: rowAdGroupId,
+          adGroupName: leadData?.adGroupName || orderData?.adGroupName || adGroupMeta?.name || '',
+          platform: adGroupMeta?.platform || '',
+          saleId: rowSaleId || null,
+          saleName,
+          leadCount: Number(leadData?.leadCount || 0),
+          assignedLeadCount: Number(leadData?.assignedLeadCount || 0),
+          contactedLeadCount: Number(leadData?.contactedLeadCount || 0),
+          staleLeadCount: Number(leadData?.staleLeadCount || 0),
+          convertedOrderCount: Number(orderData?.convertedOrderCount || 0),
+          approvedOrderCount: Number(orderData?.approvedOrderCount || 0),
+          revenue,
+          saleCommission,
+          profit,
+          netProfit: null,
+          profitBasis: 'ORDER_REVENUE_MINUS_SALE_COMMISSION' as const,
+          netProfitBasis: null,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null)
+      .sort(
+        (a, b) =>
+          a.adGroupName.localeCompare(b.adGroupName) ||
+          a.saleName.localeCompare(b.saleName) ||
+          a.adGroupId.localeCompare(b.adGroupId) ||
+          String(a.saleId || '').localeCompare(String(b.saleId || '')),
+      );
+
+    const summary = {
+      leadCount: rows.reduce((sum, row) => sum + row.leadCount, 0),
+      assignedLeadCount: rows.reduce((sum, row) => sum + row.assignedLeadCount, 0),
+      contactedLeadCount: rows.reduce((sum, row) => sum + row.contactedLeadCount, 0),
+      staleLeadCount: rows.reduce((sum, row) => sum + row.staleLeadCount, 0),
+      convertedOrderCount: rows.reduce((sum, row) => sum + row.convertedOrderCount, 0),
+      approvedOrderCount: rows.reduce((sum, row) => sum + row.approvedOrderCount, 0),
+      revenue: roundCurrency(rows.reduce((sum, row) => sum + row.revenue, 0)),
+      saleCommission: roundCurrency(rows.reduce((sum, row) => sum + row.saleCommission, 0)),
+      profit: roundCurrency(rows.reduce((sum, row) => sum + row.profit, 0)),
+      netProfit: null,
+    };
+
+    return {
+      query: {
+        startDate,
+        endDate,
+        adGroupId: adGroupId || null,
+        saleId: saleId || null,
+        staleAfterDays: this.staleLeadDays,
+      },
+      rows,
+      summary,
+    };
+  }
 
   async buildNetProfitDailyRows(
     start: Date,
@@ -170,10 +448,14 @@ export class AdsAnalyticsProfitService {
       .map((id) => new Types.ObjectId(id));
 
     const adGroups = adGroupIds.length
-      ? await this.adGroupModel.find({ _id: { $in: adGroupIds } }).select('name platform').lean()
+      ? await this.adGroupModel.find({ _id: { $in: adGroupIds } }).select('name platform adAccountId').lean()
       : [];
-    const adGroupMetaMap = new Map<string, { name?: string; platform?: string }>(
-      adGroups.map((g: any) => [String(g._id), { name: g.name, platform: g.platform }]),
+    const adGroupMetaMap = new Map<string, { name?: string; platform?: string; adAccountId?: string }>(
+      adGroups.map((g: any) => [String(g._id), {
+        name: g.name,
+        platform: g.platform,
+        adAccountId: g.adAccountId ? String(g.adAccountId) : undefined,
+      }]),
     );
 
     const daily: NetProfitDailyRow[] = [];
@@ -198,10 +480,11 @@ export class AdsAnalyticsProfitService {
 
       const meta = adGroupMetaMap.get(adGroupId);
       daily.push({
-        date,
-        adGroupId,
-        adGroupName: sessionData?.adGroupName || adCostData?.adGroupName || meta?.name || '',
-        platform: adCostData?.platform || meta?.platform || '',
+          date,
+          adGroupId,
+          adGroupName: sessionData?.adGroupName || adCostData?.adGroupName || meta?.name || '',
+          adAccountId: meta?.adAccountId,
+          platform: adCostData?.platform || meta?.platform || '',
         sessionCount,
         revenue,
         teacherCost,
@@ -244,14 +527,17 @@ export class AdsAnalyticsProfitService {
     ]);
     const costMap = new Map(costsByGroup.map((c) => [c._id.toString(), c]));
 
-    const leadMatch: any = { adGroupId: { $exists: true, $ne: null }, createdAt: { $gte: start, $lte: end } };
+    const leadMatch: any = {
+      adGroupId: { $exists: true, $ne: null },
+      createdAt: { $gte: start, $lte: end },
+    };
     if (adGroupObjectId) leadMatch.adGroupId = adGroupObjectId;
 
     const leadsByGroup = await this.leadModel.aggregate([
       { $match: leadMatch },
       { $group: { _id: '$adGroupId', leadCount: { $sum: 1 } } },
     ]);
-    const leadMap = new Map(leadsByGroup.map(l => [l._id.toString(), l.leadCount]));
+    const leadMap = new Map(leadsByGroup.map((l) => [l._id.toString(), l.leadCount]));
 
     const orderMatch: any = {
       adGroupId: { $exists: true, $ne: null },
@@ -266,11 +552,13 @@ export class AdsAnalyticsProfitService {
         $group: {
           _id: '$adGroupId',
           orderCount: { $sum: 1 },
-          revenue: { $sum: '$finalAmount' },
+          revenue: { $sum: { $ifNull: ['$finalAmount', 0] } },
+          saleCommission: { $sum: { $ifNull: ['$saleCommission', 0] } },
         },
       },
     ]);
-    const orderMap = new Map(ordersByGroup.map(o => [o._id.toString(), o]));
+    const orderMap = new Map(ordersByGroup.map((o) => [o._id.toString(), o]));
+    const costBreakdownByGroup = await this.groupProfitCostService.buildBreakdownByAdGroup(start, end);
 
     const dailyNetProfit = await this.buildNetProfitDailyRows(start, end, adGroupObjectId);
     const netProfitByGroup = new Map<string, number>();
@@ -293,6 +581,7 @@ export class AdsAnalyticsProfitService {
     for (const gId of leadMap.keys()) allGroupIds.add(gId);
     for (const gId of orderMap.keys()) allGroupIds.add(gId);
     for (const gId of netProfitByGroup.keys()) allGroupIds.add(gId);
+    for (const gId of costBreakdownByGroup.keys()) allGroupIds.add(gId);
     if (adGroupObjectId) allGroupIds.add(adGroupObjectId.toString());
 
     const adGroupMetaMap = new Map<string, { name: string; platform: string }>();
@@ -321,31 +610,66 @@ export class AdsAnalyticsProfitService {
 
         if (platform && resolvedPlatform !== platform) return null;
 
-      const leadCount = leadMap.get(gId) || 0;
-      const orderData = orderMap.get(gId) || { orderCount: 0, revenue: 0 };
-      const netProfit = netProfitByGroup.get(gId) || 0;
-      const recognizedRevenue = recognizedRevenueByGroup.get(gId) || 0;
-      const totalSpend = Number(cost?.totalSpend || 0);
-      const roi = totalSpend > 0 ? (netProfit / totalSpend) * 100 : 0;
+        const leadCount = leadMap.get(gId) || 0;
+        const orderData = orderMap.get(gId) || { orderCount: 0, revenue: 0, saleCommission: 0 };
+        const sessionNetProfit = netProfitByGroup.get(gId) || 0;
+        const recognizedRevenue = recognizedRevenueByGroup.get(gId) || 0;
+        const bookedRevenue = roundCurrency(Number(orderData.revenue || 0));
+        const saleCommission = roundCurrency(Number(orderData.saleCommission || 0));
+        const totalSpend = Number(cost?.totalSpend || 0);
+        const costBreakdown = costBreakdownByGroup.get(gId);
+        const estimatedTeacherCost = roundCurrency(Number(costBreakdown?.estimatedTeacherCost || 0));
+        const directParentExpense = roundCurrency(Number(costBreakdown?.directParentExpense || 0));
+        const allocatedGroupExpense = roundCurrency(Number(costBreakdown?.allocatedGroupExpense || 0));
+        const allocatedGlobalExpense = roundCurrency(Number(costBreakdown?.allocatedGlobalExpense || 0));
+        const allocatedStaffLaborCost = roundCurrency(Number(costBreakdown?.allocatedStaffLaborCost || 0));
+        const otherCost = roundCurrency(directParentExpense + allocatedGroupExpense + allocatedGlobalExpense);
+        const operatingCost = roundCurrency(otherCost + allocatedStaffLaborCost);
+        const totalCost = roundCurrency(
+          totalSpend
+          + saleCommission
+          + estimatedTeacherCost
+          + operatingCost,
+        );
+        const orderProfit = roundCurrency(bookedRevenue - saleCommission - estimatedTeacherCost);
+        const netProfit = roundCurrency(bookedRevenue - totalCost);
+        const projectedOrderNetProfit = netProfit;
+        const realizedNetProfit = sessionNetProfit;
+        const roi = totalSpend > 0 ? (netProfit / totalSpend) * 100 : 0;
 
-      return {
-        adGroupId: gId,
-        adGroupName: cost?.adGroupName || netProfitMeta?.adGroupName || groupMeta?.name || '',
-        platform: resolvedPlatform,
-        totalSpend,
-        totalImpressions: Number(cost?.totalImpressions || 0),
-        totalClicks: Number(cost?.totalClicks || 0),
-        totalConversions: Number(cost?.totalConversions || 0),
-        leadCount,
-        orderCount: orderData.orderCount,
-        revenue: recognizedRevenue,
-        bookedRevenue: orderData.revenue,
-        costPerLead: leadCount > 0 ? Math.round(totalSpend / leadCount) : null,
-        costPerOrder: orderData.orderCount > 0 ? Math.round(totalSpend / orderData.orderCount) : null,
-        netProfit,
-        roi: Math.round(roi * 100) / 100,
-      };
-    })
+        return {
+          adGroupId: gId,
+          adGroupName: cost?.adGroupName || netProfitMeta?.adGroupName || groupMeta?.name || '',
+          platform: resolvedPlatform,
+          totalSpend,
+          totalImpressions: Number(cost?.totalImpressions || 0),
+          totalClicks: Number(cost?.totalClicks || 0),
+          totalConversions: Number(cost?.totalConversions || 0),
+          leadCount,
+          orderCount: orderData.orderCount,
+          revenue: bookedRevenue,
+          bookedRevenue,
+          recognizedRevenue,
+          saleCommission,
+          estimatedTeacherCost,
+          directParentExpense,
+          allocatedGroupExpense,
+          allocatedGlobalExpense,
+          allocatedStaffLaborCost,
+          otherCost,
+          operatingCost,
+          totalCost,
+          orderProfit,
+          sessionNetProfit,
+          projectedOrderNetProfit,
+          realizedNetProfit,
+          costPerLead: leadCount > 0 ? Math.round(totalSpend / leadCount) : null,
+          costPerOrder: orderData.orderCount > 0 ? Math.round(totalSpend / orderData.orderCount) : null,
+          netProfit,
+          roi: Math.round(roi * 100) / 100,
+          profitBasis: 'ORDER_REVENUE_MINUS_ALL_ALLOCATED_COSTS',
+        };
+      })
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => b.totalSpend - a.totalSpend || b.netProfit - a.netProfit);
 
@@ -355,24 +679,36 @@ export class AdsAnalyticsProfitService {
       totalOrders: rows.reduce((s, r) => s + r.orderCount, 0),
       totalRevenue: rows.reduce((s, r) => s + r.revenue, 0),
       totalBookedRevenue: rows.reduce((s, r) => s + r.bookedRevenue, 0),
+      totalRecognizedRevenue: rows.reduce((s, r) => s + r.recognizedRevenue, 0),
+      totalSaleCommission: rows.reduce((s, r) => s + r.saleCommission, 0),
+      totalEstimatedTeacherCost: rows.reduce((s, r) => s + r.estimatedTeacherCost, 0),
+      totalDirectParentExpense: rows.reduce((s, r) => s + r.directParentExpense, 0),
+      totalAllocatedGroupExpense: rows.reduce((s, r) => s + r.allocatedGroupExpense, 0),
+      totalAllocatedGlobalExpense: rows.reduce((s, r) => s + r.allocatedGlobalExpense, 0),
+      totalAllocatedStaffLaborCost: rows.reduce((s, r) => s + r.allocatedStaffLaborCost, 0),
+      totalOtherCost: rows.reduce((s, r) => s + r.otherCost, 0),
+      totalOperatingCost: rows.reduce((s, r) => s + r.operatingCost, 0),
+      totalCost: rows.reduce((s, r) => s + r.totalCost, 0),
+      totalOrderProfit: rows.reduce((s, r) => s + r.orderProfit, 0),
+      totalSessionNetProfit: rows.reduce((s, r) => s + r.sessionNetProfit, 0),
+      totalProjectedOrderNetProfit: rows.reduce((s, r) => s + r.projectedOrderNetProfit, 0),
+      totalRealizedNetProfit: rows.reduce((s, r) => s + r.realizedNetProfit, 0),
       totalNetProfit: rows.reduce((s, r) => s + r.netProfit, 0),
       avgCostPerLead: 0,
       avgCostPerOrder: 0,
       avgRoi: 0,
+      profitBasis: 'ORDER_REVENUE_MINUS_ALL_ALLOCATED_COSTS',
     };
 
     if (summary.totalLeads > 0) summary.avgCostPerLead = Math.round(summary.totalSpend / summary.totalLeads);
     if (summary.totalOrders > 0) summary.avgCostPerOrder = Math.round(summary.totalSpend / summary.totalOrders);
-    if (summary.totalSpend > 0) summary.avgRoi = Math.round((summary.totalNetProfit / summary.totalSpend) * 10000) / 100;
+    if (summary.totalSpend > 0)
+      summary.avgRoi = Math.round((summary.totalNetProfit / summary.totalSpend) * 10000) / 100;
 
     return { rows, summary };
   }
 
-  async getNetProfitByAdGroup(
-    startDate: string,
-    endDate: string,
-    adGroupId?: string,
-  ): Promise<any> {
+  async getNetProfitByAdGroup(startDate: string, endDate: string, adGroupId?: string): Promise<any> {
     const { start, end } = getUtcDateRange(startDate, endDate, this.maxAnalyticsRangeDays);
     const adGroupObjectId = parseOptionalObjectId(adGroupId);
     const daily = await this.buildNetProfitDailyRows(start, end, adGroupObjectId);
@@ -383,6 +719,7 @@ export class AdsAnalyticsProfitService {
         groupSummaryMap.set(row.adGroupId, {
           adGroupId: row.adGroupId,
           adGroupName: row.adGroupName,
+          adAccountId: row.adAccountId,
           platform: row.platform,
           totalRevenue: 0,
           totalTeacherCost: 0,
@@ -408,13 +745,9 @@ export class AdsAnalyticsProfitService {
     const summaryByGroup = Array.from(groupSummaryMap.values())
       .map((s: any) => ({
         ...s,
-        netMargin: s.totalRevenue > 0
-          ? Math.round((s.totalNetProfit / s.totalRevenue) * 10000) / 100
-          : 0,
+        netMargin: s.totalRevenue > 0 ? Math.round((s.totalNetProfit / s.totalRevenue) * 10000) / 100 : 0,
         avgNetProfitPerDay: s.days > 0 ? Math.round(s.totalNetProfit / s.days) : 0,
-        avgNetProfitPerSession: s.totalSessions > 0
-          ? Math.round(s.totalNetProfit / s.totalSessions)
-          : 0,
+        avgNetProfitPerSession: s.totalSessions > 0 ? Math.round(s.totalNetProfit / s.totalSessions) : 0,
       }))
       .sort((a, b) => b.totalNetProfit - a.totalNetProfit);
 

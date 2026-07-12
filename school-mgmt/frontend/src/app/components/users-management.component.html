@@ -402,12 +402,12 @@
         <small class="hint" *ngIf="!salesLoading() && !salesOptions().length">Chua co sale nao de gan.</small>
       </div>
       <div
-        *ngIf="!editingId && isTeacherRole(form.role) && form.salaryConfig as salaryConfig"
+        *ngIf="!editingId && usesOnboardingSalaryConfig(form.role) && form.salaryConfig as salaryConfig"
         class="teacher-onboarding-card"
         data-testid="teacher-onboarding-salary-config">
         <div class="sales-editor-header">
-          <strong>Salary config mac dinh cho giao vien</strong>
-          <span class="hint">Config nay duoc tao cung luc voi tai khoan giao vien.</span>
+          <strong>Salary config mac dinh</strong>
+          <span class="hint">Config nay duoc tao cung luc voi tai khoan giao vien/giao vien trai nghiem.</span>
         </div>
         <div class="teacher-onboarding-grid">
           <label>Luong cung (VND)
@@ -439,6 +439,30 @@
               [(ngModel)]="salaryConfig.latePenaltyAmount"
               name="teacherLatePenaltyAmount"
               data-testid="teacher-salary-late-penalty"
+              type="number"
+              min="0" />
+          </label>
+          <label>Thuong dung gio / lan (VND)
+            <input
+              [(ngModel)]="salaryConfig.punctualityBonusAmount"
+              name="teacherPunctualityBonusAmount"
+              data-testid="teacher-salary-punctuality-bonus"
+              type="number"
+              min="0" />
+          </label>
+          <label>Lương test học sinh / case (VNĐ)
+            <input
+              [(ngModel)]="salaryConfig.experienceCaseRate"
+              name="teacherExperienceCaseRate"
+              data-testid="teacher-salary-experience-case-rate"
+              type="number"
+              min="0" />
+          </label>
+          <label>Luong cham bai / bai (VND)
+            <input
+              [(ngModel)]="salaryConfig.homeworkGradingRate"
+              name="teacherHomeworkGradingRate"
+              data-testid="teacher-salary-homework-grading-rate"
               type="number"
               min="0" />
           </label>

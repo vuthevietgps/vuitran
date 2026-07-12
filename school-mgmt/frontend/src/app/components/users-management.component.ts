@@ -26,6 +26,9 @@ interface TeacherOnboardingSalaryConfigDraft {
   standardHours: number;
   scheduledStartTime: string;
   latePenaltyAmount: number | null;
+  punctualityBonusAmount: number | null;
+  experienceCaseRate: number | null;
+  homeworkGradingRate: number | null;
   notes: string;
 }
 
@@ -98,7 +101,9 @@ export class UsersManagementComponent {
     { value: 'SALE', label: 'Sale', codeLabel: 'Ma sale', codeHint: 'VD: SALE001' },
     { value: 'ADSMANAGER', label: 'Ads manager', codeLabel: 'Ma ads manager', codeHint: 'VD: ADS001' },
     { value: 'TEACHER', label: 'Giao vien', codeLabel: 'Ma giao vien', codeHint: 'VD: GV001' },
+    { value: 'EXPERIENCE_TEACHER', label: 'Giao vien trai nghiem', codeLabel: 'Ma GV trai nghiem', codeHint: 'VD: GVTN001' },
     { value: 'PARENT', label: 'Phu huynh', codeLabel: 'Ma phu huynh', codeHint: 'VD: PH001' },
+    { value: 'STUDENT', label: 'Hoc sinh', codeLabel: 'Ma hoc sinh', codeHint: 'VD: HS001' },
     { value: 'SHAREHOLDER', label: 'Co dong', codeLabel: 'Ma co dong', codeHint: 'VD: SH001' },
     { value: 'MANAGER', label: 'Quan ly (legacy)', codeLabel: 'Ma quan ly', codeHint: 'VD: QL001' },
     { value: 'HCNS', label: 'HCNS (legacy)', codeLabel: 'Ma HCNS', codeHint: 'VD: HCNS001' },
@@ -275,6 +280,10 @@ export class UsersManagementComponent {
     return role === 'TEACHER';
   }
 
+  usesOnboardingSalaryConfig(role: string): boolean {
+    return role === 'TEACHER' || role === 'EXPERIENCE_TEACHER';
+  }
+
   isShareholderRole(role: string): boolean {
     return role === 'SHAREHOLDER';
   }
@@ -285,6 +294,9 @@ export class UsersManagementComponent {
       standardHours: 176,
       scheduledStartTime: '08:00',
       latePenaltyAmount: 0,
+      punctualityBonusAmount: 0,
+      experienceCaseRate: 0,
+      homeworkGradingRate: 0,
       notes: '',
     };
   }
@@ -303,7 +315,7 @@ export class UsersManagementComponent {
       saleOwnerId: '',
       adGroupId: '',
       managedSales: [],
-      salaryConfig: this.isTeacherRole(role) ? this.emptyTeacherSalaryConfig() : null,
+      salaryConfig: this.usesOnboardingSalaryConfig(role) ? this.emptyTeacherSalaryConfig() : null,
     };
   }
 
@@ -341,7 +353,7 @@ export class UsersManagementComponent {
     }
 
     this.form.managedSales = [];
-    this.form.salaryConfig = null;
+    this.form.salaryConfig = this.usesOnboardingSalaryConfig(role) ? this.emptyTeacherSalaryConfig() : null;
   }
 
   formatOwnershipPercentage(user: UserItem): string {
@@ -875,12 +887,33 @@ export class UsersManagementComponent {
       return null;
     }
 
+    const punctualityBonusAmount = Number(draft.punctualityBonusAmount ?? 0);
+    if (!Number.isFinite(punctualityBonusAmount) || punctualityBonusAmount < 0) {
+      this.error.set('Thuong dung gio mac dinh khong duoc am');
+      return null;
+    }
+
+    const experienceCaseRate = Number(draft.experienceCaseRate ?? 0);
+    if (!Number.isFinite(experienceCaseRate) || experienceCaseRate < 0) {
+      this.error.set('Luong trai nghiem mac dinh khong duoc am');
+      return null;
+    }
+
+    const homeworkGradingRate = Number(draft.homeworkGradingRate ?? 0);
+    if (!Number.isFinite(homeworkGradingRate) || homeworkGradingRate < 0) {
+      this.error.set('Luong cham bai mac dinh khong duoc am');
+      return null;
+    }
+
     const notes = draft.notes.trim();
     return {
       baseSalary,
       standardHours,
       scheduledStartTime,
       latePenaltyAmount,
+      punctualityBonusAmount,
+      experienceCaseRate,
+      homeworkGradingRate,
       commissionEnabled: false,
       commissionType: 'PROGRESSIVE',
       commissionTiers: [],
@@ -900,14 +933,14 @@ export class UsersManagementComponent {
 
     try {
       const isParentRole = this.isParentRole(this.form.role);
-      const isCreateTeacher = !this.editingId && this.isTeacherRole(this.form.role);
+      const shouldCreateSalaryConfig = !this.editingId && this.usesOnboardingSalaryConfig(this.form.role);
       const adGroupId = isParentRole ? this.form.adGroupId.trim() : '';
       const managedSales = !this.editingId && this.isTeacherRole(this.form.role)
         ? Array.from(new Set(this.form.managedSales.map((saleId) => saleId.trim()).filter(Boolean)))
         : [];
       const saleOwnerId = this.isParentRole(this.form.role) ? this.form.saleOwnerId.trim() : '';
-      const teacherSalaryConfig = isCreateTeacher ? this.buildTeacherSalaryConfigPayload() : undefined;
-      if (isCreateTeacher && !teacherSalaryConfig) {
+      const teacherSalaryConfig = shouldCreateSalaryConfig ? this.buildTeacherSalaryConfigPayload() : undefined;
+      if (shouldCreateSalaryConfig && !teacherSalaryConfig) {
         return;
       }
       const salaryConfig = teacherSalaryConfig ?? undefined;

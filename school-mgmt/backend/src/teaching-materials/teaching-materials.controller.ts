@@ -24,9 +24,17 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
-import { MaterialFileCategory } from './schemas/teaching-material.schema';
+import {
+  MaterialDifficulty,
+  MaterialFileCategory,
+  MaterialScope,
+  MaterialStatus,
+  MaterialType,
+  MaterialUsagePhase,
+} from './schemas/teaching-material.schema';
 
-const MATERIAL_ACCESS_ROLES = Object.values(Role) as Role[];
+const MATERIAL_VIEW_ROLES = Object.values(Role).filter((role) => role !== Role.SHAREHOLDER) as Role[];
+const MATERIAL_MANAGE_ROLES = [Role.DIRECTOR];
 
 // Setup upload directory
 const uploadPath = join(process.cwd(), 'uploads', 'materials');
@@ -87,7 +95,7 @@ export class TeachingMaterialsController {
    * POST /teaching-materials/upload
    */
   @Post('upload')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_MANAGE_ROLES)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: materialsStorage,
@@ -110,7 +118,7 @@ export class TeachingMaterialsController {
    * GET /teaching-materials
    */
   @Get()
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_VIEW_ROLES)
   findAll(
     @Req() req: AuthenticatedRequest,
     @Query('subject') subject?: string,
@@ -119,6 +127,16 @@ export class TeachingMaterialsController {
     @Query('search') search?: string,
     @Query('fileCategory') fileCategory?: MaterialFileCategory,
     @Query('extractionStatus') extractionStatus?: string,
+    @Query('productId') productId?: string,
+    @Query('courseName') courseName?: string,
+    @Query('unitCode') unitCode?: string,
+    @Query('lessonCode') lessonCode?: string,
+    @Query('materialScope') materialScope?: MaterialScope,
+    @Query('materialType') materialType?: MaterialType,
+    @Query('usagePhase') usagePhase?: MaterialUsagePhase,
+    @Query('difficulty') difficulty?: MaterialDifficulty,
+    @Query('status') status?: MaterialStatus,
+    @Query('assignableAsHomework') assignableAsHomework?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -129,6 +147,17 @@ export class TeachingMaterialsController {
       search,
       fileCategory,
       extractionStatus: extractionStatus as any,
+      productId,
+      courseName,
+      unitCode,
+      lessonCode,
+      materialScope,
+      materialType,
+      usagePhase,
+      difficulty,
+      status,
+      assignableAsHomework:
+        assignableAsHomework === undefined ? undefined : assignableAsHomework === 'true',
       page: page ? parseInt(page, 10) : undefined,
       limit: limit ? parseInt(limit, 10) : undefined,
     });
@@ -139,7 +168,7 @@ export class TeachingMaterialsController {
    * GET /teaching-materials/stats
    */
   @Get('stats')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_VIEW_ROLES)
   getStats(@Req() req: AuthenticatedRequest) {
     return this.service.getStats(req.user);
   }
@@ -149,7 +178,7 @@ export class TeachingMaterialsController {
    * GET /teaching-materials/:id
    */
   @Get(':id')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_VIEW_ROLES)
   findOne(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.findOne(id, req.user);
   }
@@ -159,7 +188,7 @@ export class TeachingMaterialsController {
    * PATCH /teaching-materials/:id
    */
   @Patch(':id')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_MANAGE_ROLES)
   update(
     @Param('id') id: string,
     @Body() dto: UpdateTeachingMaterialDto,
@@ -169,7 +198,7 @@ export class TeachingMaterialsController {
   }
 
   @Post(':id/reprocess')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_MANAGE_ROLES)
   reprocess(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.reprocess(id, req.user);
   }
@@ -179,7 +208,7 @@ export class TeachingMaterialsController {
    * DELETE /teaching-materials/:id
    */
   @Delete(':id')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_MANAGE_ROLES)
   remove(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.remove(id, req.user);
   }
@@ -189,7 +218,7 @@ export class TeachingMaterialsController {
    * POST /teaching-materials/:id/download
    */
   @Post(':id/download')
-  @Roles(...MATERIAL_ACCESS_ROLES)
+  @Roles(...MATERIAL_VIEW_ROLES)
   download(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
     return this.service.incrementDownload(id, req.user);
   }

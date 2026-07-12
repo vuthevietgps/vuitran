@@ -8,6 +8,7 @@ import {
   MessageBody,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { JwtService } from '@nestjs/jwt';
 import { MessagesService } from './messages.service';
 
 @WebSocketGateway({
@@ -23,23 +24,39 @@ export class MessagesGateway
   /** Map userId → Set<socketId> for broadcasting */
   private userSockets = new Map<string, Set<string>>();
 
-  constructor(private readonly messagesService: MessagesService) {}
+  constructor(
+    private readonly messagesService: MessagesService,
+    private readonly jwtService: JwtService,
+  ) {}
 
-  handleConnection(client: Socket) {
-    const userId = client.handshake.query['userId'] as string;
-    if (!userId) {
+  async handleConnection(client: Socket) {
+    try {
+      const token = this.extractAccessToken(client);
+      if (!token) {
+        client.disconnect();
+        return;
+      }
+
+      const payload = await this.jwtService.verifyAsync<{ sub?: string }>(token);
+      if (!payload.sub) {
+        client.disconnect();
+        return;
+      }
+
+      const user = await this.messagesService.getSocketUser(payload.sub);
+      const userId = user._id.toString();
+      client.data.userId = userId;
+
+      if (!this.userSockets.has(userId)) {
+        this.userSockets.set(userId, new Set());
+      }
+      this.userSockets.get(userId)!.add(client.id);
+
+      // Join personal room
+      client.join(`user:${userId}`);
+    } catch {
       client.disconnect();
-      return;
     }
-    client.data.userId = userId;
-
-    if (!this.userSockets.has(userId)) {
-      this.userSockets.set(userId, new Set());
-    }
-    this.userSockets.get(userId)!.add(client.id);
-
-    // Join personal room
-    client.join(`user:${userId}`);
   }
 
   handleDisconnect(client: Socket) {
@@ -98,10 +115,13 @@ export class MessagesGateway
   }
 
   @SubscribeMessage('joinConversation')
-  handleJoinConversation(
+  async handleJoinConversation(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { conversationId: string },
   ) {
+    const userId = client.data.userId;
+    if (!userId) return;
+    await this.messagesService.assertCanJoinConversation(userId, data.conversationId);
     client.join(`conversation:${data.conversationId}`);
   }
 
@@ -121,5 +141,37 @@ export class MessagesGateway
     const userId = client.data.userId;
     if (!userId) return;
     await this.messagesService.markRead(userId, data.conversationId);
+  }
+
+  private extractAccessToken(client: Socket): string | null {
+    const authToken = this.pickSingleValue(client.handshake.auth?.token);
+    if (authToken) return this.stripBearer(authToken);
+
+    const authorization = this.pickSingleValue(client.handshake.headers.authorization);
+    if (authorization) return this.stripBearer(authorization);
+
+    const cookieHeader = this.pickSingleValue(client.handshake.headers.cookie);
+    return this.extractCookie(cookieHeader, 'access_token');
+  }
+
+  private pickSingleValue(value: unknown): string | null {
+    if (Array.isArray(value)) return this.pickSingleValue(value[0]);
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  }
+
+  private stripBearer(value: string): string {
+    return value.replace(/^Bearer\s+/i, '').trim();
+  }
+
+  private extractCookie(cookieHeader: string | null, name: string): string | null {
+    if (!cookieHeader) return null;
+    const prefix = `${name}=`;
+    for (const rawCookie of cookieHeader.split(';')) {
+      const cookie = rawCookie.trim();
+      if (cookie.startsWith(prefix)) {
+        return decodeURIComponent(cookie.slice(prefix.length));
+      }
+    }
+    return null;
   }
 }

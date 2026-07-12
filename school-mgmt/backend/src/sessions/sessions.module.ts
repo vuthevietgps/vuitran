@@ -19,6 +19,8 @@ import { TicketsModule } from '../tickets/tickets.module';
 import { MessagesModule } from '../messages/messages.module';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { ReportTemplate, ReportTemplateSchema } from '../report-templates/schemas/report-template.schema';
+import { TeachingMaterial, TeachingMaterialSchema } from '../teaching-materials/schemas/teaching-material.schema';
+import { Quiz, QuizSchema } from '../quizzes/schemas/quiz.schema';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { SessionSettlementService } from './session-settlement.service';
 import { SessionTrialService } from './session-trial.service';
@@ -40,6 +42,8 @@ import { StorageUrlService } from '../common/storage-url.service';
       { name: Attendance.name, schema: AttendanceSchema },
       { name: User.name, schema: UserSchema },
       { name: ReportTemplate.name, schema: ReportTemplateSchema },
+      { name: TeachingMaterial.name, schema: TeachingMaterialSchema },
+      { name: Quiz.name, schema: QuizSchema },
     ]),
     forwardRef(() => WalletsModule),
     PayrollTransactionModule,

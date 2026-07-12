@@ -118,6 +118,23 @@ export interface TeachingMaterial {
   subject?: string;
   grade?: string;
   classId?: { _id: string; name: string } | string;
+  productId?: { _id: string; name: string; code?: string; category?: string; teachingMode?: string; gradeLevel?: string } | string;
+  courseName?: string;
+  unitCode?: string;
+  unitTitle?: string;
+  lessonCode?: string;
+  lessonTitle?: string;
+  lessonOrder?: number;
+  materialScope?: 'TEACHING' | 'HOMEWORK';
+  materialType?: 'SLIDE' | 'LESSON_PLAN' | 'WORKSHEET' | 'ANSWER_KEY' | 'RUBRIC' | 'AUDIO' | 'VIDEO' | 'HOMEWORK_SET' | 'QUIZ' | 'TEST' | 'OTHER';
+  usagePhase?: 'BEFORE_CLASS' | 'IN_CLASS' | 'AFTER_CLASS';
+  difficulty?: 'FOUNDATION' | 'STANDARD' | 'ADVANCED';
+  status?: 'DRAFT' | 'APPROVED' | 'ARCHIVED';
+  estimatedMinutes?: number;
+  skills?: string[];
+  assignableAsHomework?: boolean;
+  autoGradeable?: boolean;
+  version?: string;
   fileUrl: string;
   fileType: string;
   fileCategory?: 'pdf' | 'doc' | 'ppt' | 'excel' | 'image' | 'video' | 'other';
@@ -137,6 +154,16 @@ export interface TeachingMaterialListQuery {
   search?: string;
   fileCategory?: 'pdf' | 'doc' | 'ppt' | 'excel' | 'image' | 'video' | 'other';
   extractionStatus?: 'PENDING' | 'READY' | 'UNSUPPORTED' | 'FAILED';
+  productId?: string;
+  courseName?: string;
+  unitCode?: string;
+  lessonCode?: string;
+  materialScope?: 'TEACHING' | 'HOMEWORK';
+  materialType?: 'SLIDE' | 'LESSON_PLAN' | 'WORKSHEET' | 'ANSWER_KEY' | 'RUBRIC' | 'AUDIO' | 'VIDEO' | 'HOMEWORK_SET' | 'QUIZ' | 'TEST' | 'OTHER';
+  usagePhase?: 'BEFORE_CLASS' | 'IN_CLASS' | 'AFTER_CLASS';
+  difficulty?: 'FOUNDATION' | 'STANDARD' | 'ADVANCED';
+  status?: 'DRAFT' | 'APPROVED' | 'ARCHIVED';
+  assignableAsHomework?: boolean;
   page?: number;
   limit?: number;
 }
@@ -159,8 +186,39 @@ export interface TeachingMaterialStats {
   totalChunks: number;
   bySubject: Record<string, number>;
   byGrade: Record<string, number>;
+  byScope?: Record<string, number>;
+  byMaterialType?: Record<string, number>;
+  byCourse?: Record<string, number>;
   totalSizeBytes: number;
   totalSizeMB: number;
+}
+
+export interface TeachingMaterialMetadata {
+  title: string;
+  description?: string;
+  manualSummary?: string;
+  subject?: string;
+  grade?: string;
+  classId?: string;
+  productId?: string;
+  courseName?: string;
+  unitCode?: string;
+  unitTitle?: string;
+  lessonCode?: string;
+  lessonTitle?: string;
+  lessonOrder?: number;
+  materialScope?: TeachingMaterial['materialScope'];
+  materialType?: TeachingMaterial['materialType'];
+  usagePhase?: TeachingMaterial['usagePhase'];
+  difficulty?: TeachingMaterial['difficulty'];
+  status?: TeachingMaterial['status'];
+  estimatedMinutes?: number;
+  skills?: string[];
+  assignableAsHomework?: boolean;
+  autoGradeable?: boolean;
+  version?: string;
+  tags?: string[];
+  isShared?: boolean;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -236,6 +294,18 @@ export class TeacherService {
     if (params?.search) httpParams = httpParams.set('search', params.search);
     if (params?.fileCategory) httpParams = httpParams.set('fileCategory', params.fileCategory);
     if (params?.extractionStatus) httpParams = httpParams.set('extractionStatus', params.extractionStatus);
+    if (params?.productId) httpParams = httpParams.set('productId', params.productId);
+    if (params?.courseName) httpParams = httpParams.set('courseName', params.courseName);
+    if (params?.unitCode) httpParams = httpParams.set('unitCode', params.unitCode);
+    if (params?.lessonCode) httpParams = httpParams.set('lessonCode', params.lessonCode);
+    if (params?.materialScope) httpParams = httpParams.set('materialScope', params.materialScope);
+    if (params?.materialType) httpParams = httpParams.set('materialType', params.materialType);
+    if (params?.usagePhase) httpParams = httpParams.set('usagePhase', params.usagePhase);
+    if (params?.difficulty) httpParams = httpParams.set('difficulty', params.difficulty);
+    if (params?.status) httpParams = httpParams.set('status', params.status);
+    if (params?.assignableAsHomework !== undefined) {
+      httpParams = httpParams.set('assignableAsHomework', String(params.assignableAsHomework));
+    }
     if (params?.page) httpParams = httpParams.set('page', String(params.page));
     if (params?.limit) httpParams = httpParams.set('limit', String(params.limit));
     return firstValueFrom(
@@ -255,26 +325,44 @@ export class TeacherService {
   }
 
   /** Upload tài liệu mới */
-  async uploadMaterial(file: File, metadata: {
-    title: string;
-    description?: string;
-    manualSummary?: string;
-    subject?: string;
-    grade?: string;
-    classId?: string;
-    tags?: string[];
-    isShared?: boolean;
-  }): Promise<TeachingMaterial> {
+  async uploadMaterial(file: File, metadata: TeachingMaterialMetadata): Promise<TeachingMaterial> {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('title', metadata.title);
-    if (metadata.description) formData.append('description', metadata.description);
-    if (metadata.manualSummary) formData.append('manualSummary', metadata.manualSummary);
-    if (metadata.subject) formData.append('subject', metadata.subject);
-    if (metadata.grade) formData.append('grade', metadata.grade);
-    if (metadata.classId) formData.append('classId', metadata.classId);
+    const appendString = (key: keyof TeachingMaterialMetadata) => {
+      const value = metadata[key];
+      if (value !== undefined && value !== null && value !== '') {
+        formData.append(String(key), String(value));
+      }
+    };
+    appendString('description');
+    appendString('manualSummary');
+    appendString('subject');
+    appendString('grade');
+    appendString('classId');
+    appendString('productId');
+    appendString('courseName');
+    appendString('unitCode');
+    appendString('unitTitle');
+    appendString('lessonCode');
+    appendString('lessonTitle');
+    appendString('lessonOrder');
+    appendString('materialScope');
+    appendString('materialType');
+    appendString('usagePhase');
+    appendString('difficulty');
+    appendString('status');
+    appendString('estimatedMinutes');
+    appendString('version');
     if (metadata.tags?.length) formData.append('tags', JSON.stringify(metadata.tags));
+    if (metadata.skills?.length) formData.append('skills', JSON.stringify(metadata.skills));
     if (metadata.isShared !== undefined) formData.append('isShared', String(metadata.isShared));
+    if (metadata.assignableAsHomework !== undefined) {
+      formData.append('assignableAsHomework', String(metadata.assignableAsHomework));
+    }
+    if (metadata.autoGradeable !== undefined) {
+      formData.append('autoGradeable', String(metadata.autoGradeable));
+    }
 
     return firstValueFrom(
       this.http.post<TeachingMaterial>(`${environment.apiBase}/teaching-materials/upload`, formData, {
@@ -284,16 +372,7 @@ export class TeacherService {
   }
 
   /** Cập nhật thông tin tài liệu */
-  async updateMaterial(id: string, payload: Partial<{
-    title: string;
-    description: string;
-    manualSummary: string;
-    subject: string;
-    grade: string;
-    classId: string;
-    tags: string[];
-    isShared: boolean;
-  }>): Promise<TeachingMaterial> {
+  async updateMaterial(id: string, payload: Partial<TeachingMaterialMetadata>): Promise<TeachingMaterial> {
     return firstValueFrom(
       this.http.patch<TeachingMaterial>(`${environment.apiBase}/teaching-materials/${id}`, payload, {
         withCredentials: true,

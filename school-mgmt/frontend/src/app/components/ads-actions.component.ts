@@ -2,7 +2,7 @@ import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
-import { ActionableSuggestion, ActionsRequiredResponse, AdsService } from '../services/ads.service';
+import { ActionableSuggestion, ActionsRequiredResponse, AdsService, CampaignDraftRecommendation } from '../services/ads.service';
 
 @Component({
   selector: 'app-ads-actions',
@@ -47,11 +47,26 @@ import { ActionableSuggestion, ActionsRequiredResponse, AdsService } from '../se
           <span class="summary-value">{{ formatCurrency(summary()!.totalOptimalDailySpend) }}</span>
         </div>
         <div class="summary-card">
-          <span class="summary-label">LN ròng ({{ lookbackDays }}d)</span>
+          <span class="summary-label">LN cohort effective</span>
+          <span class="summary-value"
+            [class.profit]="summary()!.overallEffectiveNetProfit >= 0"
+            [class.loss]="summary()!.overallEffectiveNetProfit < 0"
+          >{{ formatCurrency(summary()!.overallEffectiveNetProfit) }}</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-label">LN ghi nhận ({{ lookbackDays }}d)</span>
           <span class="summary-value"
             [class.profit]="summary()!.overallNetProfit7d >= 0"
             [class.loss]="summary()!.overallNetProfit7d < 0"
           >{{ formatCurrency(summary()!.overallNetProfit7d) }}</span>
+        </div>
+        <div class="summary-card" *ngIf="summary()!.dataReadiness as readiness">
+          <span class="summary-label">Data readiness</span>
+          <span class="summary-value"
+            [class.profit]="readiness.score >= 85"
+            [class.loss]="readiness.score < 50"
+          >{{ readiness.score }}/100</span>
+          <span class="summary-note">{{ readinessLabel(readiness.level) }} &middot; {{ readiness.attributionCoveragePercent }}% attribution</span>
         </div>
       </div>
 
@@ -93,7 +108,7 @@ import { ActionableSuggestion, ActionsRequiredResponse, AdsService } from '../se
 
           <div class="action-details" *ngIf="item.type === 'PAUSE_GROUP'">
             <div class="detail-row">
-              <span class="detail-label">LN ròng ({{ lookbackDays }} ngày):</span>
+              <span class="detail-label">LN ghi nhận ({{ lookbackDays }} ngày):</span>
               <span class="detail-value loss">{{ formatCurrency(item.details['netProfit7Days']) }}</span>
             </div>
             <div class="detail-row">
@@ -165,6 +180,40 @@ import { ActionableSuggestion, ActionsRequiredResponse, AdsService } from '../se
             <div class="detail-row" *ngIf="item.details['suggestedPlatform']">
               <span class="detail-label">Nền tảng đề xuất:</span>
               <span class="detail-value">{{ item.details['suggestedPlatform'] }}</span>
+            </div>
+            <div class="draft-briefs" *ngIf="item.draftRecommendations?.length">
+              <div class="draft-brief" *ngFor="let draft of item.draftRecommendations">
+                <div class="draft-head">
+                  <strong>{{ draft.draftName }}</strong>
+                  <span>{{ draft.platform }}</span>
+                </div>
+                <div class="draft-grid">
+                  <span>Budget</span>
+                  <b>{{ formatCurrency(draft.dailyBudget) }}</b>
+                  <span>Tracking</span>
+                  <b>{{ draft.trackingKey }}</b>
+                  <span>Source</span>
+                  <b>{{ draft.sourceAdGroupName || '-' }}</b>
+                  <span>Target</span>
+                  <b>{{ draft.targetAudience }}</b>
+                </div>
+                <p>{{ draft.objective }}</p>
+                <p>{{ draft.offerAngle }}</p>
+                <ul>
+                  <li *ngFor="let step of draft.launchChecklist">{{ step }}</li>
+                </ul>
+                <div class="draft-warning" *ngIf="draft.missingFields.length">
+                  Missing: {{ draft.missingFields.join(', ') }}
+                </div>
+                <button
+                  type="button"
+                  class="action-btn secondary draft-create-btn"
+                  (click)="createDraft(draft)"
+                  [disabled]="draft.missingFields.length > 0 || draftCreating() === draft.trackingKey || !!draftCreated()[draft.trackingKey]"
+                >
+                  {{ draftCreated()[draft.trackingKey] ? 'Draft created' : draftCreating() === draft.trackingKey ? 'Creating draft...' : 'Create AI draft' }}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -286,6 +335,11 @@ import { ActionableSuggestion, ActionsRequiredResponse, AdsService } from '../se
     }
     .summary-value.profit { color: #15803d; }
     .summary-value.loss { color: #b91c1c; }
+    .summary-note {
+      font-size: 0.72rem;
+      color: #64748b;
+      line-height: 1.35;
+    }
 
     .actions-loading, .actions-error, .actions-empty {
       padding: 32px;
@@ -372,6 +426,82 @@ import { ActionableSuggestion, ActionsRequiredResponse, AdsService } from '../se
     .conf-high { color: #15803d; }
     .conf-medium { color: #d97706; }
     .conf-low { color: #b91c1c; }
+    .draft-briefs {
+      display: grid;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .draft-brief {
+      border: 1px solid #dbeafe;
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .draft-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .draft-head strong {
+      color: #1e293b;
+      font-size: 0.84rem;
+      line-height: 1.35;
+    }
+    .draft-head span {
+      color: #1d4ed8;
+      background: #eff6ff;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .draft-grid {
+      display: grid;
+      grid-template-columns: 78px minmax(0, 1fr);
+      gap: 4px 8px;
+      margin-bottom: 8px;
+      font-size: 0.76rem;
+    }
+    .draft-grid span { color: #64748b; }
+    .draft-grid b {
+      color: #334155;
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .draft-brief p {
+      margin: 6px 0;
+      color: #475569;
+      font-size: 0.78rem;
+      line-height: 1.45;
+    }
+    .draft-brief ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: #475569;
+      font-size: 0.76rem;
+      line-height: 1.45;
+    }
+    .draft-warning {
+      margin-top: 8px;
+      color: #92400e;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+    .draft-create-btn {
+      margin-top: 10px;
+      width: fit-content;
+    }
+    .draft-create-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
 
     /* Estimated Impact */
     .estimated-impact {
@@ -446,6 +576,8 @@ export class AdsActionsComponent implements OnInit {
   summary = signal<ActionsRequiredResponse['summary'] | null>(null);
   loading = signal(true);
   error = signal('');
+  draftCreating = signal('');
+  draftCreated = signal<Record<string, boolean>>({});
   lookbackDays = 7;
 
   constructor(private readonly adsService: AdsService) {}
@@ -468,6 +600,23 @@ export class AdsActionsComponent implements OnInit {
     }
   }
 
+  async createDraft(draft: CampaignDraftRecommendation) {
+    if (draft.missingFields.length > 0 || this.draftCreating()) return;
+    this.draftCreating.set(draft.trackingKey);
+    this.error.set('');
+    try {
+      await this.adsService.createAdGroupDraftAction(draft.payload);
+      this.draftCreated.set({
+        ...this.draftCreated(),
+        [draft.trackingKey]: true,
+      });
+    } catch (err: any) {
+      this.error.set(err?.error?.message || 'Could not create AI draft.');
+    } finally {
+      this.draftCreating.set('');
+    }
+  }
+
   priorityLabel(priority: string): string {
     const map: Record<string, string> = { CRITICAL: 'Rủi ro cao', HIGH: 'Ưu tiên cao', MEDIUM: 'Trung bình', LOW: 'Thấp' };
     return map[priority] ?? priority;
@@ -486,6 +635,16 @@ export class AdsActionsComponent implements OnInit {
   confidenceLabel(confidence: string): string {
     const map: Record<string, string> = { HIGH: 'Cao', MEDIUM: 'Trung bình', LOW: 'Thấp' };
     return map[confidence] ?? confidence ?? '-';
+  }
+
+  readinessLabel(level: string): string {
+    const map: Record<string, string> = {
+      PRODUCTION_READY: 'Production-ready',
+      GOOD: 'Good',
+      NEEDS_REVIEW: 'Needs review',
+      WEAK: 'Weak',
+    };
+    return map[level] ?? level ?? '-';
   }
 
   formatCurrency(value: number | null | undefined): string {

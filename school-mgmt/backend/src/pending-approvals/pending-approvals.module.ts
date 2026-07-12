@@ -27,5 +27,6 @@ import {
   ],
   controllers: [PendingApprovalsController],
   providers: [PendingApprovalsService],
+  exports: [PendingApprovalsService],
 })
 export class PendingApprovalsModule {}

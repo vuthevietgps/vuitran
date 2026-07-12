@@ -17,7 +17,7 @@ export class OpenAIToken {
   @Prop({ required: true })
   apiKey!: string;
 
-  @Prop({ type: String, default: 'gpt-4o-mini' })
+  @Prop({ type: String, default: 'gpt-5.4-mini' })
   model!: string;
 
   @Prop({ type: Number, default: 0.7 })

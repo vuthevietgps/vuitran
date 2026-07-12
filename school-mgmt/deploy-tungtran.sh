@@ -16,12 +16,13 @@ set -euo pipefail
 #   FRONTEND_PORT=8093
 #   TRAEFIK_NETWORK=traefik-network
 #   SITE_ROOT=/opt/websites/sites
-#   SSH_HOST=192.168.100.237
+#   SSH_HOST=vippro-proj-a (or IP/hostname)
 #   SSH_PORT=22
 #   SSH_USER=admin-001
 #   SSH_KEY_PATH=~/.ssh/school-mgmt-deploy
-#   SSH_PASSWORD=123456789
-#   SUDO_PASSWORD=123456789
+#   SSH_CONFIG_PATH=~/.ssh/config
+#   SSH_PASSWORD=<blank to disable password auth>
+#   SUDO_PASSWORD=<blank by default; can match SSH_PASSWORD when needed>
 #   PYTHON_BIN=python
 #   MONGODB_URI=...
 #   ATLAS_USER=...
@@ -49,7 +50,7 @@ FRONTEND_PORT="${FRONTEND_PORT:-8093}"
 TRAEFIK_NETWORK="${TRAEFIK_NETWORK:-traefik-network}"
 SITE_ROOT="${SITE_ROOT:-/opt/websites/sites}"
 
-SSH_HOST="${SSH_HOST:-192.168.100.237}"
+SSH_HOST="${SSH_HOST:-vippro-proj-a}"
 SSH_PORT="${SSH_PORT:-22}"
 SSH_USER="${SSH_USER:-admin-001}"
 DEFAULT_SSH_KEY_PATH=""
@@ -57,8 +58,9 @@ if [ -f "${HOME}/.ssh/school-mgmt-deploy" ]; then
   DEFAULT_SSH_KEY_PATH="${HOME}/.ssh/school-mgmt-deploy"
 fi
 SSH_KEY_PATH="${SSH_KEY_PATH:-$DEFAULT_SSH_KEY_PATH}"
-SSH_PASSWORD="${SSH_PASSWORD:-123456789}"
+SSH_PASSWORD="${SSH_PASSWORD:-}"
 SUDO_PASSWORD="${SUDO_PASSWORD:-$SSH_PASSWORD}"
+SSH_CONFIG_PATH="${SSH_CONFIG_PATH:-${HOME}/.ssh/config}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
 ATLAS_USER="${ATLAS_USER:-allinoneuser}"
@@ -547,7 +549,7 @@ docker push "${FRONTEND_IMAGE}"
 REMOTE_SCRIPT_B64="$(printf '%s' "${REMOTE_DEPLOY_SCRIPT}" | base64 | tr -d '\n')"
 export REMOTE_SCRIPT_B64
 
-export SSH_HOST SSH_PORT SSH_USER SSH_KEY_PATH SSH_PASSWORD SUDO_PASSWORD
+export SSH_HOST SSH_PORT SSH_USER SSH_KEY_PATH SSH_CONFIG_PATH SSH_PASSWORD SUDO_PASSWORD
 export VERSION IMAGE_NAMESPACE DOMAIN BACKEND_PORT FRONTEND_PORT TRAEFIK_NETWORK SITE_ROOT
 export MONGODB_URI ATLAS_USER ATLAS_DB_PASSWORD ATLAS_CLUSTER ATLAS_DB ATLAS_APP_NAME
 export JWT_SECRET JWT_EXPIRES TOKEN_ENCRYPTION_KEY ADMIN_EMAIL ADMIN_PASSWORD ADMIN_FULLNAME
@@ -576,13 +578,56 @@ for stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-ssh_host = os.environ["SSH_HOST"]
+SSH_HOST_ALIAS = os.environ["SSH_HOST"]
 ssh_port = int(os.environ["SSH_PORT"])
-ssh_user = os.environ["SSH_USER"]
+ssh_user = os.environ.get("SSH_USER", "").strip()
 ssh_key_path = os.environ.get("SSH_KEY_PATH", "").strip()
 ssh_password = os.environ.get("SSH_PASSWORD", "")
 sudo_password = os.environ.get("SUDO_PASSWORD", "")
 version = os.environ["VERSION"]
+ssh_config_path = os.environ.get("SSH_CONFIG_PATH", "").strip()
+
+
+def resolve_ssh_target():
+    host_alias = SSH_HOST_ALIAS.strip()
+    host = host_alias
+    user = ssh_user
+    port = ssh_port
+    key_path = ssh_key_path
+
+    config = None
+    if ssh_config_path and os.path.exists(ssh_config_path):
+        try:
+            from paramiko.config import SSHConfig
+
+            with open(ssh_config_path, "r", encoding="utf-8") as f:
+                config = SSHConfig()
+                config.parse(f)
+        except Exception:
+            config = None
+
+    if config is not None:
+        conf = config.lookup(host_alias)
+        if conf.get("hostname"):
+            host = conf["hostname"].strip()
+        if conf.get("user"):
+            user = conf["user"].strip() or user
+        if conf.get("port"):
+            try:
+                port = int(conf["port"])
+            except Exception:
+                pass
+        if (not key_path) and conf.get("identityfile"):
+            identity_files = conf["identityfile"]
+            if isinstance(identity_files, list) and identity_files:
+                key_path = os.path.expanduser(identity_files[0])
+            elif isinstance(identity_files, str):
+                key_path = os.path.expanduser(identity_files)
+
+    return host, port, user, key_path
+
+
+ssh_host, ssh_port, ssh_user, ssh_key_path = resolve_ssh_target()
 
 env_keys = [
     "IMAGE_NAMESPACE",
@@ -628,11 +673,11 @@ try:
     )
     if ssh_key_path:
         connect_kwargs["key_filename"] = ssh_key_path
-        if ssh_password:
-            connect_kwargs["password"] = ssh_password
-            connect_kwargs["passphrase"] = ssh_password
-    else:
+    elif ssh_user:
+        connect_kwargs["look_for_keys"] = True
+    if ssh_password:
         connect_kwargs["password"] = ssh_password
+
     client.connect(**connect_kwargs)
 except Exception as exc:
     print(f"[deploy] SSH connection failed: {exc}", file=sys.stderr)

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -9,7 +10,13 @@ import {
   UseGuards,
   Req,
   Query,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { extname, join } from 'path';
 import { SessionsService } from './sessions.service';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -27,10 +34,57 @@ import { RescheduleSessionDto } from './dto/reschedule-session.dto';
 import { BulkCreateSessionDto } from './dto/bulk-create-session.dto';
 import { SubmitTeachingReportDto } from './dto/submit-teaching-report.dto';
 import { BulkTeachingReportDto } from './dto/bulk-teaching-report.dto';
+import { GradeHomeworkDto } from './dto/grade-homework.dto';
+import { SubmitHomeworkDto } from './dto/submit-homework.dto';
 import { SubmitParentFeedbackDto } from './dto/submit-parent-feedback.dto';
 import { CreateSessionChangeRequestDto } from './dto/create-session-change-request.dto';
 import { ReviewSessionChangeRequestDto } from './dto/review-session-change-request.dto';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
+
+const homeworkSubmissionPath = join(process.cwd(), 'uploads', 'homework-submissions');
+const homeworkReviewPath = join(process.cwd(), 'uploads', 'homework-reviews');
+for (const uploadPath of [homeworkSubmissionPath, homeworkReviewPath]) {
+  if (!existsSync(uploadPath)) {
+    mkdirSync(uploadPath, { recursive: true });
+  }
+}
+
+const allowedHomeworkMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain',
+]);
+
+const homeworkFileFilter = (
+  _req: unknown,
+  file: Express.Multer.File,
+  callback: (error: Error | null, acceptFile: boolean) => void,
+) => {
+  if (allowedHomeworkMimeTypes.has(file.mimetype)) {
+    callback(null, true);
+    return;
+  }
+  callback(new BadRequestException('File bai tap chi ho tro anh, PDF, Word, Excel, PowerPoint hoac text'), false);
+};
+
+const makeHomeworkStorage = (prefix: string, destination: string) =>
+  diskStorage({
+    destination,
+    filename: (_req, file, callback) => {
+      const safeExtension = extname(file.originalname || '').toLowerCase();
+      const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+      callback(null, `${prefix}-${unique}${safeExtension}`);
+    },
+  });
 
 @Controller('sessions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -123,6 +177,16 @@ export class SessionsController {
       ...query,
       hasReport: 'false',
     } as any, req.user);
+  }
+
+  @Get('homework-grading')
+  @Roles(Role.EXPERIENCE_TEACHER, Role.OPS, Role.DIRECTOR)
+  listHomeworkForGrading(
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Req() req?: AuthenticatedRequest,
+  ) {
+    return this.sessionsService.listHomeworkForGrading({ status, limit }, req?.user);
   }
 
   /** GV lấy danh sách sessions đã có báo cáo (phân trang chuẩn theo server) */
@@ -267,6 +331,48 @@ export class SessionsController {
     @Req() req: AuthenticatedRequest,
   ) {
     return this.sessionsService.submitTeachingReport(id, req.user.sub, dto);
+  }
+
+  @Post(':id/homework-submit')
+  @Roles(Role.PARENT)
+  @UseInterceptors(FilesInterceptor('files', 8, {
+    storage: makeHomeworkStorage('homework-submission', homeworkSubmissionPath),
+    fileFilter: homeworkFileFilter,
+    limits: { fileSize: 25 * 1024 * 1024 },
+  }))
+  submitHomework(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: SubmitHomeworkDto,
+    @UploadedFiles() files: Express.Multer.File[] = [],
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.sessionsService.submitHomework(id, req.user, dto, files);
+  }
+
+  @Patch(':id/homework-grade')
+  @Roles(Role.EXPERIENCE_TEACHER, Role.OPS, Role.DIRECTOR)
+  gradeHomework(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: GradeHomeworkDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.sessionsService.gradeHomework(id, req.user, dto);
+  }
+
+  @Post(':id/homework-review')
+  @Roles(Role.EXPERIENCE_TEACHER, Role.OPS, Role.DIRECTOR)
+  @UseInterceptors(FilesInterceptor('files', 8, {
+    storage: makeHomeworkStorage('homework-review', homeworkReviewPath),
+    fileFilter: homeworkFileFilter,
+    limits: { fileSize: 25 * 1024 * 1024 },
+  }))
+  reviewHomework(
+    @Param('id', ParseMongoIdPipe) id: string,
+    @Body() dto: GradeHomeworkDto,
+    @UploadedFiles() files: Express.Multer.File[] = [],
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.sessionsService.gradeHomework(id, req.user, dto, files);
   }
 
   // ── TRIAL ───────────────────────────────────────────────────────

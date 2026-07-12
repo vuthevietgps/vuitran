@@ -4,11 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { RouterModule } from '@angular/router';
 import { DashboardService } from '../../services/dashboard.service';
 import { FinancialControlService } from '../../services/financial-control.service';
+import { DirectorAiAssistantWidgetComponent } from '../director-ai-assistant-widget.component';
 
 @Component({
   selector: 'app-director-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterModule],
+  imports: [CommonModule, FormsModule, RouterModule, DirectorAiAssistantWidgetComponent],
   template: `
   <div class="dashboard" data-testid="director-dashboard-page">
     <div class="header">
@@ -22,6 +23,7 @@ import { FinancialControlService } from '../../services/financial-control.servic
     <!-- Tab navigation -->
     <div class="tabs" data-testid="director-dashboard-tabs">
       <button [class.active]="activeTab === 'overview'" (click)="activeTab = 'overview'">Tổng quan</button>
+      <button [class.active]="activeTab === 'directorAi'" (click)="activeTab = 'directorAi'">Trợ lý Giám đốc</button>
       <button [class.active]="activeTab === 'accounting'" (click)="activeTab = 'accounting'">Kế toán</button>
       <button [class.active]="activeTab === 'ops'" (click)="activeTab = 'ops'">Vận hành</button>
       <button [class.active]="activeTab === 'staff'" (click)="activeTab = 'staff'">Nhân sự</button>
@@ -30,6 +32,10 @@ import { FinancialControlService } from '../../services/financial-control.servic
 
     <div *ngIf="loading()" class="loading">Đang tải dữ liệu...</div>
     <div *ngIf="error()" class="error">{{ error() }}</div>
+
+    <div *ngIf="activeTab === 'directorAi'" class="director-ai-tab">
+      <app-director-ai-assistant-widget></app-director-ai-assistant-widget>
+    </div>
 
     <!-- ======================== TAB: TỔNG QUAN ======================== -->
     <div *ngIf="data() && activeTab === 'overview'" class="grid" data-testid="director-overview-grid">
@@ -638,6 +644,14 @@ import { FinancialControlService } from '../../services/financial-control.servic
     .expense-value { color:#0f172a; font-weight:700; }
     .expense-bar-track { height:10px; border-radius:999px; background:#e2e8f0; overflow:hidden; }
     .expense-bar-fill { height:100%; border-radius:999px; background:linear-gradient(90deg, #ef4444 0%, #f97316 100%); min-width:8px; }
+    .director-ai-tab {
+      width:100%;
+      min-width:0;
+    }
+    .director-ai-tab app-director-ai-assistant-widget {
+      display:block;
+      width:100%;
+    }
     @media (max-width:768px) {
       .dashboard { padding:16px; }
       .card.wide { grid-column: span 1; }

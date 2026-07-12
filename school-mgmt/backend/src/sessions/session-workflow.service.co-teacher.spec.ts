@@ -1,6 +1,6 @@
 import { Types } from 'mongoose';
 import { SessionWorkflowService } from './session-workflow.service';
-import { SessionStatus } from './schemas/session.schema';
+import { LessonProgressStatus, SessionStatus } from './schemas/session.schema';
 
 jest.mock('../payroll/payroll-transaction.service', () => ({
   PayrollTransactionService: class PayrollTransactionService {},
@@ -13,6 +13,8 @@ function buildService(overrides: Partial<Record<string, any>> = {}) {
     overrides.studentModel ?? ({} as any),
     overrides.attendanceModel ?? ({} as any),
     overrides.reportTemplateModel ?? ({} as any),
+    overrides.teachingMaterialModel ?? ({} as any),
+    overrides.quizModel ?? ({} as any),
     overrides.walletsService ?? {},
     overrides.notificationsService ?? {},
     overrides.payrollTxService ?? {},
@@ -79,6 +81,7 @@ describe('SessionWorkflowService co-teacher access', () => {
       scheduledDate: new Date('2026-04-11T00:00:00.000Z'),
       teacherPayout: 120_000,
       confirmation: {},
+      evaluation: undefined as any,
       hasTeachingReport: false,
       teachingReport: undefined,
       save: jest.fn().mockResolvedValue(true),
@@ -119,9 +122,29 @@ describe('SessionWorkflowService co-teacher access', () => {
     await expect(
       service.submitTeachingReport(session._id.toString(), teacherId, {
         lessonContent: 'Noi dung bao cao day du va hop le',
+        lessonProgressStatus: LessonProgressStatus.PARTIAL,
+        progressPercent: 60,
+        studentPerformance: 3,
+        studentEngagement: 4,
+        comprehensionLevel: 2,
+        deviationReason: 'Hoc sinh can them thoi gian luyen phan trong tam.',
+        nextSessionPlan: 'On lai phan trong tam truoc khi sang bai tiep theo.',
+        overallComment: 'Buoi hoc dat muc tieu mot phan va can theo doi them.',
       } as any),
     ).resolves.toBeDefined();
     expect(session.save).toHaveBeenCalled();
+    expect(session.evaluation).toEqual(
+      expect.objectContaining({
+        lessonProgressStatus: LessonProgressStatus.PARTIAL,
+        progressPercent: 60,
+        studentPerformance: 3,
+        studentEngagement: 4,
+        comprehensionLevel: 2,
+        deviationReason: 'Hoc sinh can them thoi gian luyen phan trong tam.',
+        nextSessionPlan: 'On lai phan trong tam truoc khi sang bai tiep theo.',
+        overallComment: 'Buoi hoc dat muc tieu mot phan va can theo doi them.',
+      }),
+    );
   });
 
   it('allows co-teachers with report permission to bulk submit reports', async () => {
@@ -180,12 +203,37 @@ describe('SessionWorkflowService co-teacher access', () => {
         classId,
         '2026-04-11',
         teacherId,
-        { lessonContent: 'Noi dung bao cao day du va hop le' } as any,
+        {
+          lessonContent: 'Noi dung bao cao day du va hop le',
+          lessonProgressStatus: LessonProgressStatus.REVIEW_NEEDED,
+          progressPercent: 80,
+          studentPerformance: 3,
+          studentEngagement: 3,
+          comprehensionLevel: 2,
+          deviationReason: 'Can on lai mot phan bai hoc o buoi sau.',
+          nextSessionPlan: 'On lai bai cu va luyen them bai tap cung co.',
+          overallComment: 'Can theo doi tien do tiep thu cua hoc sinh.',
+        } as any,
       ),
     ).resolves.toEqual(
       expect.objectContaining({
         updatedCount: 1,
         skippedCount: 0,
+      }),
+    );
+    expect(service['sessionModel'].findByIdAndUpdate).toHaveBeenCalledWith(
+      sessionId,
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          'evaluation.lessonProgressStatus': LessonProgressStatus.REVIEW_NEEDED,
+          'evaluation.progressPercent': 80,
+          'evaluation.studentPerformance': 3,
+          'evaluation.studentEngagement': 3,
+          'evaluation.comprehensionLevel': 2,
+          'evaluation.deviationReason': 'Can on lai mot phan bai hoc o buoi sau.',
+          'evaluation.nextSessionPlan': 'On lai bai cu va luyen them bai tap cung co.',
+          'evaluation.overallComment': 'Can theo doi tien do tiep thu cua hoc sinh.',
+        }),
       }),
     );
   });

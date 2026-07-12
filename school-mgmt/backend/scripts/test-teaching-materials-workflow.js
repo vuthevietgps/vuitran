@@ -347,21 +347,39 @@ async function main() {
     ensure(state.classId, 'Temporary class id missing');
   });
 
-  await runner.test('TEACHER uploads private text teaching material', async () => {
+  await runner.test('TEACHER cannot upload managed teaching material', async () => {
+    const form = new FormData();
+    form.append('file', new Blob(['Teacher upload must be blocked.'], { type: 'text/plain' }), 'blocked-note.txt');
+    form.append('title', `${state.materialTitle} blocked`);
+    form.append('materialScope', 'HOMEWORK');
+    form.append('assignableAsHomework', 'true');
+
+    await requestMultipart({
+      reqPath: '/teaching-materials/upload',
+      token: auth.teacher.token,
+      formData: form,
+      expectedStatus: [403],
+    });
+  });
+
+  await runner.test('DIRECTOR uploads shared homework material for staff usage', async () => {
     const form = new FormData();
     form.append('file', new Blob(['Grammar note for workflow test.\nUnit 1: Present simple.'], { type: 'text/plain' }), 'workflow-note.txt');
     form.append('title', state.materialTitle);
-    form.append('description', 'Private teaching material for e2e propagation');
-    form.append('manualSummary', 'Private summary for search and AI stats');
+    form.append('description', 'Shared director-managed homework material for e2e propagation');
+    form.append('manualSummary', 'Shared summary for search and AI stats');
     form.append('subject', 'Tiếng Anh');
     form.append('grade', 'Lớp 5');
     form.append('classId', state.classId);
+    form.append('materialScope', 'HOMEWORK');
+    form.append('materialType', 'HOMEWORK_SET');
+    form.append('assignableAsHomework', 'true');
     form.append('tags', JSON.stringify(['grammar', 'workflow']));
-    form.append('isShared', 'false');
+    form.append('isShared', 'true');
 
     const uploaded = await requestMultipart({
       reqPath: '/teaching-materials/upload',
-      token: auth.teacher.token,
+      token: auth.director.token,
       formData: form,
       expectedStatus: [200, 201],
     });
@@ -370,10 +388,12 @@ async function main() {
     ensure(state.materialId, 'Uploaded material id missing');
     ensure(uploaded.data && uploaded.data.extractionStatus === 'READY', 'Text material should be READY for AI');
     ensure(Number(uploaded.data && uploaded.data.chunkCount) > 0, 'Uploaded text material should create chunks');
-    ensure(uploaded.data && uploaded.data.isShared === false, 'Uploaded material should remain private');
+    ensure(uploaded.data && uploaded.data.isShared === true, 'Director material should be shared for staff usage');
+    ensure(uploaded.data && uploaded.data.materialScope === 'HOMEWORK', 'Uploaded material should be homework scoped');
+    ensure(uploaded.data && uploaded.data.assignableAsHomework === true, 'Uploaded material should be assignable as homework');
   });
 
-  await runner.test('Teacher list, filters and stats include uploaded material', async () => {
+  await runner.test('Teacher list, filters and stats include shared director material', async () => {
     const list = await request({
       method: 'GET',
       reqPath: `/teaching-materials${qs({
@@ -381,6 +401,8 @@ async function main() {
         subject: 'Tiếng Anh',
         grade: 'Lớp 5',
         classId: state.classId,
+        materialScope: 'HOMEWORK',
+        assignableAsHomework: 'true',
         extractionStatus: 'READY',
         fileCategory: 'other',
       })}`,
@@ -388,7 +410,7 @@ async function main() {
       expectedStatus: [200],
     });
     const items = Array.isArray(list.data && list.data.data) ? list.data.data : [];
-    ensure(items.some((item) => normalizeId(item._id) === state.materialId), 'Teacher filtered list should include uploaded material');
+    ensure(items.some((item) => normalizeId(item._id) === state.materialId), 'Teacher filtered list should include shared director material');
 
     const stats = await request({
       method: 'GET',
@@ -396,7 +418,7 @@ async function main() {
       token: auth.teacher.token,
       expectedStatus: [200],
     });
-    ensure(Number(stats.data && stats.data.total) >= 1, 'Teacher stats should count uploaded material');
+    ensure(Number(stats.data && stats.data.total) >= 1, 'Teacher stats should count shared material');
     ensure(Number(stats.data && stats.data.readyForAI) >= 1, 'Teacher stats should count ready material');
     ensure(Number(stats.data && stats.data.totalChunks) >= 1, 'Teacher stats should count generated chunks');
     ensure(
@@ -405,7 +427,7 @@ async function main() {
     );
   });
 
-  await runner.test('DIRECTOR can view private material while PARENT cannot', async () => {
+  await runner.test('Shared director material is visible but read-only for non-director roles', async () => {
     const directorList = await request({
       method: 'GET',
       reqPath: `/teaching-materials${qs({ search: state.materialTitle })}`,
@@ -413,7 +435,7 @@ async function main() {
       expectedStatus: [200],
     });
     const directorItems = Array.isArray(directorList.data && directorList.data.data) ? directorList.data.data : [];
-    ensure(directorItems.some((item) => normalizeId(item._id) === state.materialId), 'Director should see private material');
+    ensure(directorItems.some((item) => normalizeId(item._id) === state.materialId), 'Director should see shared material');
 
     const parentList = await request({
       method: 'GET',
@@ -422,21 +444,32 @@ async function main() {
       expectedStatus: [200],
     });
     const parentItems = Array.isArray(parentList.data && parentList.data.data) ? parentList.data.data : [];
-    ensure(!parentItems.some((item) => normalizeId(item._id) === state.materialId), 'Parent should not see private material');
+    ensure(parentItems.some((item) => normalizeId(item._id) === state.materialId), 'Parent should see shared material');
 
     await request({
-      method: 'GET',
+      method: 'PATCH',
       reqPath: `/teaching-materials/${state.materialId}`,
       token: auth.parent.token,
-      expectedStatus: [404],
+      expectedStatus: [403],
+      body: { title: 'Parent cannot edit director material' },
     });
   });
 
-  await runner.test('TEACHER updates material to shared and parent can access it', async () => {
-    const updated = await request({
+  await runner.test('DIRECTOR updates shared material metadata', async () => {
+    await request({
       method: 'PATCH',
       reqPath: `/teaching-materials/${state.materialId}`,
       token: auth.teacher.token,
+      expectedStatus: [403],
+      body: {
+        title: 'Teacher cannot edit director material',
+      },
+    });
+
+    const updated = await request({
+      method: 'PATCH',
+      reqPath: `/teaching-materials/${state.materialId}`,
+      token: auth.director.token,
       expectedStatus: [200],
       body: {
         title: state.updatedTitle,
@@ -467,7 +500,7 @@ async function main() {
     ensure(Number(parentStats.data && parentStats.data.total) >= 1, 'Parent shared stats should count material');
   });
 
-  await runner.test('Download count and reprocess propagate correctly', async () => {
+  await runner.test('Download count and director-only reprocess propagate correctly', async () => {
     const download = await request({
       method: 'POST',
       reqPath: `/teaching-materials/${state.materialId}/download`,
@@ -477,10 +510,18 @@ async function main() {
     });
     ensure(Number(download.data && download.data.downloadCount) >= 1, 'Download count should increase');
 
-    const reprocessed = await request({
+    await request({
       method: 'POST',
       reqPath: `/teaching-materials/${state.materialId}/reprocess`,
       token: auth.teacher.token,
+      expectedStatus: [403],
+      body: {},
+    });
+
+    const reprocessed = await request({
+      method: 'POST',
+      reqPath: `/teaching-materials/${state.materialId}/reprocess`,
+      token: auth.director.token,
       expectedStatus: [200, 201],
       body: {},
     });

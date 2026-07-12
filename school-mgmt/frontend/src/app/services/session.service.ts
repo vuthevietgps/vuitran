@@ -4,6 +4,8 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { ReportTemplateDynamicFieldDefinition } from './report-template.service';
 
+export type LessonProgressStatus = 'COMPLETED' | 'PARTIAL' | 'REVIEW_NEEDED' | 'SKIPPED' | 'REPLACED';
+
 export interface SessionItem {
   _id: string;
   classId: { _id: string; name: string; code: string; classMode?: 'ONLINE' | 'OFFLINE' };
@@ -38,6 +40,22 @@ export interface SessionItem {
     communicationRating?: number;
     facilityRating?: number;
     parentNotes?: string;
+  };
+  evaluation?: {
+    lessonProgressStatus?: LessonProgressStatus;
+    progressPercent?: number;
+    studentPerformance?: number;
+    studentEngagement?: number;
+    comprehensionLevel?: number;
+    deviationReason?: string;
+    nextSessionPlan?: string;
+    overallComment?: string;
+    homeworkSubmissionMode?: 'OFFLINE_UPLOAD' | 'ONLINE_TEXT' | 'HYBRID' | 'NO_SUBMISSION';
+    homeworkDeadline?: string;
+    homeworkMaterialIds?: Array<string | { _id?: string; title?: string }>;
+    homeworkQuizIds?: Array<string | { _id?: string; title?: string }>;
+    homeworkAssigned?: string;
+    homeworkStatus?: string;
   };
   confirmation?: {
     teacherCompletedAt?: string;
@@ -234,6 +252,18 @@ export interface BulkTeachingReportPayload {
   recordingUrl?: string;
   teacherComment?: string;
   homework?: string;
+  homeworkSubmissionMode?: 'OFFLINE_UPLOAD' | 'ONLINE_TEXT' | 'HYBRID' | 'NO_SUBMISSION';
+  homeworkDeadline?: string;
+  homeworkMaterialIds?: string[];
+  homeworkQuizIds?: string[];
+  lessonProgressStatus?: LessonProgressStatus;
+  progressPercent?: number;
+  studentPerformance?: number;
+  studentEngagement?: number;
+  comprehensionLevel?: number;
+  deviationReason?: string;
+  nextSessionPlan?: string;
+  overallComment?: string;
   additionalNotes?: string;
   templateId?: string;
   dynamicFieldValues?: Record<string, string | number | boolean>;
@@ -247,6 +277,20 @@ export interface BulkTeachingReportResult {
     status: string;
     action: string;
   }>;
+}
+
+export interface HomeworkAttachment {
+  fileUrl: string;
+  originalName: string;
+  fileType: string;
+  fileSize: number;
+  uploadedAt?: string;
+}
+
+export interface HomeworkSubmissionPayload {
+  submissionText?: string;
+  submissionVideoUrl?: string;
+  files?: File[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -323,6 +367,55 @@ export class SessionService {
     } catch {
       return null;
     }
+  }
+
+  async listHomeworkForGrading(status = 'pending', limit = 100): Promise<any[]> {
+    const params = new HttpParams()
+      .set('status', status)
+      .set('limit', String(limit));
+    return firstValueFrom(
+      this.http.get<any[]>(`${environment.apiBase}/sessions/homework-grading`, {
+        params,
+        withCredentials: true,
+      }),
+    );
+  }
+
+  async gradeHomework(id: string, payload: { score: number; feedback?: string; files?: File[] }): Promise<void> {
+    if (payload.files?.length) {
+      const formData = new FormData();
+      formData.append('score', String(payload.score));
+      if (payload.feedback) formData.append('feedback', payload.feedback);
+      payload.files.forEach((file) => formData.append('files', file));
+      await firstValueFrom(
+        this.http.post(`${environment.apiBase}/sessions/${id}/homework-review`, formData, {
+          withCredentials: true,
+        }),
+      );
+      return;
+    }
+
+    await firstValueFrom(
+      this.http.patch(`${environment.apiBase}/sessions/${id}/homework-grade`, payload, {
+        withCredentials: true,
+      }),
+    );
+  }
+
+  async submitHomework(id: string, payload: HomeworkSubmissionPayload): Promise<void> {
+    const formData = new FormData();
+    if (payload.submissionText?.trim()) {
+      formData.append('submissionText', payload.submissionText.trim());
+    }
+    if (payload.submissionVideoUrl?.trim()) {
+      formData.append('submissionVideoUrl', payload.submissionVideoUrl.trim());
+    }
+    payload.files?.forEach((file) => formData.append('files', file));
+    await firstValueFrom(
+      this.http.post(`${environment.apiBase}/sessions/${id}/homework-submit`, formData, {
+        withCredentials: true,
+      }),
+    );
   }
 
   async teacherComplete(id: string, payload: any): Promise<boolean> {

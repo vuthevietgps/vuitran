@@ -1,4 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { JwtModule } from '@nestjs/jwt';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MessageSchema } from './schemas/message.schema';
 import { ConversationSchema } from './schemas/conversation.schema';
@@ -28,6 +30,15 @@ import {
 
 @Module({
   imports: [
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: config.get<string>('JWT_EXPIRES', '7d') },
+      }),
+    }),
     MongooseModule.forFeature([
       { name: DIRECT_MESSAGE_MODEL, schema: MessageSchema, collection: 'direct_messages' },
       { name: DIRECT_CONVERSATION_MODEL, schema: ConversationSchema, collection: 'direct_conversations' },

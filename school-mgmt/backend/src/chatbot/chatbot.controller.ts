@@ -21,6 +21,10 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedRequest } from '../common/interfaces/authenticated-request.interface';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/interfaces/role.enum';
+import {
+  AI_ASSISTANT_PERMISSION_CATALOG,
+  AI_ERP_SITUATION_CATALOG,
+} from './ai-assistant-permission-catalog';
 
 @Controller('chatbot')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -93,6 +97,15 @@ export class ChatbotController {
   @Roles(Role.DIRECTOR, Role.OPS, Role.ADSMANAGER)
   async findAllAiAssistantProfiles() {
     return this.chatbotService.findAllAiAssistantProfiles();
+  }
+
+  @Get('ai-permission-catalog')
+  @Roles(Role.DIRECTOR)
+  getAiPermissionCatalog() {
+    return {
+      assistants: Object.values(AI_ASSISTANT_PERMISSION_CATALOG),
+      situations: AI_ERP_SITUATION_CATALOG,
+    };
   }
 
   @Post('ai-assistant-profiles')

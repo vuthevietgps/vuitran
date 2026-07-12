@@ -111,6 +111,12 @@ export class MessagesService {
     return `${normalized.slice(0, limit - 3)}...`;
   }
 
+  private parsePositiveInt(value: unknown, fallback: number, max: number): number {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+    return Math.min(Math.floor(parsed), max);
+  }
+
   private normalizeMessageForResponse(message: any) {
     const senderType = message.senderType || MessageSenderType.USER;
     const handoffTicketId = message.handoffTicketId?.toString?.()
@@ -330,6 +336,14 @@ export class MessagesService {
     }
 
     return { convo, isParticipant: false };
+  }
+
+  async getSocketUser(userId: string): Promise<ActiveUserLean> {
+    return this.findActiveUserOrThrow(userId);
+  }
+
+  async assertCanJoinConversation(userId: string, conversationId: string) {
+    await this.assertConversationParticipant(userId, conversationId);
   }
 
   private async updateConversationLastMessage(
@@ -562,13 +576,15 @@ export class MessagesService {
   ) {
     const { convo } = await this.assertConversationParticipant(userId, conversationId);
 
-    const skip = (page - 1) * limit;
+    const safePage = this.parsePositiveInt(page, 1, 10000);
+    const safeLimit = this.parsePositiveInt(limit, 50, 100);
+    const skip = (safePage - 1) * safeLimit;
     const [messages, total] = await Promise.all([
       this.messageModel
         .find({ conversationId: convo._id })
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit)
+        .limit(safeLimit)
         .populate('senderId', 'fullName email role')
         .lean(),
       this.messageModel.countDocuments({ conversationId: convo._id }),
@@ -578,7 +594,7 @@ export class MessagesService {
       .reverse()
       .map((message) => this.normalizeMessageForResponse(message));
 
-    return { messages: normalizedMessages, total, page, limit };
+    return { messages: normalizedMessages, total, page: safePage, limit: safeLimit };
   }
 
   async markRead(userId: string, conversationId: string) {

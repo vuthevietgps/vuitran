@@ -75,6 +75,7 @@ export class StaffPayrollService {
     // 2. Lấy thông tin user
     const UserModel = this.connection.model('User');
     const user = await UserModel.findById(dto.userId).lean() as any;
+    const isExperienceTeacher = user?.role === Role.EXPERIENCE_TEACHER;
     if (!user) throw new NotFoundException('Nhân viên không tồn tại');
 
     // 3. Tổng hợp WorkSession → giờ làm + lần muộn
@@ -86,12 +87,24 @@ export class StaffPayrollService {
     const standardHours = config.standardHours;
     const attendanceRatio = Math.min(actualHours / standardHours, 1);
     const baseSalaryAmount = Math.round(config.baseSalary * attendanceRatio);
+    const lateDays = workSummary.lateDays;
+    const onTimeDays = Math.max((workSummary.totalSessions || 0) - lateDays, 0);
+    const experienceMetrics = isExperienceTeacher
+      ? await this.getExperienceTeacherPayrollMetrics(dto.userId, periodStart, periodEnd)
+      : {
+          experienceCaseCount: 0,
+          successfulExperienceCaseCount: 0,
+          totalRevenue: 0,
+          homeworkGradingCount: 0,
+        };
 
     // 4. Tính hoa hồng (từ Orders approved/completed trong kỳ)
-    let totalRevenue = 0;
+    let totalRevenue = isExperienceTeacher ? experienceMetrics.totalRevenue : 0;
     let commissionAmount = 0;
     if (config.commissionEnabled && config.commissionTiers.length > 0) {
-      totalRevenue = await this.getRevenueForUser(dto.userId, periodStart, periodEnd);
+      if (!isExperienceTeacher) {
+        totalRevenue = await this.getRevenueForUser(dto.userId, periodStart, periodEnd);
+      }
       commissionAmount = this.calculateCommission(
         totalRevenue,
         config.commissionType as CommissionType,
@@ -110,9 +123,14 @@ export class StaffPayrollService {
     }
 
     // 6. Tính phạt muộn
-    const lateDays = workSummary.lateDays;
     const latePenaltyPerTime = config.latePenaltyAmount;
     const latePenaltyAmount = lateDays * latePenaltyPerTime;
+    const punctualityBonusPerTime = config.punctualityBonusAmount ?? 0;
+    const punctualityBonusAmount = onTimeDays * punctualityBonusPerTime;
+    const experienceCaseRate = isExperienceTeacher ? (config.experienceCaseRate ?? 0) : 0;
+    const experienceCaseAmount = experienceMetrics.experienceCaseCount * experienceCaseRate;
+    const homeworkGradingRate = isExperienceTeacher ? (config.homeworkGradingRate ?? 0) : 0;
+    const homeworkGradingAmount = experienceMetrics.homeworkGradingCount * homeworkGradingRate;
 
     // 7. Điều chỉnh thủ công
     const bonusAmount = dto.bonusAmount ?? 0;
@@ -122,6 +140,7 @@ export class StaffPayrollService {
     const netAmount = Math.max(
       0,
       baseSalaryAmount + commissionAmount + kpiBonusAmount
+        + punctualityBonusAmount + experienceCaseAmount + homeworkGradingAmount
         - latePenaltyAmount + bonusAmount - deductionAmount,
     );
 
@@ -158,6 +177,16 @@ export class StaffPayrollService {
       lateDays,
       latePenaltyPerTime,
       latePenaltyAmount,
+      onTimeDays,
+      punctualityBonusPerTime,
+      punctualityBonusAmount,
+      experienceCaseCount: experienceMetrics.experienceCaseCount,
+      experienceCaseRate,
+      experienceCaseAmount,
+      successfulExperienceCaseCount: experienceMetrics.successfulExperienceCaseCount,
+      homeworkGradingCount: experienceMetrics.homeworkGradingCount,
+      homeworkGradingRate,
+      homeworkGradingAmount,
 
       bonusAmount,
       deductionAmount,
@@ -298,7 +327,10 @@ export class StaffPayrollService {
       0,
       payroll.baseSalaryAmount +
         payroll.commissionAmount +
-        payroll.kpiBonusAmount -
+        payroll.kpiBonusAmount +
+        (payroll.punctualityBonusAmount || 0) +
+        (payroll.experienceCaseAmount || 0) +
+        (payroll.homeworkGradingAmount || 0) -
         payroll.latePenaltyAmount +
         payroll.bonusAmount -
         payroll.deductionAmount,
@@ -576,6 +608,98 @@ export class StaffPayrollService {
     return result[0]?.totalRevenue || 0;
   }
 
+  private async getExperienceTeacherPayrollMetrics(
+    userId: string,
+    from: Date,
+    to: Date,
+  ): Promise<{
+    experienceCaseCount: number;
+    successfulExperienceCaseCount: number;
+    totalRevenue: number;
+    homeworkGradingCount: number;
+  }> {
+    const TrialEnrollmentModel = this.connection.model('TrialEnrollment');
+    const SessionModel = this.connection.model('Session');
+    const teacherObjectId = new Types.ObjectId(userId);
+    const activeTrialWindow = {
+      $or: [
+        { assessmentUpdatedAt: { $gte: from, $lte: to } },
+        { decisionAt: { $gte: from, $lte: to } },
+        { updatedAt: { $gte: from, $lte: to } },
+      ],
+    };
+
+    const [caseRows, revenueRows, homeworkGradingCount] = await Promise.all([
+      TrialEnrollmentModel.aggregate([
+        {
+          $match: {
+            experienceTeacherId: teacherObjectId,
+            ...activeTrialWindow,
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            experienceCaseCount: {
+              $sum: {
+                $cond: [
+                  {
+                    $or: [
+                      { $gt: [{ $ifNull: ['$trialSessionsUsed', 0] }, 0] },
+                      { $ne: [{ $ifNull: ['$assessmentUpdatedAt', null] }, null] },
+                      { $ne: [{ $ifNull: ['$assessmentScore', null] }, null] },
+                      { $ne: [{ $ifNull: ['$assessmentNotes', null] }, null] },
+                      { $ne: [{ $ifNull: ['$zoomRecordingUrl', null] }, null] },
+                      { $gt: [{ $size: { $ifNull: ['$resultImageUrls', []] } }, 0] },
+                    ],
+                  },
+                  1,
+                  0,
+                ],
+              },
+            },
+          },
+        },
+      ]),
+      TrialEnrollmentModel.aggregate([
+        {
+          $match: {
+            experienceTeacherId: teacherObjectId,
+            status: 'CONVERTED',
+            decisionAt: { $gte: from, $lte: to },
+          },
+        },
+        { $lookup: { from: 'orders', localField: 'orderId', foreignField: '_id', as: 'order' } },
+        { $lookup: { from: 'invoices', localField: 'invoiceId', foreignField: '_id', as: 'invoice' } },
+        { $unwind: { path: '$order', preserveNullAndEmptyArrays: true } },
+        { $unwind: { path: '$invoice', preserveNullAndEmptyArrays: true } },
+        {
+          $group: {
+            _id: null,
+            successfulExperienceCaseCount: { $sum: 1 },
+            totalRevenue: {
+              $sum: {
+                $ifNull: ['$order.finalAmount', { $ifNull: ['$invoice.amount', 0] }],
+              },
+            },
+          },
+        },
+      ]),
+      SessionModel.countDocuments({
+        'evaluation.homeworkGradedBy': teacherObjectId,
+        'evaluation.homeworkGradedAt': { $gte: from, $lte: to },
+        'evaluation.homeworkStatus': { $in: ['GRADED', 'REVIEWED'] },
+      }),
+    ]);
+
+    return {
+      experienceCaseCount: caseRows[0]?.experienceCaseCount || 0,
+      successfulExperienceCaseCount: revenueRows[0]?.successfulExperienceCaseCount || 0,
+      totalRevenue: revenueRows[0]?.totalRevenue || 0,
+      homeworkGradingCount,
+    };
+  }
+
   /**
    * Tính hoa hồng dựa trên doanh thu + bảng mốc + kiểu tính.
    */
@@ -627,8 +751,11 @@ export class StaffPayrollService {
     from: Date,
     to: Date,
   ): Promise<number> {
-    if (role === 'TEACHER') {
+    if (role === Role.TEACHER) {
       return this.getTeacherKpiScore(userId, from, to);
+    }
+    if (role === Role.EXPERIENCE_TEACHER) {
+      return this.getExperienceTeacherKpiScore(userId, from, to);
     }
 
     // Các role khác: KPI đơn giản dựa trên attendance
@@ -638,6 +765,88 @@ export class StaffPayrollService {
 
     const attendanceRatio = Math.min(workSummary.totalHours / config.standardHours, 1);
     return Math.round(attendanceRatio * 100);
+  }
+
+  private async getAttendanceKpiScore(userId: string, from: Date, to: Date): Promise<number> {
+    const workSummary = await this.workSessionsService.getSummary(userId, from, to);
+    const config = await this.salaryConfigService.findByUserId(userId);
+    if (!config) return 0;
+
+    const attendanceRatio = Math.min(workSummary.totalHours / config.standardHours, 1);
+    return Math.round(attendanceRatio * 100);
+  }
+
+  private async getExperienceTeacherKpiScore(userId: string, from: Date, to: Date): Promise<number> {
+    const TrialEnrollmentModel = this.connection.model('TrialEnrollment');
+    const attendanceScore = await this.getAttendanceKpiScore(userId, from, to);
+
+    const result = await TrialEnrollmentModel.aggregate([
+      {
+        $match: {
+          experienceTeacherId: new Types.ObjectId(userId),
+          $or: [
+            { createdAt: { $gte: from, $lte: to } },
+            { updatedAt: { $gte: from, $lte: to } },
+            { assessmentUpdatedAt: { $gte: from, $lte: to } },
+          ],
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          assessed: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $ne: [{ $ifNull: ['$assessmentScore', null] }, null] },
+                    { $ne: [{ $ifNull: ['$recommendedLevel', null] }, null] },
+                    { $ne: [{ $ifNull: ['$assessmentNotes', null] }, null] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          completedTrials: {
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $gte: [{ $ifNull: ['$trialSessionsUsed', 0] }, { $ifNull: ['$maxTrialSessions', 2] }] },
+                    { $in: ['$status', ['WAITING_DECISION', 'CONVERTED', 'REJECTED']] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          converted: {
+            $sum: { $cond: [{ $eq: ['$status', 'CONVERTED'] }, 1, 0] },
+          },
+        },
+      },
+    ]);
+
+    if (!result.length || result[0].total === 0) {
+      return attendanceScore;
+    }
+
+    const total = result[0].total || 0;
+    const assessmentRate = total > 0 ? (result[0].assessed / total) * 100 : 0;
+    const trialCompletionRate = total > 0 ? (result[0].completedTrials / total) * 100 : 0;
+    const conversionSupportRate = total > 0 ? (result[0].converted / total) * 100 : 0;
+
+    const kpiScore =
+      assessmentRate * 0.40 +
+      trialCompletionRate * 0.25 +
+      conversionSupportRate * 0.20 +
+      attendanceScore * 0.15;
+
+    return Math.round(Math.min(kpiScore, 100));
   }
 
   /**

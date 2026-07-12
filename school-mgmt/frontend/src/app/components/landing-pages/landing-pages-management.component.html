@@ -33,86 +33,6 @@
     <div class="section-block">
       <div class="section-heading">
         <div>
-          <h3>Menu quản lý link landing page</h3>
-          <p>Tất cả link public được gom về đây để mở nhanh, copy nhanh và theo dõi theo đúng từng nhóm landing page.</p>
-        </div>
-        <span class="inline-note">{{ totalLandingLinks() }} link</span>
-      </div>
-
-      <div class="link-menu-grid">
-        <section class="link-menu-panel system-panel">
-          <div class="link-menu-heading">
-            <div>
-              <h4>Landing page hệ thống</h4>
-              <p>Cụm link chuẩn do hệ thống render sẵn cho ERP launch và các trang giới thiệu trọng điểm.</p>
-            </div>
-            <span class="inline-note">{{ filteredSystemPages().length }} trang</span>
-          </div>
-
-          <div class="link-menu-list" *ngIf="filteredSystemPages().length > 0; else emptySystemLinkMenu">
-            <article class="link-menu-card" *ngFor="let page of filteredSystemPages()">
-              <div class="link-menu-top">
-                <span class="badge active system">Hệ thống</span>
-                <span class="mono">{{ page.sourceCode }}</span>
-              </div>
-              <div class="title">{{ page.title }}</div>
-              <div class="hint">{{ page.summary }}</div>
-              <div class="link-menu-meta">
-                <span class="meta-chip">{{ page.sectionCount }} mục</span>
-                <span class="meta-chip">{{ page.milestoneCount }} mốc</span>
-                <span class="meta-chip">{{ page.roleSummary }}</span>
-              </div>
-              <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
-              <div class="link-menu-actions">
-                <a class="link-btn anchor-btn" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">Mở trang</a>
-                <button class="link-btn" (click)="copyPublicUrlBySlug(page.slug)">Copy link</button>
-              </div>
-            </article>
-          </div>
-          <ng-template #emptySystemLinkMenu>
-            <div class="empty-state compact">Không có landing page hệ thống nào khớp bộ lọc.</div>
-          </ng-template>
-        </section>
-
-        <section class="link-menu-panel dynamic-panel">
-          <div class="link-menu-heading">
-            <div>
-              <h4>Landing page động</h4>
-              <p>Các link được quản lý bằng API, có tracking, submit form và attribution riêng cho từng chiến dịch.</p>
-            </div>
-            <span class="inline-note">{{ filteredPages().length }} trang</span>
-          </div>
-
-          <div class="link-menu-list" *ngIf="filteredPages().length > 0; else emptyDynamicLinkMenu">
-            <article class="link-menu-card" *ngFor="let page of filteredPages()">
-              <div class="link-menu-top">
-                <span class="badge" [class.active]="page.status === 'ACTIVE'">{{ statusLabel(page.status) }}</span>
-                <span class="mono">{{ page.pageCode }}</span>
-              </div>
-              <div class="title">{{ page.name }}</div>
-              <div class="hint">{{ dynamicPageSummary(page) }}</div>
-              <div class="link-menu-meta">
-                <span class="meta-chip">{{ platformLabel(page.defaultPlatform) }}</span>
-                <span class="meta-chip">{{ page.defaultAdGroupName || 'Chưa gắn ad group' }}</span>
-              </div>
-              <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
-              <div class="link-menu-actions">
-                <a class="link-btn anchor-btn" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">Mở trang</a>
-                <button class="link-btn" (click)="copyPublicUrl(page)">Copy link</button>
-                <button class="link-btn" *ngIf="canEdit()" (click)="editPage(page)">Sửa</button>
-              </div>
-            </article>
-          </div>
-          <ng-template #emptyDynamicLinkMenu>
-            <div class="empty-state compact">Chưa có landing page động nào khớp bộ lọc.</div>
-          </ng-template>
-        </section>
-      </div>
-    </div>
-
-    <div class="section-block">
-      <div class="section-heading">
-        <div>
           <h3>Landing page hệ thống</h3>
           <p>Cụm ERP launch được tập hợp tại đây để preview, copy link và theo dõi chung với màn landing page.</p>
         </div>
@@ -138,20 +58,21 @@
               <div class="hint">{{ page.summary }}</div>
             </td>
             <td>
-              <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
+              <a class="page-link" [href]="getSystemLink(page)" target="_blank" rel="noopener">{{ getSystemLink(page) }}</a>
             </td>
             <td>
               <div>{{ page.roleSummary }}</div>
-              <div class="mono">CTA: {{ page.primaryCta }}</div>
+              <div class="mono" *ngIf="page.primaryCta">CTA: {{ page.primaryCta }}</div>
             </td>
             <td>
-              <div>{{ page.sectionCount }} mục | {{ page.milestoneCount }} mốc</div>
-              <div class="mono">Cụm ERP launch</div>
+              <div *ngIf="page.sectionCount > 0 || page.milestoneCount > 0">{{ page.sectionCount }} mục | {{ page.milestoneCount }} mốc</div>
+              <div class="mono" *ngIf="page.sourceCode === 'ERP_CLUSTER'">Cụm ERP launch</div>
+              <div class="mono" *ngIf="page.sourceCode === 'INTERNAL_GUIDE'">Internal guide</div>
             </td>
             <td><span class="badge active system">Hệ thống</span></td>
             <td class="actions">
-              <a class="link-btn anchor-btn" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">Mở trang</a>
-              <button class="link-btn" (click)="copyPublicUrlBySlug(page.slug)">Copy link</button>
+              <a class="link-btn anchor-btn" [href]="getSystemLink(page)" target="_blank" rel="noopener">Mở trang</a>
+              <button class="link-btn" (click)="copySystemLink(page)">Copy link</button>
             </td>
           </tr>
         </tbody>
@@ -159,54 +80,6 @@
       <ng-template #emptySystemPages>
         <div class="empty-state">Không có landing page hệ thống nào khớp bộ lọc.</div>
       </ng-template>
-    </div>
-
-    <div class="section-block">
-      <div class="section-heading">
-        <div>
-          <h3>Landing page động</h3>
-          <p>Các trang được quản lý bằng API, có tracking, submit form và dữ liệu attribution riêng.</p>
-        </div>
-        <span class="inline-note">{{ filteredPages().length }} trang</span>
-      </div>
-
-    <table class="data-table" *ngIf="filteredPages().length > 0; else emptyPages">
-      <thead>
-        <tr>
-          <th>Trang</th>
-          <th>Public URL</th>
-          <th>Tracking</th>
-          <th>Mặc định</th>
-          <th>Trạng thái</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let page of filteredPages()">
-          <td>
-            <div class="title">{{ page.name }}</div>
-            <div class="mono">{{ page.pageCode }} | /lp/{{ page.slug }}</div>
-          </td>
-          <td>
-            <a class="page-link" [href]="publicUrl(page.slug)" target="_blank" rel="noopener">{{ publicUrl(page.slug) }}</a>
-          </td>
-          <td>{{ trackingSummary(page) }}</td>
-          <td>
-            <div>{{ page.defaultAdGroupName || 'Không gắn ad group' }}</div>
-            <div class="mono">{{ platformLabel(page.defaultPlatform) }}</div>
-          </td>
-          <td><span class="badge" [class.active]="page.status === 'ACTIVE'">{{ statusLabel(page.status) }}</span></td>
-          <td class="actions">
-            <button class="link-btn" (click)="copyPublicUrl(page)">Copy link</button>
-            <button class="link-btn" *ngIf="canEdit()" (click)="editPage(page)">Sửa</button>
-            <button class="link-btn danger" *ngIf="canDelete()" (click)="removePage(page)">Xóa</button>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    <ng-template #emptyPages>
-      <div class="empty-state">Chưa có landing page nào.</div>
-    </ng-template>
     </div>
   </ng-container>
 

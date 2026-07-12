@@ -4,11 +4,64 @@ Cập nhật: 2026-04-24
 
 Tài liệu này dùng để triển khai trung tâm tiếng Anh trên đúng luồng dữ liệu mà hệ thống hiện tại đã có: `Lead -> Parent -> Student -> Order -> Invoice -> Class -> Session -> Attendance -> Teaching Report -> Payroll -> Financial Control -> Audit`.
 
+## Điều hướng nhanh
+
+- [Tổng hợp link mở trung tâm](./tong-hop-link-mo-trung-tam.md)
+- [Hub checklist theo đối tượng](./opening-center-checklists/README.md)
+- [Hub sổ tay theo vị trí](./opening-center-handbooks/README.md)
+- [PDF checklist đã export](../../../checklist-updated.pdf)
+
 Mục tiêu của checklist là:
 
 - [ ] Giúp anh/chị mở trung tâm bằng một quy trình thống nhất, không phải vá bằng Excel và chat rời rạc.
 - [ ] Chỉ rõ việc nào phải khóa trước khai trương, việc nào phải chạy trong tuần đầu, việc nào phải giám sát mỗi ngày.
 - [ ] Gắn từng đầu việc với module hệ thống hiện tại để đội ngũ làm đúng chỗ, đúng dữ liệu, đúng người phụ trách.
+
+## Hồ sơ triển khai Lumira English
+
+- [ ] Thương hiệu vận hành là `lumiraEnglish.com` và toàn bộ tài liệu bán hàng, SOP, handbook nội bộ phải dùng đúng tên này.
+- [ ] Sản phẩm trọng tâm là lớp `online`, mô hình `1 giáo viên - nhiều học sinh`, học `1 buổi/tuần`, mỗi buổi `2 giờ 15 phút`.
+- [ ] Cấu trúc một buổi chuẩn là `60 phút ngữ pháp + 60 phút giao tiếp + 15 phút game`.
+- [ ] Học phí niêm yết là `160.000đ / học sinh / buổi`.
+- [ ] Gói học chuẩn cần khai báo trong `Products` là `20`, `40`, `60`, `100` buổi.
+- [ ] Với gói nhiều buổi, trung tâm chỉ áp dụng ưu đãi cố định `100.000đ / gói` theo bảng giá đã chốt; Sale không được tự giảm giá.
+- [ ] Không dùng luồng học thử; học sinh làm `test trải nghiệm` xong thì chốt đề xuất và xếp lớp.
+- [ ] Chính sách nghỉ học phải khóa rõ: nghỉ có phép không mất tiền, nghỉ không phép mất tiền.
+- [ ] Giữ nguyên quyền chuyển lớp và hoàn tiền theo số buổi còn lại.
+- [ ] Payroll nhân sự được chốt cho tháng trước và chi trả cố định vào ngày `10` hằng tháng.
+- [ ] Lương Sale là `8.000.000đ / tháng + 3% hoa hồng doanh thu`.
+- [ ] Lương giáo viên trải nghiệm là `7.000.000đ / tháng + 0,5% doanh thu của giáo viên đó + 5.000đ / ca test trải nghiệm`.
+- [ ] Lương giáo viên giảng dạy là `250.000đ / ca 2 giờ 15 phút`, không có lương cứng.
+- [ ] Cam kết bán hàng cần ghi thống nhất là `giao tiếp trôi chảy`.
+
+## Bản tách theo đối tượng
+
+Nếu cần dùng checklist gọn theo từng nhóm phụ trách, mở bộ file tách tại [docs/operations/opening-center-checklists/](./opening-center-checklists/README.md):
+
+- [Checklist chung](./opening-center-checklists/checklist-chung.md)
+- [Checklist Director](./opening-center-checklists/checklist-director.md)
+- [Checklist Sale](./opening-center-checklists/checklist-sale.md)
+- [Checklist OPS](./opening-center-checklists/checklist-ops.md)
+- [Checklist Accounting](./opening-center-checklists/checklist-accounting.md)
+- [Checklist Teacher](./opening-center-checklists/checklist-teacher.md)
+- [Checklist Shareholder](./opening-center-checklists/checklist-shareholder.md)
+- [Checklist Ads / Marketing](./opening-center-checklists/checklist-ads-marketing.md)
+- [Checklist HCNS / Admin](./opening-center-checklists/checklist-hr-admin.md)
+
+Bản hiện tại vẫn là checklist master đầy đủ, dùng khi cần rà soát liên phòng ban hoặc kiểm tra chéo end-to-end.
+
+## Sổ tay theo đối tượng
+
+Nếu cần tài liệu onboarding, bàn giao hoặc SOP chi tiết theo từng vị trí, mở bộ sổ tay tại [docs/operations/opening-center-handbooks/](./opening-center-handbooks/README.md):
+
+- [Sổ tay Director](./opening-center-handbooks/so-tay-director.md)
+- [Sổ tay Sale](./opening-center-handbooks/so-tay-sale.md)
+- [Sổ tay OPS](./opening-center-handbooks/so-tay-ops.md)
+- [Sổ tay Accounting](./opening-center-handbooks/so-tay-accounting.md)
+- [Sổ tay Teacher](./opening-center-handbooks/so-tay-teacher.md)
+- [Sổ tay Shareholder](./opening-center-handbooks/so-tay-shareholder.md)
+- [Sổ tay Ads / Marketing](./opening-center-handbooks/so-tay-ads-marketing.md)
+- [Sổ tay HCNS / Admin](./opening-center-handbooks/so-tay-hr-admin.md)
 
 ## 1. Nguyên tắc triển khai bắt buộc
 
@@ -23,12 +76,12 @@ Mục tiêu của checklist là:
 
 ### 2.1. Mô hình kinh doanh và chính sách
 
-- [ ] Chốt các loại lớp sẽ mở trong 90 ngày đầu: offline, online, 1-1, nhóm nhỏ, học thử, lớp tăng cường; vì điều này ảnh hưởng trực tiếp đến `Products`, `Classes`, `Sessions` và định nghĩa học phí.
+- [ ] Chốt mô hình lớp Lumira trong 90 ngày đầu là `online`, `1 giáo viên - nhiều học sinh`, `1 buổi/tuần`, `2 giờ 15 phút/buổi`; điều này phải khớp ở `Products`, `Classes`, `Sessions` và handbook giảng dạy.
 - [ ] Chốt quy tắc mở lớp: sĩ số tối thiểu, sĩ số tối đa, điều kiện đổi giáo viên, điều kiện gộp lớp, điều kiện tách lớp; nếu không khóa sớm thì vận hành và sale sẽ bán không cùng một logic.
-- [ ] Chốt chính sách học thử: miễn phí hay có phí, học thử được tạo bằng `Trial Enrollments` hay convert trực tiếp sang order, ai là người chốt kết quả học thử.
-- [ ] Chốt chính sách giảm giá, học bổng, miễn giảm người thân, ưu đãi theo campaign; ghi rõ mức trần giảm giá mà sale được quyền xử lý trước khi cần duyệt.
+- [ ] Chốt chính sách `test trải nghiệm` thay cho học thử: không mở gói học thử, không dùng luồng `Trial Enrollments` cho Lumira; test xong thì chốt đề xuất lớp và xếp lớp.
+- [ ] Chốt chính sách giá và ưu đãi: giá niêm yết `160.000đ / học sinh / buổi`, chỉ có ưu đãi cố định `100.000đ / gói` cho gói nhiều buổi theo bảng giá đã duyệt; Sale không được tự giảm giá.
 - [ ] Chốt chính sách công nợ: có cho đóng nhiều đợt không, được giữ chỗ khi chưa thanh toán bao nhiêu phần trăm, điều kiện xếp lớp khi hóa đơn chưa duyệt.
-- [ ] Chốt chính sách bảo lưu, nghỉ học, chuyển lớp, hoàn tiền, chuyển nhượng khóa học; đây là nhóm việc dễ gây tranh cãi nếu không có SOP trước khai trương.
+- [ ] Chốt chính sách nghỉ học, chuyển lớp và hoàn tiền: nghỉ có phép không mất tiền, nghỉ không phép mất tiền, giữ nguyên quyền chuyển lớp và hoàn tiền số buổi còn lại.
 
 ### 2.2. Phân quyền và cơ chế phê duyệt
 
@@ -133,7 +186,7 @@ Mục tiêu của checklist là:
 - [ ] Tất cả nhân sự phải dùng đúng tài khoản cá nhân của mình; cấm dùng chung tài khoản hoặc thao tác hộ mà không có ủy quyền rõ ràng.
 - [ ] Mọi dữ liệu dùng để tính lương, thưởng, hoa hồng hoặc đánh giá KPI phải lấy từ hệ thống, không lấy từ báo cáo miệng hoặc file Excel cá nhân.
 - [ ] Mọi đầu việc có liên quan tới tiền, lớp học, học viên, lead, order, invoice, ticket hoặc payroll đều phải có dấu vết trên hệ thống.
-- [ ] Chốt cut-off dữ liệu hằng tháng cho lương và thưởng, ví dụ chốt dữ liệu ngày 25 hoặc ngày cuối tháng tùy mô hình vận hành.
+- [ ] Chốt cut-off dữ liệu lương, thưởng và hoa hồng vào cuối tháng; ngày chi trả cố định của Lumira là ngày `10` hằng tháng cho dữ liệu tháng trước.
 - [ ] Chốt nguyên tắc xử lý ngoại lệ: mọi ngoại lệ vượt chính sách đều phải có người duyệt, lý do, bằng chứng và thời điểm duyệt.
 - [ ] Chốt cơ chế bàn giao đầu ca và cuối ca; việc nào chưa xong phải được chuyển trên `Tickets`, `Messages` hoặc ghi chú trong luồng liên quan.
 - [ ] Chốt cơ chế chế tài cho các lỗi lặp lại: nhập sai dữ liệu, bỏ sót follow-up, không điểm danh, không nộp report, duyệt sai chứng từ, không đối soát đúng hạn.
@@ -142,7 +195,7 @@ Mục tiêu của checklist là:
 
 - [ ] Chốt mục tiêu của Director theo 4 trục: tăng trưởng doanh thu, tỷ lệ lấp đầy lớp, kiểm soát dòng tiền và chất lượng vận hành.
 - [ ] Chốt Director là người có quyền cao nhất trên `Dashboard`, `Users`, `Orders`, `Invoices`, `Classes`, `Sessions`, `Financial Control`, `Audit Log`, `Payroll`, `Bank Accounts`, `Funds`, `Loans`.
-- [ ] Chốt Director là người duyệt cuối cho các nghiệp vụ ngoại lệ: discount vượt ngưỡng, hoàn tiền, chuyển lớp ngoài chính sách, invoice tranh chấp, khoản vay, tài khoản nhận tiền, quỹ, chi phí lớn.
+- [ ] Chốt Director là người duyệt cuối cho các nghiệp vụ ngoại lệ về giá ngoài bảng giá Lumira, hoàn tiền, chuyển lớp ngoài chính sách, invoice tranh chấp, khoản vay, tài khoản nhận tiền, quỹ, chi phí lớn.
 - [ ] Chốt Director phải review `Pending Approvals` ít nhất hai lần mỗi ngày làm việc.
 - [ ] Chốt Director phải review `Financial Control` hằng ngày trong giai đoạn 30 đến 60 ngày đầu vận hành.
 - [ ] Chốt KPI Director gồm: doanh thu thực thu, lợi nhuận gộp, công nợ quá hạn, burn rate, runway, tỷ lệ session treo, số ticket quá SLA, tỷ lệ chuyển đổi tuyển sinh.
@@ -152,16 +205,17 @@ Mục tiêu của checklist là:
 ### 5.3. Chính sách cho Sale / Tư vấn tuyển sinh
 
 - [ ] Chốt sale phải đi đúng luồng `Lead -> Parent -> Student -> Order -> Invoice -> bàn giao xếp lớp`; không được bỏ qua CRM rồi nhập thẳng order khi chưa có lý do chính đáng.
-- [ ] Chốt sale chỉ được dùng các module đã cấp quyền như `Leads`, `Orders`, `Students`, `Trial Enrollments`, `Conversations`, `Commission Report`, `Sale Hub`.
+- [ ] Chốt sale chỉ được dùng các module đã cấp quyền như `Leads`, `Orders`, `Students`, `Conversations`, `Commission Report`, `Sale Hub`; với Lumira không dùng `Trial Enrollments`.
 - [ ] Chốt sale không có quyền tự duyệt `Invoices`, không có quyền tự tạo hàng loạt `Sessions`, không có quyền tự thêm `Bank Account`, không có quyền tự xử lý `Financial Control`.
 - [ ] Chốt mọi cuộc gọi, chat, gặp trực tiếp đều phải có contact log và ngày follow-up tiếp theo trên hệ thống.
 - [ ] Chốt lead quá hạn follow-up bao nhiêu giờ hoặc bao nhiêu ngày thì bị chuyển trạng thái cảnh báo, trả pool hoặc điều phối lại owner.
-- [ ] Chốt rõ mức giảm giá sale được tự xử lý và ngưỡng nào bắt buộc phải xin duyệt.
+- [ ] Chốt rõ sale không được tự giảm giá; nếu có ưu đãi `100.000đ / gói` cho gói nhiều buổi thì chỉ được dùng đúng bảng giá Lumira đã khóa sẵn.
 - [ ] Chốt sale không được tạo trùng parent hoặc student nếu trên hệ thống đã có hồ sơ cũ; luôn phải tìm kiếm trước khi tạo mới.
 - [ ] Chốt sale chỉ được gửi cho phụ huynh tài khoản nhận tiền chính thức của công ty; tuyệt đối không gửi tài khoản cá nhân.
 - [ ] Chốt hoa hồng sale chỉ được tính khi order đã được duyệt và đạt điều kiện tài chính theo chính sách trung tâm.
+- [ ] Chốt lương Sale Lumira là `8.000.000đ / tháng + 3% hoa hồng doanh thu`.
 - [ ] Chốt cơ chế clawback hoặc điều chỉnh hoa hồng nếu đơn bị hủy, hoàn tiền hoặc phát hiện dữ liệu đầu vào sai.
-- [ ] Chốt KPI sale gồm: số lead hợp lệ, tỷ lệ follow-up đúng hạn, tỷ lệ lead sang trial, trial sang order, order approved, doanh thu thực thu, tỷ lệ lead stale.
+- [ ] Chốt KPI sale gồm: số lead hợp lệ, tỷ lệ follow-up đúng hạn, tỷ lệ lead sang `test trải nghiệm`, tỷ lệ `test trải nghiệm -> xếp lớp/order approved`, doanh thu thực thu, tỷ lệ lead stale.
 - [ ] Chốt chế tài cho sale nếu bỏ sót follow-up nóng, ghi sai cam kết học phí hoặc tạo trùng dữ liệu nhiều lần.
 
 ### 5.4. Chính sách cho OPS / Vận hành
@@ -193,11 +247,11 @@ Mục tiêu của checklist là:
 - [ ] Chốt giáo viên là người chịu trách nhiệm trực tiếp cho `Attendance`, `Teaching Report`, chất lượng buổi dạy và đúng giờ lên lớp.
 - [ ] Chốt giáo viên được dùng `Sessions`, `Attendance`, `Teaching Report`, `Teacher Calendar`, `Teaching Materials`, `Tickets`, `Messages`, `Payroll`, `Work Sessions`.
 - [ ] Chốt giáo viên không được tự mở lớp, tự bulk tạo session, tự sửa học phí hoặc tự duyệt tài chính.
-- [ ] Chốt buổi dạy chỉ được tính đủ điều kiện trả lương khi đã có attendance và teaching report hợp lệ theo chuẩn trung tâm.
+- [ ] Chốt mỗi ca dạy Lumira là `2 giờ 15 phút online`, gồm `60 phút ngữ pháp + 60 phút giao tiếp + 15 phút game`; buổi dạy chỉ đủ điều kiện trả lương khi đã có attendance và teaching report hợp lệ.
 - [ ] Chốt giáo viên phải điểm danh đúng ngày, đúng lớp và nộp teaching report trong ngày; không cho phép dồn report nhiều ngày nếu không có lý do được duyệt.
 - [ ] Chốt SLA báo xin nghỉ, nhờ dạy thay hoặc đổi ca; ví dụ tối thiểu 24 giờ trước ca nếu không phải tình huống khẩn cấp.
 - [ ] Chốt KPI giáo viên gồm: tỷ lệ đúng giờ, tỷ lệ report đúng hạn, tỷ lệ session hoàn thành, điểm phản hồi phụ huynh, tỷ lệ buổi đủ điều kiện payroll.
-- [ ] Chốt cơ chế với giáo viên full-time và part-time nếu khác nhau: full-time có lương cứng + KPI, part-time theo session + điều kiện đủ dữ liệu.
+- [ ] Chốt cơ chế lương giáo viên Lumira: giáo viên trải nghiệm nhận `7.000.000đ / tháng + 0,5% doanh thu của giáo viên đó + 5.000đ / ca test trải nghiệm`; giáo viên giảng dạy nhận `250.000đ / ca 2 giờ 15 phút`, không có lương cứng.
 - [ ] Chốt chế tài nếu bỏ ca, báo nghỉ sát giờ, không điểm danh, không nộp report hoặc để phát sinh khiếu nại lặp lại mà không cải thiện.
 
 ### 5.7. Chính sách cho Ads / Marketing
@@ -247,10 +301,10 @@ Mục tiêu của checklist là:
 
 ### 6.2. Gói học và chính sách bán hàng
 
-- [ ] Khai báo tất cả gói học dự kiến bán trong `Products`: tên gói, mã gói, số buổi, hình thức học, mức học phí, ghi chú đối tượng áp dụng.
-- [ ] Tạo các gói dành riêng cho học thử, lớp ngắn hạn, combo anh chị em, combo tăng cường nếu thực tế vận hành có dùng.
+- [ ] Khai báo các gói Lumira trong `Products`: `20`, `40`, `60`, `100` buổi; tất cả đều là lớp online, `1 giáo viên - nhiều học sinh`, học phí niêm yết `160.000đ / học sinh / buổi`.
+- [ ] Không tạo gói học thử; nếu cần onboarding đầu vào thì dùng `test trải nghiệm` rồi xếp lớp trực tiếp.
 - [ ] Xác nhận số buổi, giá trị hóa đơn, logic tăng buổi, giảm buổi và installment của từng gói khớp với tài liệu bán hàng ngoài thực tế.
-- [ ] Chạy thử một số kịch bản giảm giá để chắc rằng mức tiền và số buổi downstream hiển thị đúng trong `Orders` và `Invoices`.
+- [ ] Chạy thử bảng giá Lumira để chắc rằng ưu đãi cố định `100.000đ / gói` cho gói nhiều buổi hiển thị đúng trong `Orders` và `Invoices`, đồng thời Sale không thể tự ý giảm giá ngoài bảng giá.
 
 ### 6.3. Dữ liệu phụ huynh và học viên
 
@@ -258,11 +312,11 @@ Mục tiêu của checklist là:
 - [ ] Quy định rõ khi nào tạo mới parent ở `Users` và khi nào phải tìm kiếm parent cũ để tránh tạo trùng hồ sơ.
 - [ ] Quy định rõ khi nào tạo mới student ở `Students` và khi nào phải gắn vào parent cũ hoặc sale owner cũ.
 - [ ] Chuẩn hóa ảnh chân dung, file hồ sơ, ghi chú sức khỏe hoặc lưu ý đặc biệt nếu mô hình lớp có yêu cầu theo dõi riêng.
-- [ ] Tạo trước một số hồ sơ parent và student mẫu đại diện cho các ca phổ biến: khách mới, khách cũ mua lại, hai con chung parent, học thử trước khi vào lớp thật.
+- [ ] Tạo trước một số hồ sơ parent và student mẫu đại diện cho các ca phổ biến: khách mới, khách cũ mua lại, hai con chung parent, test trải nghiệm trước khi xếp lớp thật.
 
 ### 6.4. Lớp học và lịch học
 
-- [ ] Tạo danh sách lớp dự kiến trong 4 đến 8 tuần đầu tại `Classes`, bao gồm mã lớp, tên lớp, cấp độ, giáo viên, sale phụ trách và nhóm học viên mục tiêu.
+- [ ] Tạo danh sách lớp dự kiến trong 4 đến 8 tuần đầu tại `Classes`, bao gồm mã lớp, tên lớp, cấp độ, giáo viên, sale phụ trách và nhóm học viên mục tiêu; lịch chuẩn của Lumira là `1 buổi/tuần`, `2 giờ 15 phút/buổi`.
 - [ ] Kiểm tra lại roster của từng lớp để bảo đảm downstream ở `Sessions`, `Attendance` và `Student Report` dùng chung một dữ liệu đúng.
 - [ ] Tạo trước lịch học hàng loạt cho toàn bộ tuần đầu hoặc tháng đầu trong `Sessions`, tránh để tới ngày khai trương mới sinh session.
 - [ ] Chuẩn bị sẵn phương án lớp dự phòng và giáo viên thay thế cho các ca cao điểm, ca cuối tuần, ca sau 17h.
@@ -273,7 +327,7 @@ Mục tiêu của checklist là:
 - [ ] Chốt tài khoản ngân hàng, quỹ tiền mặt, ví phụ huynh, danh mục chi phí, nhóm chi phí, nguồn vay và hạn mức quỹ nếu có dùng trong `Financial Control`.
 - [ ] Kiểm tra mẫu invoice, phương thức thanh toán, yêu cầu upload chứng từ và người có quyền duyệt chứng từ.
 - [ ] Chuẩn hóa quy tắc ghi chú thanh toán: mã giao dịch, ngân hàng, người nộp, ảnh biên lai, ngày hạch toán.
-- [ ] Thiết lập cấu hình lương giáo viên và lương nhân sự nội bộ nếu tháng đầu đã cần chốt payroll trên hệ thống.
+- [ ] Thiết lập cấu hình lương Sale, giáo viên trải nghiệm, giáo viên giảng dạy và payroll nhân sự nội bộ; khóa lịch chi trả ngày `10` hằng tháng cho dữ liệu tháng trước.
 - [ ] Chốt logic đối soát cuối ngày: ai kiểm tra hóa đơn chờ duyệt, ai đối chiếu top-up ví, ai review bút toán chưa reconcile.
 
 ## 7. Checklist T-20 đến T-14: chạy thử luồng sale và tuyển sinh
@@ -297,15 +351,15 @@ Mục tiêu của checklist là:
 - [ ] Chạy thử tạo order cho khách hoàn toàn mới trong `Orders` và kiểm tra parent, student được tạo đúng.
 - [ ] Chạy thử tạo order cho khách cũ để chắc rằng hệ thống chọn lại parent và student cũ thay vì nhân đôi dữ liệu.
 - [ ] Chạy thử convert lead ở trạng thái phù hợp sang order để sale quen luồng chuẩn, không bỏ qua CRM.
-- [ ] Test đủ các trường hợp discount, installment, receipt upload, consultation notes và gửi duyệt.
+- [ ] Test đủ các trường hợp installment, receipt upload, consultation notes và gửi duyệt; xác nhận Sale không thể tự giảm giá ngoài bảng giá Lumira đã khóa.
 - [ ] Test nhánh `NEEDS_INFO`, reject, cancel và approved để đội sale hiểu luồng phản hồi và không hỏi ngược mỗi lần đơn bị trả lại.
 - [ ] Sau khi order được duyệt, kiểm tra downstream tại `Invoices`, `Students`, `Classes` hoặc bước bàn giao cho OPS để xác nhận side effect đúng như kỳ vọng.
 
-### 7.4. Luồng trial và xếp lớp
+### 7.4. Luồng test trải nghiệm và xếp lớp
 
-- [ ] Chạy thử ít nhất 3 case `Trial Enrollments`: học thử xong mua thật, học thử xong không học, học thử trả lương giáo viên nhưng chưa convert.
-- [ ] Chốt người có quyền chuyển trạng thái trial và thời hạn phải chốt kết quả trial sau khi buổi học diễn ra.
-- [ ] Gắn rõ trial với lớp nào, giáo viên nào, khung giờ nào để báo cáo và chi phí giáo viên không bị trôi.
+- [ ] Chạy thử ít nhất 3 case `test trải nghiệm`: test xong xếp lớp ngay, test xong cần đổi đề xuất lớp, test xong phụ huynh chưa chốt ngay.
+- [ ] Chốt người có quyền khóa kết quả test trải nghiệm và thời hạn phải chốt xếp lớp sau buổi test.
+- [ ] Gắn rõ test trải nghiệm với giáo viên, khung giờ và đề xuất lớp để báo cáo và chi phí giáo viên không bị trôi.
 
 ## 8. Checklist T-13 đến T-7: chạy thử vận hành học vụ và giảng dạy
 
@@ -353,7 +407,7 @@ Mục tiêu của checklist là:
 - [ ] Chạy thử `Payroll` giáo viên để xem preview, xác định buổi nào đủ điều kiện và buổi nào còn bị chặn bởi attendance hoặc report.
 - [ ] Chạy thử `Work Sessions` với login đúng giờ, đi muộn, logout, auto-close để hiểu báo cáo chấm công sẽ hiển thị như thế nào.
 - [ ] Nếu dùng `Staff Payroll`, chạy thử một kỳ lương nội bộ từ xem chi tiết tới đánh dấu đã thanh toán.
-- [ ] Chốt quy định việc nào sẽ được tính lương theo session, việc nào theo công chuẩn, việc nào phải được duyệt thêm ngoài payroll.
+- [ ] Chốt quy định payroll Lumira: chốt dữ liệu tháng trước và chi trả ngày `10` hằng tháng; Sale nhận `8.000.000đ + 3% doanh thu`, giáo viên trải nghiệm nhận `7.000.000đ + 0,5% doanh thu + 5.000đ / ca test trải nghiệm`, giáo viên giảng dạy nhận `250.000đ / ca 2 giờ 15 phút`.
 
 ### 9.3. Financial Control và đối soát
 
@@ -374,7 +428,7 @@ Mục tiêu của checklist là:
 - [ ] Chốt danh sách lớp, roster, giáo viên, trợ giảng, giáo viên thay thế và ca học của toàn bộ 7 ngày đầu.
 - [ ] Kiểm tra mọi session của tuần đầu đã được sinh ở `Sessions`, không còn lớp đã mở mà chưa có buổi.
 - [ ] Kiểm tra học viên nào đã có order nhưng chưa có invoice, đã có invoice nhưng chưa duyệt, đã duyệt nhưng chưa gắn lớp.
-- [ ] Kiểm tra các ticket mở còn tồn, nhất là nhóm đổi lịch, thay giáo viên, phụ huynh cần phản hồi, yêu cầu học thử.
+- [ ] Kiểm tra các ticket mở còn tồn, nhất là nhóm đổi lịch, thay giáo viên, phụ huynh cần phản hồi, yêu cầu `test trải nghiệm/xếp lớp`.
 - [ ] Kiểm tra `Pending Approvals` và xử lý dứt điểm hoặc tạo danh sách việc chuyển ca rõ ràng.
 - [ ] Kiểm tra giáo viên nào còn thiếu tài liệu giảng dạy, thiếu lịch dạy hoặc chưa nắm quy trình attendance và report.
 - [ ] Kiểm tra sale nào còn lead nóng chưa follow-up, khách hẹn đến trung tâm ngày khai trương nhưng chưa có owner rõ ràng.
@@ -406,7 +460,7 @@ Mục tiêu của checklist là:
 - [ ] OPS lọc `Sessions` để xử lý các buổi `TEACHER_COMPLETED` đủ điều kiện finalize và ghi chú rõ các buổi còn treo.
 - [ ] Giáo viên kiểm tra còn buổi `SCHEDULED` nào đáng lẽ đã dạy nhưng chưa cập nhật trạng thái, còn report nào chưa nộp, còn ticket nào chưa phản hồi.
 - [ ] Kế toán review hóa đơn chờ duyệt, top-up chờ duyệt, khoản chưa reconcile và lập danh sách việc tài chính chuyển sang ngày sau.
-- [ ] Sale review lead follow-up sang ngày mai, khách chưa chốt, khách cần gửi proposal hoặc nhắc lịch học thử.
+- [ ] Sale review lead follow-up sang ngày mai, khách chưa chốt, khách cần gửi proposal hoặc nhắc lịch `test trải nghiệm`.
 - [ ] Tất cả vai trò kiểm tra `Notifications` trước khi đăng xuất để không bỏ sót việc.
 
 ## 12. Checklist vận hành hằng ngày sau khai trương
@@ -454,7 +508,7 @@ Mục tiêu của checklist là:
 ## 13. Checklist review hằng tuần
 
 - [ ] Review số lead mới theo nguồn, conversion lead sang order, tỷ lệ lead stale và tỷ lệ follow-up đúng hạn.
-- [ ] Review số trial đã tổ chức, tỷ lệ trial convert sang học thật, lý do trial không chuyển đổi.
+- [ ] Review số `test trải nghiệm` đã tổ chức, tỷ lệ `test trải nghiệm -> xếp lớp`, và lý do khách chưa chốt sau test.
 - [ ] Review tỷ lệ lấp đầy lớp, lớp dưới sĩ số tối thiểu, lớp vượt sĩ số tối đa, lớp cần gộp hoặc tách.
 - [ ] Review số buổi đã dạy, số buổi chưa finalize, số buổi thiếu attendance, số buổi thiếu teaching report.
 - [ ] Review ticket quá hạn, nhóm lỗi lặp lại nhiều nhất và bộ phận gây tắc nghẽn nhiều nhất.
@@ -501,7 +555,7 @@ Mục tiêu của checklist là:
 - [ ] Test 1: tạo lead mới, follow-up, convert sang order, gửi duyệt, approved, phát sinh invoice.
 - [ ] Test 2: tạo parent cũ có 2 học viên, bán thêm gói mới cho một học viên cũ, không nhân đôi dữ liệu.
 - [ ] Test 3: tạo lớp mới, gắn roster, bulk create session, điểm danh, nộp teaching report, finalize buổi.
-- [ ] Test 4: tạo trial offline, chốt trial, convert sang học thật hoặc reject, kiểm tra lịch sử trial.
+- [ ] Test 4: tạo `test trải nghiệm`, chốt kết quả xếp lớp hoặc chưa chốt, kiểm tra lịch sử assessment và đề xuất lớp.
 - [ ] Test 5: nạp ví phụ huynh, duyệt top-up, kiểm tra ledger và số dư.
 - [ ] Test 6: duyệt invoice có chứng từ, xem aging và dòng tiền downstream.
 - [ ] Test 7: login/logout work session, xem case đi muộn, auto-close và báo cáo tổng hợp.

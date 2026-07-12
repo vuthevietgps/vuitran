@@ -69,6 +69,24 @@ export class CreateUserSalaryConfigDto {
   @Min(0)
   latePenaltyAmount!: number;
 
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  punctualityBonusAmount?: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  experienceCaseRate?: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  homeworkGradingRate?: number;
+
   @IsOptional()
   @IsBoolean()
   commissionEnabled?: boolean;

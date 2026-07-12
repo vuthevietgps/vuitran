@@ -34,6 +34,9 @@ import { FinancialControlModule } from "./financial-control/financial-control.mo
 import { LoansModule } from "./loans/loans.module";
 import { AdsModule } from "./ads/ads.module";
 import { ChatbotModule } from "./chatbot/chatbot.module";
+import { AiCoreModule } from "./ai-core/ai-core.module";
+import { DirectorAiModule } from "./director-ai/director-ai.module";
+import { AiFeedbackModule } from "./ai-feedback/ai-feedback.module";
 import { WorkSessionsModule } from "./work-sessions/work-sessions.module";
 import { SalaryConfigModule } from "./salary-config/salary-config.module";
 import { StaffPayrollModule } from "./staff-payroll/staff-payroll.module";
@@ -47,6 +50,7 @@ import { SupplierPaymentsModule } from "./supplier-payments/supplier-payments.mo
 import { AgentsModule } from "./agents/agents.module";
 import { DevModule } from "./dev/dev.module";
 import { TeacherRegistrationsModule } from "./teacher-registrations/teacher-registrations.module";
+import { QuizzesModule } from "./quizzes/quizzes.module";
 
 const redisEnabled =
   (process.env.REDIS_ENABLED ?? "true").toLowerCase() !== "false";
@@ -173,6 +177,9 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     LoansModule,
     AdsModule,
     ChatbotModule,
+    AiCoreModule,
+    DirectorAiModule,
+    AiFeedbackModule,
     WorkSessionsModule,
     SalaryConfigModule,
     StaffPayrollModule,
@@ -185,6 +192,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     SupplierPaymentsModule,
     AgentsModule,
     TeacherRegistrationsModule,
+    QuizzesModule,
     ...(process.env.NODE_ENV !== "production" ? [DevModule] : []),
   ],
   providers: [AdminSeeder, { provide: APP_GUARD, useClass: ThrottlerGuard }],

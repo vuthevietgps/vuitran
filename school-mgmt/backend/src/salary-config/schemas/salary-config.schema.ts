@@ -43,6 +43,18 @@ export class SalaryConfig {
   @Prop({ type: Number, min: 0, default: 0 })
   latePenaltyAmount!: number;
 
+  /** So tien thuong / lan cham cong dung gio (VND) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  punctualityBonusAmount!: number;
+
+  /** Tien co dinh / case trai nghiem da test (VND) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  experienceCaseRate!: number;
+
+  /** Tien co dinh / bai tap ve nha da cham (VND) */
+  @Prop({ type: Number, min: 0, default: 0 })
+  homeworkGradingRate!: number;
+
   // ── Hoa hồng ──
 
   /** Bật/tắt hoa hồng cho user này */

@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsDateString,
+  IsEnum,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -8,6 +9,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { LessonProgressStatus } from '../schemas/session.schema';
 
 /**
  * GV hoàn thành buổi dạy → chuyển status SCHEDULED → TEACHER_COMPLETED
@@ -79,6 +81,14 @@ export class CompleteSessionDto {
   @Max(5)
   @IsOptional()
   comprehensionLevel?: number;
+
+  @IsEnum(LessonProgressStatus)
+  @IsOptional()
+  lessonProgressStatus?: LessonProgressStatus;
+
+  @IsString()
+  @IsOptional()
+  deviationReason?: string;
 
   /** Điểm mạnh quan sát được */
   @IsString()
